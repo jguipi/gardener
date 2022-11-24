@@ -66,6 +66,7 @@ data:
         'match[]':
         - '{__name__=~"metering:.+", __name__!~"metering:.+(over_time|_seconds|:this_month)"}'
         - '{__name__=~"seed:(.+):(.+)"}'
+        - '{__name__="ALERTS"}'
         - '{job="kube-state-metrics",namespace=~"garden|extension-.+"}'
         - '{job="cadvisor",namespace=~"garden|extension-.+"}'
       kubernetes_sd_configs:
