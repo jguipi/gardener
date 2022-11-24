@@ -186,9 +186,9 @@ data:
       metrics_path: /federate
       params:
         'match[]':
-        - '{job="cadvisor",namespace="{{ .Release.Namespace }}"}'
-        - '{job="kube-state-metrics",namespace="{{ .Release.Namespace }}"}'
-        - '{__name__=~"metering:.+",namespace="{{ .Release.Namespace }}"}'
+        # - '{job="cadvisor",namespace="{{ .Release.Namespace }}"}'
+        # - '{job="kube-state-metrics",namespace="{{ .Release.Namespace }}"}'
+        # - '{__name__=~"metering:.+",namespace="{{ .Release.Namespace }}"}'
       static_configs:
       - targets:
         - prometheus-web.garden.svc
