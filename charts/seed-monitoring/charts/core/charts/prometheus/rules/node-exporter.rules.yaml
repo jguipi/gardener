@@ -1,6 +1,18 @@
 groups:
 - name: node-exporter.rules
   rules:
+  - alert: juste_alert_test
+    expr: sum(kube_node_status_condition{condition="Ready",status!="true"}) > 0
+    for: 5m
+    labels:
+      service: node-exporter
+      severity: critical
+      type: shoot
+      visibility: owner
+    annotations:
+      summary: jc test
+      description: jc test
+
   - alert: NodeExporterDown
     expr: absent(up{job="node-exporter"} == 1)
     for: 1h
