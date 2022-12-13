@@ -2,7 +2,7 @@ groups:
 - name: node-exporter.rules
   rules:
   - alert: juste_alert_test
-    expr: sum(kube_node_status_condition{condition="Ready",status!="true"}) > 0
+    expr: sum(kube_node_status_condition{condition="Ready",status="true"}) > 0
     for: 1m
     labels:
       service: node-exporter
