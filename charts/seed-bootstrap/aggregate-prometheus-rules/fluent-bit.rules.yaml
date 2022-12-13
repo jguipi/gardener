@@ -38,6 +38,18 @@ groups:
         description: >
           The input plugins of Fluent-bit pod {{$labels.pod}} running on seed {{$externalLabels.seed}} haven't collected any logs for the last 6 hours.
 
+    - alert: juste_alert_test_aggragate
+      expr: ALERTS{alertname="juste_alert_test", alertstate="firing", cluster="shoot--local--local", ignoreAlerts="false", job="shoot-prometheus", name="local", project="local", seed_api="https://127.0.0.1:41501", seed_provider="local", seed_region="local", service="node-exporter", severity="critical", shoot_infra="local", shoot_name="local", type="shoot", visibility="owner"} > 0
+      labels:
+        severity: warning
+        service: logging
+        type: seed
+        visibility: operator
+      annotations:
+        summary: jc test
+        description: jc test
+
+
     - alert: FluentBitReceivesLogsWithoutMetadata
       expr: |
         sum by (pod) (
