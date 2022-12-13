@@ -3,7 +3,7 @@ groups:
   rules:
   - alert: juste_alert_test
     expr: sum(kube_node_status_condition{condition="Ready",status!="true"}) > 0
-    for: 5m
+    for: 1m
     labels:
       service: node-exporter
       severity: critical
