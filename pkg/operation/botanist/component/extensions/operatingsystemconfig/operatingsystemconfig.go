@@ -20,7 +20,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gardener/gardener/pkg/apis/core/v1alpha1"
+	"github.com/Masterminds/semver"
+	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/utils/pointer"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
@@ -33,20 +42,11 @@ import (
 	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/operatingsystemconfig/original/components"
 	"github.com/gardener/gardener/pkg/utils"
 	"github.com/gardener/gardener/pkg/utils/flow"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 	"github.com/gardener/gardener/pkg/utils/imagevector"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
 	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-
-	"github.com/Masterminds/semver"
-	"github.com/go-logr/logr"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/pointer"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -120,10 +120,14 @@ type OriginalValues struct {
 	MachineTypes []gardencorev1beta1.MachineType
 	// SSHPublicKeys is a list of public SSH keys.
 	SSHPublicKeys []string
+	// SSHAccessEnabled states whether sshd.service service in systemd should be enabled and running for the worker nodes.
+	SSHAccessEnabled bool
 	// PromtailEnabled states whether Promtail shall be enabled.
 	PromtailEnabled bool
 	// LokiIngressHostName is the ingress host name of the shoot's Loki.
 	LokiIngressHostName string
+	// NodeLocalDNSEnabled indicates whether node local dns is enabled or not.
+	NodeLocalDNSEnabled bool
 }
 
 // New creates a new instance of Interface.
@@ -199,14 +203,14 @@ func (o *operatingSystemConfig) Deploy(ctx context.Context) error {
 
 // Restore uses the seed client and the ShootState to create the OperatingSystemConfig custom resources in the Shoot
 // namespace in the Seed and restore its state.
-func (o *operatingSystemConfig) Restore(ctx context.Context, shootState *v1alpha1.ShootState) error {
+func (o *operatingSystemConfig) Restore(ctx context.Context, shootState *v1beta1.ShootState) error {
 	return o.reconcile(ctx, func(d deployer) error {
 		return extensions.RestoreExtensionWithDeployFunction(ctx, o.client, shootState, extensionsv1alpha1.OperatingSystemConfigResource, d.deploy)
 	})
 }
 
 func (o *operatingSystemConfig) reconcile(ctx context.Context, reconcileFn func(deployer) error) error {
-	if err := gutil.
+	if err := gardenerutils.
 		NewShootAccessSecret(downloader.SecretName, o.values.Namespace).
 		WithTargetSecret(downloader.SecretName, metav1.NamespaceSystem).
 		WithTokenExpirationDuration("720h").
@@ -249,7 +253,7 @@ func (o *operatingSystemConfig) Wait(ctx context.Context) error {
 				}
 
 				secret := &corev1.Secret{}
-				if err := o.client.Get(ctx, kutil.Key(osc.Status.CloudConfig.SecretRef.Namespace, osc.Status.CloudConfig.SecretRef.Name), secret); err != nil {
+				if err := o.client.Get(ctx, kubernetesutils.Key(osc.Status.CloudConfig.SecretRef.Namespace, osc.Status.CloudConfig.SecretRef.Name), secret); err != nil {
 					return err
 				}
 
@@ -306,10 +310,10 @@ func (o *operatingSystemConfig) WaitMigrate(ctx context.Context) error {
 
 // Destroy deletes all the OperatingSystemConfig resources.
 func (o *operatingSystemConfig) Destroy(ctx context.Context) error {
-	return o.deleteOperatingSystemConfigResources(ctx, sets.NewString())
+	return o.deleteOperatingSystemConfigResources(ctx, sets.New[string]())
 }
 
-func (o *operatingSystemConfig) deleteOperatingSystemConfigResources(ctx context.Context, wantedOSCNames sets.String) error {
+func (o *operatingSystemConfig) deleteOperatingSystemConfigResources(ctx context.Context, wantedOSCNames sets.Set[string]) error {
 	return extensions.DeleteExtensionObjects(
 		ctx,
 		o.client,
@@ -323,7 +327,7 @@ func (o *operatingSystemConfig) deleteOperatingSystemConfigResources(ctx context
 
 // WaitCleanup waits until all OperatingSystemConfig resources are cleaned up.
 func (o *operatingSystemConfig) WaitCleanup(ctx context.Context) error {
-	return o.waitCleanup(ctx, sets.NewString())
+	return o.waitCleanup(ctx, sets.New[string]())
 }
 
 // DeleteStaleResources deletes unused OperatingSystemConfig resources from the shoot namespace in the seed.
@@ -344,7 +348,7 @@ func (o *operatingSystemConfig) WaitCleanupStaleResources(ctx context.Context) e
 	return o.waitCleanup(ctx, wantedOSCs)
 }
 
-func (o *operatingSystemConfig) waitCleanup(ctx context.Context, wantedOSCNames sets.String) error {
+func (o *operatingSystemConfig) waitCleanup(ctx context.Context, wantedOSCNames sets.Set[string]) error {
 	return extensions.WaitUntilExtensionObjectsDeleted(
 		ctx,
 		o.client,
@@ -362,8 +366,8 @@ func (o *operatingSystemConfig) waitCleanup(ctx context.Context, wantedOSCNames 
 
 // getWantedOSCNames returns the names of all OSC resources, that are currently needed based
 // on the configured worker pools.
-func (o *operatingSystemConfig) getWantedOSCNames() (sets.String, error) {
-	wantedOSCNames := sets.NewString()
+func (o *operatingSystemConfig) getWantedOSCNames() (sets.Set[string], error) {
+	wantedOSCNames := sets.New[string]()
 
 	for _, worker := range o.values.Workers {
 		if worker.Machine.Image == nil {
@@ -507,14 +511,16 @@ func (o *operatingSystemConfig) newDeployer(osc *extensionsv1alpha1.OperatingSys
 		clusterDomain:           o.values.ClusterDomain,
 		criName:                 criName,
 		images:                  o.values.Images,
-		kubeletCABundle:         kubeletCASecret.Data[secretutils.DataKeyCertificateBundle],
+		kubeletCABundle:         kubeletCASecret.Data[secretsutils.DataKeyCertificateBundle],
 		kubeletConfigParameters: kubeletConfigParameters,
 		kubeletCLIFlags:         kubeletCLIFlags,
 		kubeletDataVolumeName:   worker.KubeletDataVolumeName,
 		kubernetesVersion:       kubernetesVersion,
 		sshPublicKeys:           o.values.SSHPublicKeys,
+		sshAccessEnabled:        o.values.SSHAccessEnabled,
 		lokiIngressHostName:     o.values.LokiIngressHostName,
 		promtailEnabled:         o.values.PromtailEnabled,
+		nodeLocalDNSEnabled:     o.values.NodeLocalDNSEnabled,
 	}, nil
 }
 
@@ -572,8 +578,10 @@ type deployer struct {
 	kubeletDataVolumeName   *string
 	kubernetesVersion       *semver.Version
 	sshPublicKeys           []string
+	sshAccessEnabled        bool
 	lokiIngressHostName     string
 	promtailEnabled         bool
+	nodeLocalDNSEnabled     bool
 }
 
 // exposed for testing
@@ -613,12 +621,14 @@ func (d *deployer) deploy(ctx context.Context, operation string) (extensionsv1al
 			ClusterDomain:           d.clusterDomain,
 			CRIName:                 d.criName,
 			Images:                  d.images,
+			NodeLabels:              gardenerutils.NodeLabelsForWorkerPool(d.worker, d.nodeLocalDNSEnabled),
 			KubeletCABundle:         d.kubeletCABundle,
 			KubeletConfigParameters: d.kubeletConfigParameters,
 			KubeletCLIFlags:         d.kubeletCLIFlags,
 			KubeletDataVolumeName:   d.kubeletDataVolumeName,
 			KubernetesVersion:       d.kubernetesVersion,
 			SSHPublicKeys:           d.sshPublicKeys,
+			SSHAccessEnabled:        d.sshAccessEnabled,
 			PromtailEnabled:         d.promtailEnabled,
 			LokiIngress:             d.lokiIngressHostName,
 			APIServerURL:            d.apiServerURL,

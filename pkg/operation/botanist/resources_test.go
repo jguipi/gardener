@@ -19,16 +19,6 @@ import (
 	"context"
 	"io"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	fakekubernetes "github.com/gardener/gardener/pkg/client/kubernetes/fake"
-	"github.com/gardener/gardener/pkg/operation"
-	. "github.com/gardener/gardener/pkg/operation/botanist"
-	"github.com/gardener/gardener/pkg/operation/shoot"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
@@ -40,6 +30,16 @@ import (
 	kubernetesscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	kubernetesfake "github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	"github.com/gardener/gardener/pkg/operation"
+	. "github.com/gardener/gardener/pkg/operation/botanist"
+	"github.com/gardener/gardener/pkg/operation/shoot"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("Resources", func() {
@@ -60,7 +60,7 @@ var _ = Describe("Resources", func() {
 	BeforeEach(func() {
 		gardenClient = fakeclient.NewClientBuilder().WithScheme(kubernetes.GardenScheme).Build()
 		seedClient = fakeclient.NewClientBuilder().WithScheme(kubernetes.SeedScheme).Build()
-		seedClientSet = fakekubernetes.NewClientSetBuilder().WithClient(seedClient).Build()
+		seedClientSet = kubernetesfake.NewClientSetBuilder().WithClient(seedClient).Build()
 
 		botanist = &Botanist{Operation: &operation.Operation{
 			GardenClient:  gardenClient,
@@ -104,14 +104,14 @@ var _ = Describe("Resources", func() {
 			Expect(botanist.DeployReferencedResources(ctx)).To(Succeed())
 
 			managedResource := &resourcesv1alpha1.ManagedResource{}
-			Expect(seedClient.Get(ctx, kutil.Key(seedNamespace, "referenced-resources"), managedResource)).To(Succeed())
+			Expect(seedClient.Get(ctx, kubernetesutils.Key(seedNamespace, "referenced-resources"), managedResource)).To(Succeed())
 			Expect(managedResource.Spec.Class).To(PointTo(Equal("seed")))
 			Expect(managedResource.Spec.ForceOverwriteAnnotations).To(PointTo(BeFalse()))
 			Expect(managedResource.Spec.KeepObjects).To(PointTo(BeFalse()))
 			Expect(managedResource.Spec.SecretRefs).To(HaveLen(1))
 
 			managedResourceSecret := &corev1.Secret{}
-			Expect(seedClient.Get(ctx, kutil.Key(seedNamespace, "referenced-resources"), managedResourceSecret)).To(Succeed())
+			Expect(seedClient.Get(ctx, kubernetesutils.Key(seedNamespace, "referenced-resources"), managedResourceSecret)).To(Succeed())
 			Expect(managedResourceSecret.Data).To(HaveKey("referenced-resources"))
 
 			var (

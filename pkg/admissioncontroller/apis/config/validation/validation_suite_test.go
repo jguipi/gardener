@@ -15,13 +15,13 @@
 package validation_test
 
 import (
+	"testing"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"testing"
 )
 
 func TestValidation(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Gardener Admission Controller Config API Validation Suite")
+	RunSpecs(t, "AdmissionController APIs Config API Validation Suite")
 }

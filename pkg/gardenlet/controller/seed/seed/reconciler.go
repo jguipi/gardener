@@ -23,21 +23,22 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
 	operatorv1alpha1 "github.com/gardener/gardener/pkg/apis/operator/v1alpha1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
 	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 	"github.com/gardener/gardener/pkg/utils/imagevector"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 // Reconciler reconciles Seed resources and provisions or de-provisions the seed system components.
@@ -45,6 +46,7 @@ type Reconciler struct {
 	GardenClient                         client.Client
 	SeedClientSet                        kubernetes.Interface
 	Config                               config.GardenletConfiguration
+	Clock                                clock.Clock
 	Recorder                             record.EventRecorder
 	Identity                             *gardencorev1beta1.Gardener
 	ImageVector                          imagevector.ImageVector
@@ -68,15 +70,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	// Check if seed namespace is already available.
-	if err := r.GardenClient.Get(ctx, client.ObjectKey{Name: gutil.ComputeGardenNamespace(seed.Name)}, &corev1.Namespace{}); err != nil {
+	if err := r.GardenClient.Get(ctx, client.ObjectKey{Name: gardenerutils.ComputeGardenNamespace(seed.Name)}, &corev1.Namespace{}); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get seed namespace in garden cluster: %w", err)
 	}
 
 	seedObj, err := seedpkg.NewBuilder().WithSeedObject(seed).Build(ctx)
 	if err != nil {
 		log.Error(err, "Failed to create a Seed object")
-		conditionSeedBootstrapped := gardencorev1beta1helper.GetOrInitCondition(seed.Status.Conditions, gardencorev1beta1.SeedBootstrapped)
-		conditionSeedBootstrapped = gardencorev1beta1helper.UpdatedCondition(conditionSeedBootstrapped, gardencorev1beta1.ConditionUnknown, gardencorev1beta1.ConditionCheckError, fmt.Sprintf("Failed to create a Seed object (%s).", err.Error()))
+		conditionSeedBootstrapped := v1beta1helper.GetOrInitConditionWithClock(r.Clock, seed.Status.Conditions, gardencorev1beta1.SeedBootstrapped)
+		conditionSeedBootstrapped = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionSeedBootstrapped, gardencorev1beta1.ConditionUnknown, gardencorev1beta1.ConditionCheckError, fmt.Sprintf("Failed to create a Seed object (%s).", err.Error()))
 		if err := r.patchSeedStatus(ctx, r.GardenClient, seed, "<unknown>", nil, nil, conditionSeedBootstrapped); err != nil {
 			return reconcile.Result{}, fmt.Errorf("could not patch seed status after failed creation of Seed object: %w", err)
 		}
@@ -96,7 +98,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		}
 	}
 
-	seedIsGarden, err := kutil.ResourcesExist(ctx, r.SeedClientSet.Client(), operatorv1alpha1.SchemeGroupVersion.WithKind("GardenList"))
+	seedIsGarden, err := kubernetesutils.ResourcesExist(ctx, r.SeedClientSet.Client(), operatorv1alpha1.SchemeGroupVersion.WithKind("GardenList"))
 	if err != nil {
 		if !meta.IsNoMatchError(err) {
 			return reconcile.Result{}, err
@@ -121,7 +123,7 @@ func (r *Reconciler) patchSeedStatus(
 ) error {
 	patch := client.StrategicMergeFrom(seed.DeepCopy())
 
-	seed.Status.Conditions = gardencorev1beta1helper.MergeConditions(seed.Status.Conditions, updateConditions...)
+	seed.Status.Conditions = v1beta1helper.MergeConditions(seed.Status.Conditions, updateConditions...)
 	seed.Status.ObservedGeneration = seed.Generation
 	seed.Status.Gardener = r.Identity
 	seed.Status.ClientCertificateExpirationTimestamp = r.ClientCertificateExpirationTimestamp
@@ -143,13 +145,13 @@ func (r *Reconciler) patchSeedStatus(
 // an identity, it should not be changed.
 func determineClusterIdentity(ctx context.Context, c client.Client) (string, error) {
 	clusterIdentity := &corev1.ConfigMap{}
-	if err := c.Get(ctx, kutil.Key(metav1.NamespaceSystem, v1beta1constants.ClusterIdentity), clusterIdentity); err != nil {
+	if err := c.Get(ctx, kubernetesutils.Key(metav1.NamespaceSystem, v1beta1constants.ClusterIdentity), clusterIdentity); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return "", err
 		}
 
 		gardenNamespace := &corev1.Namespace{}
-		if err := c.Get(ctx, kutil.Key(metav1.NamespaceSystem), gardenNamespace); err != nil {
+		if err := c.Get(ctx, kubernetesutils.Key(metav1.NamespaceSystem), gardenNamespace); err != nil {
 			return "", err
 		}
 		return string(gardenNamespace.UID), nil
@@ -159,7 +161,7 @@ func determineClusterIdentity(ctx context.Context, c client.Client) (string, err
 
 func getDNSProviderSecretData(ctx context.Context, gardenClient client.Client, seed *gardencorev1beta1.Seed) (map[string][]byte, error) {
 	if dnsConfig := seed.Spec.DNS; dnsConfig.Provider != nil {
-		secret, err := kutil.GetSecretByReference(ctx, gardenClient, &dnsConfig.Provider.SecretRef)
+		secret, err := kubernetesutils.GetSecretByReference(ctx, gardenClient, &dnsConfig.Provider.SecretRef)
 		if err != nil {
 			return nil, err
 		}

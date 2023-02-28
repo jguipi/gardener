@@ -30,8 +30,10 @@ import (
 
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
+	kubeapiserverconstants "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/constants"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 	"github.com/gardener/gardener/test/framework"
 )
 
@@ -100,7 +102,7 @@ func verifyEtcdAffinity(ctx context.Context, seedClient kubernetes.Interface, sh
 		v1beta1constants.ETCDRoleMain,
 	} {
 		numberOfZones := 1
-		if gardencorev1beta1helper.IsMultiZonalShootControlPlane(shoot) {
+		if v1beta1helper.IsMultiZonalShootControlPlane(shoot) {
 			numberOfZones = 3
 		}
 
@@ -138,55 +140,30 @@ func DeployZeroDownTimeValidatorJob(ctx context.Context, c client.Client, testNa
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: namespace,
 					Labels: map[string]string{
-						v1beta1constants.LabelNetworkPolicyToDNS:            v1beta1constants.LabelNetworkPolicyAllowed,
-						v1beta1constants.LabelNetworkPolicyToShootAPIServer: v1beta1constants.LabelNetworkPolicyAllowed,
+						v1beta1constants.LabelNetworkPolicyToDNS: v1beta1constants.LabelNetworkPolicyAllowed,
+						// TODO(rfranzke): Drop this label in a future (after v1.65 got released).
+						v1beta1constants.LabelNetworkPolicyToShootAPIServer:                                                         v1beta1constants.LabelNetworkPolicyAllowed,
+						gardenerutils.NetworkPolicyLabel(v1beta1constants.DeploymentNameKubeAPIServer, kubeapiserverconstants.Port): v1beta1constants.LabelNetworkPolicyAllowed,
 					},
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:    "validator",
-							Image:   "alpine/curl",
-							Command: []string{"/bin/sh"},
-
-							//To avoid flakiness, consider downtime when curl fails consecutively back-to-back.
-							Args: []string{"-ec",
-								"echo '" +
-									"failed=0 ; threshold=2 ; " +
-									"while [ $failed -lt $threshold ] ; do  " +
-									"$(curl -k https://kube-apiserver/healthz -H \"Authorization: " + token + "\" -s -f  -o /dev/null ); " +
-									"if [ $? -gt 0 ] ; then let failed++; echo \"etcd is unhealthy and retrying\"; continue;  fi ; " +
-									"echo \"kube-apiserver is healthy\";  touch /tmp/healthy; let failed=0; " +
-									"sleep 1; done;  echo \"kube-apiserver is unhealthy\"; exit 1;" +
-									"' > test.sh && sh test.sh",
-							},
-							ReadinessProbe: &corev1.Probe{
-								InitialDelaySeconds: int32(5),
-								FailureThreshold:    int32(2),
-								PeriodSeconds:       int32(1),
-								SuccessThreshold:    int32(3),
-								ProbeHandler: corev1.ProbeHandler{
-									Exec: &corev1.ExecAction{
-										Command: []string{
-											"cat",
-											"/tmp/healthy",
-										},
-									},
-								},
-							},
-							LivenessProbe: &corev1.Probe{
-								InitialDelaySeconds: int32(5),
-								FailureThreshold:    int32(2),
-								PeriodSeconds:       int32(1),
-								ProbeHandler: corev1.ProbeHandler{
-									Exec: &corev1.ExecAction{
-										Command: []string{
-											"cat",
-											"/tmp/healthy",
-										},
-									},
-								},
-							},
+							Name:  "validator",
+							Image: "alpine/curl",
+							Command: []string{"/bin/sh", "-ec",
+								// To avoid flakiness, consider downtime when curl fails consecutively back-to-back three times.
+								"failed=0; threshold=3; " +
+									"while [ $failed -lt $threshold ]; do " +
+									"if curl -m 2 -k https://kube-apiserver/healthz -H 'Authorization: " + token + "' -s -f -o /dev/null ; then " +
+									"echo $(date +'%Y-%m-%dT%H:%M:%S.%3N%z') INFO: kube-apiserver is healthy.; failed=0; " +
+									"else failed=$((failed+1)); " +
+									"echo $(date +'%Y-%m-%dT%H:%M:%S.%3N%z') ERROR: kube-apiserver is unhealthy and retrying.; " +
+									"fi; " +
+									"sleep 1; " +
+									"done; " +
+									"echo $(date +'%Y-%m-%dT%H:%M:%S.%3N%z') ERROR: kube-apiserver is still unhealthy after $failed attempts. Considered as downtime.; " +
+									"exit 1; "},
 						},
 					},
 					RestartPolicy: corev1.RestartPolicyNever,

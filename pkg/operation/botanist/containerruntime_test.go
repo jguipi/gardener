@@ -18,16 +18,15 @@ import (
 	"context"
 	"fmt"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
+	"github.com/golang/mock/gomock"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	"github.com/gardener/gardener/pkg/operation"
 	. "github.com/gardener/gardener/pkg/operation/botanist"
 	mockcontainerruntime "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/containerruntime/mock"
 	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
-
-	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("ContainerRuntime", func() {
@@ -38,7 +37,7 @@ var _ = Describe("ContainerRuntime", func() {
 
 		ctx        = context.TODO()
 		fakeErr    = fmt.Errorf("fake")
-		shootState = &gardencorev1alpha1.ShootState{}
+		shootState = &gardencorev1beta1.ShootState{}
 	)
 
 	BeforeEach(func() {

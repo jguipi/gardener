@@ -31,6 +31,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	"github.com/gardener/gardener/pkg/api/indexer"
+	"github.com/gardener/gardener/pkg/apis/core"
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
@@ -124,7 +126,10 @@ var _ = Describe("Add", func() {
 		)
 
 		BeforeEach(func() {
-			fakeGardenClient = fakeclient.NewClientBuilder().WithScheme(kubernetes.GardenScheme).Build()
+			fakeGardenClient = fakeclient.NewClientBuilder().
+				WithScheme(kubernetes.GardenScheme).
+				WithIndex(&gardencorev1beta1.ControllerInstallation{}, core.SeedRefName, indexer.ControllerInstallationSeedRefNameIndexerFunc).
+				Build()
 			fakeSeedClient = fakeclient.NewClientBuilder().WithScheme(kubernetes.SeedScheme).Build()
 			mapFn = reconciler.MapObjectKindToControllerInstallations(extensionsv1alpha1.InfrastructureResource, func() client.ObjectList { return &extensionsv1alpha1.InfrastructureList{} })
 
@@ -132,7 +137,7 @@ var _ = Describe("Add", func() {
 			reconciler.SeedClient = fakeSeedClient
 			reconciler.SeedName = seedName
 			reconciler.Lock = &sync.RWMutex{}
-			reconciler.KindToRequiredTypes = make(map[string]sets.String)
+			reconciler.KindToRequiredTypes = make(map[string]sets.Set[string])
 
 			controllerRegistration1 = &gardencorev1beta1.ControllerRegistration{
 				ObjectMeta: metav1.ObjectMeta{Name: "reg1"},
@@ -190,7 +195,7 @@ var _ = Describe("Add", func() {
 
 		It("should do nothing when there are no infrastructure resources", func() {
 			Expect(mapFn(ctx, log, nil, nil)).To(BeEmpty())
-			Expect(reconciler.KindToRequiredTypes).To(HaveKeyWithValue(extensionsv1alpha1.InfrastructureResource, sets.NewString()))
+			Expect(reconciler.KindToRequiredTypes).To(HaveKeyWithValue(extensionsv1alpha1.InfrastructureResource, sets.New[string]()))
 		})
 
 		It("should do nothing when there are no controllerregistration resources", func() {
@@ -201,7 +206,7 @@ var _ = Describe("Add", func() {
 			Expect(fakeSeedClient.Create(ctx, infrastructure2)).To(Succeed())
 
 			Expect(mapFn(ctx, log, nil, nil)).To(BeEmpty())
-			Expect(reconciler.KindToRequiredTypes).To(HaveKeyWithValue(extensionsv1alpha1.InfrastructureResource, sets.NewString(type1, type2)))
+			Expect(reconciler.KindToRequiredTypes).To(HaveKeyWithValue(extensionsv1alpha1.InfrastructureResource, sets.New[string](type1, type2)))
 		})
 
 		It("should do nothing when there are no controllerinstallation resources", func() {
@@ -212,7 +217,7 @@ var _ = Describe("Add", func() {
 			Expect(fakeSeedClient.Create(ctx, infrastructure2)).To(Succeed())
 
 			Expect(mapFn(ctx, log, nil, nil)).To(BeEmpty())
-			Expect(reconciler.KindToRequiredTypes).To(HaveKeyWithValue(extensionsv1alpha1.InfrastructureResource, sets.NewString(type1, type2)))
+			Expect(reconciler.KindToRequiredTypes).To(HaveKeyWithValue(extensionsv1alpha1.InfrastructureResource, sets.New[string](type1, type2)))
 		})
 
 		It("should return the expected names of controllerinstallations", func() {
@@ -231,7 +236,7 @@ var _ = Describe("Add", func() {
 				reconcile.Request{NamespacedName: types.NamespacedName{Name: controllerInstallation1.Name}},
 				reconcile.Request{NamespacedName: types.NamespacedName{Name: controllerInstallation2.Name}},
 			))
-			Expect(reconciler.KindToRequiredTypes).To(HaveKeyWithValue(extensionsv1alpha1.InfrastructureResource, sets.NewString(type1, type2)))
+			Expect(reconciler.KindToRequiredTypes).To(HaveKeyWithValue(extensionsv1alpha1.InfrastructureResource, sets.New[string](type1, type2)))
 		})
 	})
 })

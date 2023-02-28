@@ -19,15 +19,6 @@ import (
 	"strconv"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/pkg/utils/managedresources"
-
 	"github.com/Masterminds/semver"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
@@ -41,17 +32,23 @@ import (
 	vpaautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	nodelocaldnsconstants "github.com/gardener/gardener/pkg/operation/botanist/component/nodelocaldns/constants"
+	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/managedresources"
 )
 
 const (
-	// IPVSAddress is the IPv4 address used by node-local-dns when IPVS is used.
-	IPVSAddress = "169.254.20.10"
 	// ManagedResourceName is the name of the ManagedResource containing the resource specifications.
 	ManagedResourceName = "shoot-core-node-local-dns"
 
 	labelKey = "k8s-app"
-	// LabelValue is the value of a label used for the identification of node-local-dns pods.
-	LabelValue = "node-local-dns"
 	// portServiceServer is the service port used for the DNS server.
 	portServiceServer = 53
 	// portServer is the target port used for the DNS server.
@@ -173,7 +170,7 @@ func (c *nodeLocalDNS) computeResourcesData() (map[string][]byte, error) {
             ` + c.forceTcpToClusterDNS() + `
     }
     prometheus :` + strconv.Itoa(prometheusPort) + `
-    health ` + IPVSAddress + `:` + strconv.Itoa(livenessProbePort) + `
+    health ` + nodelocaldnsconstants.IPVSAddress + `:` + strconv.Itoa(livenessProbePort) + `
     }
 in-addr.arpa:53 {
     errors
@@ -212,7 +209,7 @@ ip6.arpa:53 {
 			},
 		}
 	)
-	utilruntime.Must(kutil.MakeUnique(configMap))
+	utilruntime.Must(kubernetesutils.MakeUnique(configMap))
 
 	var (
 		service = &corev1.Service{
@@ -249,9 +246,10 @@ ip6.arpa:53 {
 				Name:      "node-local-dns",
 				Namespace: metav1.NamespaceSystem,
 				Labels: map[string]string{
-					labelKey:                        LabelValue,
-					v1beta1constants.GardenRole:     v1beta1constants.GardenRoleSystemComponent,
-					managedresources.LabelKeyOrigin: managedresources.LabelValueGardener,
+					labelKey:                                    nodelocaldnsconstants.LabelValue,
+					v1beta1constants.GardenRole:                 v1beta1constants.GardenRoleSystemComponent,
+					managedresources.LabelKeyOrigin:             managedresources.LabelValueGardener,
+					v1beta1constants.LabelNodeCriticalComponent: "true",
 				},
 			},
 			Spec: appsv1.DaemonSetSpec{
@@ -262,14 +260,15 @@ ip6.arpa:53 {
 				},
 				Selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
-						labelKey: LabelValue,
+						labelKey: nodelocaldnsconstants.LabelValue,
 					},
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
-							labelKey:                                 LabelValue,
-							v1beta1constants.LabelNetworkPolicyToDNS: "allowed",
+							labelKey:                                    nodelocaldnsconstants.LabelValue,
+							v1beta1constants.LabelNetworkPolicyToDNS:    "allowed",
+							v1beta1constants.LabelNodeCriticalComponent: "true",
 						},
 						Annotations: map[string]string{
 							"prometheus.io/port":   strconv.Itoa(prometheusPort),
@@ -287,10 +286,6 @@ ip6.arpa:53 {
 							},
 						},
 						Tolerations: []corev1.Toleration{
-							{
-								Key:      "CriticalAddonsOnly",
-								Operator: corev1.TolerationOpExists,
-							},
 							{
 								Operator: corev1.TolerationOpExists,
 								Effect:   corev1.TaintEffectNoExecute,
@@ -356,7 +351,7 @@ ip6.arpa:53 {
 								LivenessProbe: &corev1.Probe{
 									ProbeHandler: corev1.ProbeHandler{
 										HTTPGet: &corev1.HTTPGetAction{
-											Host: IPVSAddress,
+											Host: nodelocaldnsconstants.IPVSAddress,
 											Path: "/health",
 											Port: intstr.FromInt(livenessProbePort),
 										},
@@ -451,7 +446,6 @@ ip6.arpa:53 {
 						{
 							ContainerName: vpaautoscalingv1.DefaultContainerResourcePolicy,
 							MinAllowed: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("10m"),
 								corev1.ResourceMemory: resource.MustParse("20Mi"),
 							},
 							MaxAllowed: corev1.ResourceList{
@@ -474,7 +468,7 @@ ip6.arpa:53 {
 					v1beta1constants.AnnotationSeccompDefaultProfile:  v1beta1constants.AnnotationSeccompAllowedProfilesRuntimeDefaultValue,
 				},
 				Labels: map[string]string{
-					v1beta1constants.LabelApp: LabelValue,
+					v1beta1constants.LabelApp: nodelocaldnsconstants.LabelValue,
 				},
 			},
 			Spec: policyv1beta1.PodSecurityPolicySpec{
@@ -527,7 +521,7 @@ ip6.arpa:53 {
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "gardener.cloud:psp:kube-system:node-local-dns",
 				Labels: map[string]string{
-					v1beta1constants.LabelApp: LabelValue,
+					v1beta1constants.LabelApp: nodelocaldnsconstants.LabelValue,
 				},
 			},
 			Rules: []rbacv1.PolicyRule{
@@ -545,7 +539,7 @@ ip6.arpa:53 {
 				Name:      "gardener.cloud:psp:node-local-dns",
 				Namespace: metav1.NamespaceSystem,
 				Labels: map[string]string{
-					v1beta1constants.LabelApp: LabelValue,
+					v1beta1constants.LabelApp: nodelocaldnsconstants.LabelValue,
 				},
 				Annotations: map[string]string{resourcesv1alpha1.DeleteOnInvalidUpdate: "true"},
 			},
@@ -576,16 +570,16 @@ ip6.arpa:53 {
 
 func (c *nodeLocalDNS) bindIP() string {
 	if c.values.DNSServer != "" {
-		return IPVSAddress + " " + c.values.DNSServer
+		return nodelocaldnsconstants.IPVSAddress + " " + c.values.DNSServer
 	}
-	return IPVSAddress
+	return nodelocaldnsconstants.IPVSAddress
 }
 
 func (c *nodeLocalDNS) containerArg() string {
 	if c.values.DNSServer != "" {
-		return IPVSAddress + "," + c.values.DNSServer
+		return nodelocaldnsconstants.IPVSAddress + "," + c.values.DNSServer
 	}
-	return IPVSAddress
+	return nodelocaldnsconstants.IPVSAddress
 }
 
 func (c *nodeLocalDNS) forceTcpToClusterDNS() string {

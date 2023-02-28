@@ -15,19 +15,20 @@
 package botanist_test
 
 import (
+	"github.com/golang/mock/gomock"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	mockkubernetes "github.com/gardener/gardener/pkg/client/kubernetes/mock"
+	kubernetesmock "github.com/gardener/gardener/pkg/client/kubernetes/mock"
 	"github.com/gardener/gardener/pkg/features"
 	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
 	"github.com/gardener/gardener/pkg/operation"
 	. "github.com/gardener/gardener/pkg/operation/botanist"
+	"github.com/gardener/gardener/pkg/operation/garden"
 	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
 	"github.com/gardener/gardener/pkg/utils/imagevector"
 	"github.com/gardener/gardener/pkg/utils/test"
-
-	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("NodeProblemDetector", func() {
@@ -47,6 +48,7 @@ var _ = Describe("NodeProblemDetector", func() {
 				},
 			},
 		})
+		botanist.Garden = &garden.Garden{}
 	})
 
 	AfterEach(func() {
@@ -54,16 +56,16 @@ var _ = Describe("NodeProblemDetector", func() {
 	})
 
 	Describe("#DefaultNodeProblemDetector", func() {
-		var kubernetesClient *mockkubernetes.MockInterface
+		var kubernetesClient *kubernetesmock.MockInterface
 
 		BeforeEach(func() {
-			kubernetesClient = mockkubernetes.NewMockInterface(ctrl)
+			kubernetesClient = kubernetesmock.NewMockInterface(ctrl)
 
 			botanist.SeedClientSet = kubernetesClient
 		})
 
 		It("should successfully create a nodeproblemdetector interface", func() {
-			defer test.WithFeatureGate(gardenletfeatures.FeatureGate, features.APIServerSNI, false)()
+			defer test.WithFeatureGate(gardenletfeatures.FeatureGate, features.APIServerSNI, true)()
 			kubernetesClient.EXPECT().Client()
 			botanist.ImageVector = imagevector.ImageVector{{Name: "node-problem-detector"}}
 

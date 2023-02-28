@@ -49,7 +49,7 @@ type Reconciler struct {
 func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log := logf.FromContext(ctx)
 
-	exposureClass := &gardencorev1alpha1.ExposureClass{}
+	exposureClass := &gardencorev1beta1.ExposureClass{}
 	if err := r.Client.Get(ctx, request.NamespacedName, exposureClass); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.V(1).Info("Object is gone, stop reconciling")
@@ -60,7 +60,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	if exposureClass.DeletionTimestamp != nil {
 		// Ignore the exposure class if it has no gardener finalizer.
-		if !sets.NewString(exposureClass.Finalizers...).Has(gardencorev1alpha1.GardenerName) {
+		if !sets.New[string](exposureClass.Finalizers...).Has(gardencorev1alpha1.GardenerName) {
 			return reconcile.Result{}, nil
 		}
 

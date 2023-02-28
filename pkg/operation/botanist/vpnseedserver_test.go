@@ -20,9 +20,17 @@ import (
 	"net"
 
 	"github.com/Masterminds/semver"
+	"github.com/golang/mock/gomock"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/pointer"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	mockkubernetes "github.com/gardener/gardener/pkg/client/kubernetes/mock"
+	kubernetesmock "github.com/gardener/gardener/pkg/client/kubernetes/mock"
 	"github.com/gardener/gardener/pkg/features"
 	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
 	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
@@ -31,19 +39,12 @@ import (
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
 	mockvpnseedserver "github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver/mock"
+	"github.com/gardener/gardener/pkg/operation/garden"
 	"github.com/gardener/gardener/pkg/operation/seed"
 	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
 	"github.com/gardener/gardener/pkg/utils/images"
 	"github.com/gardener/gardener/pkg/utils/imagevector"
 	"github.com/gardener/gardener/pkg/utils/test"
-
-	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/pointer"
 )
 
 var _ = Describe("VPNSeedServer", func() {
@@ -54,7 +55,9 @@ var _ = Describe("VPNSeedServer", func() {
 
 	BeforeEach(func() {
 		ctrl = gomock.NewController(GinkgoT())
-		botanist = &Botanist{Operation: &operation.Operation{}}
+		botanist = &Botanist{Operation: &operation.Operation{
+			Garden: &garden.Garden{},
+		}}
 	})
 
 	AfterEach(func() {
@@ -62,15 +65,14 @@ var _ = Describe("VPNSeedServer", func() {
 	})
 
 	Describe("#DefaultVPNSeedServer", func() {
-		var kubernetesClient *mockkubernetes.MockInterface
+		var kubernetesClient *kubernetesmock.MockInterface
 
 		BeforeEach(func() {
-			kubernetesClient = mockkubernetes.NewMockInterface(ctrl)
+			kubernetesClient = kubernetesmock.NewMockInterface(ctrl)
 			kubernetesClient.EXPECT().Version()
 
 			botanist.SeedClientSet = kubernetesClient
 			botanist.Shoot = &shootpkg.Shoot{
-				DisableDNS: true,
 				Networks: &shootpkg.Networks{
 					Services: &net.IPNet{IP: net.IP{10, 0, 0, 1}, Mask: net.CIDRMask(10, 24)},
 					Pods:     &net.IPNet{IP: net.IP{10, 0, 0, 2}, Mask: net.CIDRMask(10, 24)},
@@ -109,6 +111,30 @@ var _ = Describe("VPNSeedServer", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
+		DescribeTable("should correctly set the deployment replicas",
+			func(hibernated, highAvailable bool, expectedReplicas int) {
+				defer test.WithFeatureGate(gardenletfeatures.FeatureGate, features.APIServerSNI, true)()
+				kubernetesClient.EXPECT().Client()
+				kubernetesClient.EXPECT().Version()
+				botanist.ImageVector = imagevector.ImageVector{{Name: images.ImageNameVpnSeedServer}, {Name: images.ImageNameApiserverProxy}}
+				botanist.Shoot.HibernationEnabled = hibernated
+				if highAvailable {
+					botanist.Shoot.VPNHighAvailabilityEnabled = highAvailable
+					botanist.Shoot.VPNHighAvailabilityNumberOfSeedServers = 2
+				}
+
+				vpnSeedServer, err := botanist.DefaultVPNSeedServer()
+				Expect(vpnSeedServer).NotTo(BeNil())
+				Expect(vpnSeedServer.GetValues().Replicas).To(Equal(int32(expectedReplicas)))
+				Expect(err).NotTo(HaveOccurred())
+			},
+
+			Entry("non-HA & awake", false, false, 1),
+			Entry("non-HA & hibernated", true, false, 0),
+			Entry("HA & awake", false, true, 2),
+			Entry("HA & hibernated", true, true, 0),
+		)
+
 		It("should return an error because the images cannot be found", func() {
 			botanist.ImageVector = imagevector.ImageVector{}
 
@@ -141,7 +167,6 @@ var _ = Describe("VPNSeedServer", func() {
 						VPNSeedServer: vpnSeedServer,
 					},
 				},
-				ReversedVPNEnabled: true,
 			}
 			botanist.Config = &config.GardenletConfiguration{
 				SNI: &config.SNI{
@@ -165,23 +190,9 @@ var _ = Describe("VPNSeedServer", func() {
 				DiffieHellmanKey: component.Secret{Name: secretNameDH, Checksum: secretChecksumDH},
 			})
 			vpnSeedServer.EXPECT().SetSeedNamespaceObjectUID(namespaceUID)
-			vpnSeedServer.EXPECT().SetSNIConfig(botanist.Config.SNI)
 		})
 
 		It("should set the secrets and SNI config and deploy", func() {
-			vpnSeedServer.EXPECT().Deploy(ctx)
-			Expect(botanist.DeployVPNServer(ctx)).To(Succeed())
-		})
-
-		It("should set the secrets and the ExposureClass handler config and deploy", func() {
-			botanist.ExposureClassHandler = &config.ExposureClassHandler{
-				Name: "test",
-				SNI:  &config.SNI{},
-			}
-
-			vpnSeedServer.EXPECT().SetExposureClassHandlerName(botanist.ExposureClassHandler.Name)
-			vpnSeedServer.EXPECT().SetSNIConfig(botanist.ExposureClassHandler.SNI)
-
 			vpnSeedServer.EXPECT().Deploy(ctx)
 			Expect(botanist.DeployVPNServer(ctx)).To(Succeed())
 		})

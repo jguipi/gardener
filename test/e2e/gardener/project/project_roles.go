@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -29,13 +30,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	. "github.com/onsi/ginkgo/v2"
-
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/logger"
 	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
@@ -88,7 +87,7 @@ var _ = Describe("Project Tests", Label("Project", "default"), func() {
 
 		DeferCleanup(func() {
 			By("Delete Project")
-			Expect(client.IgnoreNotFound(gutil.ConfirmDeletion(ctx, testClient, project))).To(Succeed())
+			Expect(client.IgnoreNotFound(gardenerutils.ConfirmDeletion(ctx, testClient, project))).To(Succeed())
 			Expect(client.IgnoreNotFound(testClient.Delete(ctx, project))).To(Succeed())
 
 			By("Wait for Project to be gone")

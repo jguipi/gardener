@@ -32,10 +32,6 @@ import (
 	"io"
 	"time"
 
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	"github.com/gardener/gardener/test/framework"
-	"github.com/gardener/gardener/test/framework/resources/templates"
-
 	"github.com/hashicorp/go-multierror"
 	"github.com/onsi/ginkgo/v2"
 	appsv1 "k8s.io/api/apps/v1"
@@ -43,6 +39,10 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	"github.com/gardener/gardener/test/framework"
+	"github.com/gardener/gardener/test/framework/resources/templates"
 )
 
 const (
@@ -67,7 +67,7 @@ var _ = ginkgo.Describe("Shoot network testing", func() {
 		}
 		ginkgo.By("Deploy the net test daemon set")
 		framework.ExpectNoError(f.RenderAndDeployTemplate(ctx, f.ShootClient, "network-nginx-serviceaccount.yaml.tpl", templateParams))
-		if !gardencorev1beta1helper.IsPSPDisabled(f.Shoot) {
+		if !v1beta1helper.IsPSPDisabled(f.Shoot) {
 			framework.ExpectNoError(f.RenderAndDeployTemplate(ctx, f.ShootClient, "network-nginx-rolebinding-privileged.yaml.tpl", templateParams))
 		}
 		framework.ExpectNoError(f.RenderAndDeployTemplate(ctx, f.ShootClient, templates.NginxDaemonSetName, templateParams))
@@ -82,7 +82,7 @@ var _ = ginkgo.Describe("Shoot network testing", func() {
 		podExecutor := framework.NewPodExecutor(f.ShootClient)
 
 		// check if all webservers can be reached from all nodes
-		ginkgo.By("test connectivity to webservers")
+		ginkgo.By("Check connectivity to webservers")
 		var allErrs error
 		for _, from := range pods.Items {
 			for _, to := range pods.Items {
@@ -102,7 +102,7 @@ var _ = ginkgo.Describe("Shoot network testing", func() {
 		}
 		framework.ExpectNoError(allErrs)
 	}, networkTestTimeout, framework.WithCAfterTest(func(ctx context.Context) {
-		ginkgo.By("cleanup network test daemonset")
+		ginkgo.By("Cleanup network test daemonset")
 		err := f.ShootClient.Client().Delete(ctx, &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: f.Namespace}})
 		if err != nil {
 			if !apierrors.IsNotFound(err) {

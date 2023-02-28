@@ -19,15 +19,6 @@ import (
 	"fmt"
 	"strconv"
 
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
-	"github.com/gardener/gardener/pkg/utils"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/pkg/utils/managedresources"
-	"github.com/gardener/gardener/pkg/utils/version"
-
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -40,6 +31,15 @@ import (
 	componentbaseconfigv1alpha1 "k8s.io/component-base/config/v1alpha1"
 	kubeproxyconfigv1alpha1 "k8s.io/kube-proxy/config/v1alpha1"
 	"k8s.io/utils/pointer"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
+	"github.com/gardener/gardener/pkg/utils"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/managedresources"
+	"github.com/gardener/gardener/pkg/utils/version"
 )
 
 const (
@@ -185,10 +185,10 @@ func (k *kubeProxy) computeCentralResourcesData() (map[string][]byte, error) {
 		roleBindingPSP    *rbacv1.RoleBinding
 	)
 
-	utilruntime.Must(kutil.MakeUnique(secret))
-	utilruntime.Must(kutil.MakeUnique(configMap))
-	utilruntime.Must(kutil.MakeUnique(configMapConntrackFixScript))
-	utilruntime.Must(kutil.MakeUnique(configMapCleanupScript))
+	utilruntime.Must(kubernetesutils.MakeUnique(secret))
+	utilruntime.Must(kubernetesutils.MakeUnique(configMap))
+	utilruntime.Must(kubernetesutils.MakeUnique(configMapConntrackFixScript))
+	utilruntime.Must(kubernetesutils.MakeUnique(configMapCleanupScript))
 
 	k.serviceAccount = serviceAccount
 	k.secret = secret
@@ -308,7 +308,10 @@ func (k *kubeProxy) computePoolResourcesData(pool WorkerPool) (map[string][]byte
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name(pool),
 				Namespace: metav1.NamespaceSystem,
-				Labels:    getSystemComponentLabels(),
+				Labels: utils.MergeStringMaps(
+					getSystemComponentLabels(),
+					map[string]string{v1beta1constants.LabelNodeCriticalComponent: "true"},
+				),
 			},
 			Spec: appsv1.DaemonSetSpec{
 				UpdateStrategy: appsv1.DaemonSetUpdateStrategy{
@@ -319,7 +322,11 @@ func (k *kubeProxy) computePoolResourcesData(pool WorkerPool) (map[string][]byte
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
-						Labels: utils.MergeStringMaps(getPoolLabels(pool), getSystemComponentLabels()),
+						Labels: utils.MergeStringMaps(
+							getPoolLabels(pool),
+							getSystemComponentLabels(),
+							map[string]string{v1beta1constants.LabelNodeCriticalComponent: "true"},
+						),
 					},
 					Spec: corev1.PodSpec{
 						NodeSelector: map[string]string{
@@ -384,10 +391,6 @@ func (k *kubeProxy) computePoolResourcesData(pool WorkerPool) (map[string][]byte
 						Tolerations: []corev1.Toleration{
 							{
 								Effect:   corev1.TaintEffectNoSchedule,
-								Operator: corev1.TolerationOpExists,
-							},
-							{
-								Key:      "CriticalAddonsOnly",
 								Operator: corev1.TolerationOpExists,
 							},
 							{

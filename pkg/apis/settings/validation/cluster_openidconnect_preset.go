@@ -15,10 +15,11 @@
 package validation
 
 import (
-	"github.com/gardener/gardener/pkg/apis/settings"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+
+	"github.com/gardener/gardener/pkg/apis/settings"
 )
 
 // ValidateClusterOpenIDConnectPreset validates a ClusterOpenIDConnectPreset object.
@@ -42,7 +43,7 @@ func ValidateClusterOpenIDConnectPresetUpdate(new, old *settings.ClusterOpenIDCo
 
 func validateClusterOpenIDConnectPresetSpec(spec *settings.ClusterOpenIDConnectPresetSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	allErrs = append(allErrs, metav1validation.ValidateLabelSelector(spec.ProjectSelector, fldPath.Child("projectSelector"))...)
+	allErrs = append(allErrs, metav1validation.ValidateLabelSelector(spec.ProjectSelector, metav1validation.LabelSelectorValidationOptions{AllowInvalidLabelValueInSelector: true}, fldPath.Child("projectSelector"))...)
 	allErrs = append(allErrs, validateOpenIDConnectPresetSpec(&spec.OpenIDConnectPresetSpec, fldPath)...)
 	return allErrs
 }

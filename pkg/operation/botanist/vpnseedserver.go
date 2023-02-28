@@ -17,14 +17,14 @@ package botanist
 import (
 	"context"
 
+	"k8s.io/utils/pointer"
+
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
 	"github.com/gardener/gardener/pkg/utils"
 	"github.com/gardener/gardener/pkg/utils/images"
 	"github.com/gardener/gardener/pkg/utils/imagevector"
-
-	"k8s.io/utils/pointer"
 )
 
 var (
@@ -80,15 +80,11 @@ func (b *Botanist) DefaultVPNSeedServer() (vpnseedserver.Interface, error) {
 			ServiceCIDR: b.Shoot.Networks.Services.String(),
 			NodeCIDR:    pointer.StringDeref(b.Shoot.GetInfo().Spec.Networking.Nodes, ""),
 		},
-		Replicas:                             1,
+		Replicas:                             b.Shoot.GetReplicas(1),
 		HighAvailabilityEnabled:              b.Shoot.VPNHighAvailabilityEnabled,
 		HighAvailabilityNumberOfSeedServers:  b.Shoot.VPNHighAvailabilityNumberOfSeedServers,
 		HighAvailabilityNumberOfShootClients: b.Shoot.VPNHighAvailabilityNumberOfShootClients,
-		IstioIngressGateway: vpnseedserver.IstioIngressGateway{
-			Namespace: *b.Config.SNI.Ingress.Namespace,
-			Labels:    b.Config.SNI.Ingress.Labels,
-		},
-		SeedVersion: b.Seed.KubernetesVersion,
+		SeedVersion:                          b.Seed.KubernetesVersion,
 	}
 
 	if b.APIServerSNIEnabled() {
@@ -96,31 +92,23 @@ func (b *Botanist) DefaultVPNSeedServer() (vpnseedserver.Interface, error) {
 	}
 
 	if b.Shoot.VPNHighAvailabilityEnabled {
-		values.Replicas = int32(b.Shoot.VPNHighAvailabilityNumberOfSeedServers)
+		values.Replicas = b.Shoot.GetReplicas(int32(b.Shoot.VPNHighAvailabilityNumberOfSeedServers))
 	}
 
 	return vpnseedserver.New(
 		b.SeedClientSet.Client(),
 		b.Shoot.SeedNamespace,
 		b.SecretsManager,
+		func() string { return b.IstioNamespace() },
 		values,
 	), nil
 }
 
 // DeployVPNServer deploys the vpn-seed-server.
 func (b *Botanist) DeployVPNServer(ctx context.Context) error {
-	if !b.Shoot.ReversedVPNEnabled {
-		return b.Shoot.Components.ControlPlane.VPNSeedServer.Destroy(ctx)
-	}
 
 	b.Shoot.Components.ControlPlane.VPNSeedServer.SetSecrets(vpnseedserver.Secrets{DiffieHellmanKey: b.getDiffieHellmanSecret()})
 	b.Shoot.Components.ControlPlane.VPNSeedServer.SetSeedNamespaceObjectUID(b.SeedNamespaceObject.UID)
-	b.Shoot.Components.ControlPlane.VPNSeedServer.SetSNIConfig(b.Config.SNI)
-
-	if b.ExposureClassHandler != nil {
-		b.Shoot.Components.ControlPlane.VPNSeedServer.SetExposureClassHandlerName(b.ExposureClassHandler.Name)
-		b.Shoot.Components.ControlPlane.VPNSeedServer.SetSNIConfig(b.ExposureClassHandler.SNI)
-	}
 
 	return b.Shoot.Components.ControlPlane.VPNSeedServer.Deploy(ctx)
 }

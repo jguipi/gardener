@@ -19,17 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/operatingsystemconfig/executor"
-	"github.com/gardener/gardener/pkg/operation/care"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/pkg/utils/test"
-
 	"github.com/Masterminds/semver"
 	druidv1alpha1 "github.com/gardener/etcd-druid/api/v1alpha1"
 	"github.com/golang/mock/gomock"
@@ -44,6 +33,17 @@ import (
 	testclock "k8s.io/utils/clock/testing"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/operatingsystemconfig/executor"
+	"github.com/gardener/gardener/pkg/operation/care"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var (
@@ -53,30 +53,6 @@ var (
 
 func roleOf(obj metav1.Object) string {
 	return obj.GetLabels()[v1beta1constants.GardenRole]
-}
-
-func constDeploymentLister(deployments []*appsv1.Deployment) kutil.DeploymentLister {
-	return kutil.NewDeploymentLister(func() ([]*appsv1.Deployment, error) {
-		return deployments, nil
-	})
-}
-
-func constStatefulSetLister(statefulSets []*appsv1.StatefulSet) kutil.StatefulSetLister {
-	return kutil.NewStatefulSetLister(func() ([]*appsv1.StatefulSet, error) {
-		return statefulSets, nil
-	})
-}
-
-func constWorkerLister(workers []*extensionsv1alpha1.Worker) kutil.WorkerLister {
-	return kutil.NewWorkerLister(func() ([]*extensionsv1alpha1.Worker, error) {
-		return workers, nil
-	})
-}
-
-func constEtcdLister(etcds []*druidv1alpha1.Etcd) kutil.EtcdLister {
-	return kutil.NewEtcdLister(func() ([]*druidv1alpha1.Etcd, error) {
-		return etcds, nil
-	})
 }
 
 func roleLabels(role string) map[string]string {
@@ -160,9 +136,7 @@ func newNode(name string, healthy bool, labels labels.Set, annotations map[strin
 }
 
 func beConditionWithStatus(status gardencorev1beta1.ConditionStatus) types.GomegaMatcher {
-	return MatchFields(IgnoreExtras, Fields{
-		"Status": Equal(status),
-	})
+	return WithStatus(status)
 }
 
 func beConditionWithMissingRequiredDeployment(deployments []*appsv1.Deployment) types.GomegaMatcher {
@@ -170,32 +144,24 @@ func beConditionWithMissingRequiredDeployment(deployments []*appsv1.Deployment) 
 	for _, deploy := range deployments {
 		names = append(names, deploy.Name)
 	}
-	return MatchFields(IgnoreExtras, Fields{
-		"Status":  Equal(gardencorev1beta1.ConditionFalse),
-		"Message": ContainSubstring("%s", names),
-	})
+	return And(WithStatus(gardencorev1beta1.ConditionFalse), WithMessage(fmt.Sprintf("%s", names)))
 }
 
 func beConditionWithStatusAndCodes(status gardencorev1beta1.ConditionStatus, codes ...gardencorev1beta1.ErrorCode) types.GomegaMatcher {
-	return MatchFields(IgnoreExtras, Fields{
-		"Status": Equal(status),
-		"Codes":  Equal(codes),
-	})
+	return And(WithStatus(status), WithCodes(codes...))
 }
 
 func beConditionWithStatusAndMsg(status gardencorev1beta1.ConditionStatus, reason, message string) types.GomegaMatcher {
-	return MatchFields(IgnoreExtras, Fields{
-		"Status":  Equal(status),
-		"Reason":  Equal(reason),
-		"Message": ContainSubstring(message),
-	})
+	return And(WithStatus(status), WithReason(reason), WithMessage(message))
 }
 
 var _ = Describe("health check", func() {
 	var (
-		condition = gardencorev1beta1.Condition{
-			Type: gardencorev1beta1.ConditionType("test"),
-		}
+		ctx        = context.TODO()
+		fakeClient client.Client
+		fakeClock  = testclock.NewFakeClock(time.Now())
+
+		condition                gardencorev1beta1.Condition
 		shoot                    = &gardencorev1beta1.Shoot{}
 		shootThatNeedsAutoscaler = &gardencorev1beta1.Shoot{
 			Spec: gardencorev1beta1.ShootSpec{
@@ -221,10 +187,9 @@ var _ = Describe("health check", func() {
 			},
 		}
 
-		seedNamespace      = "shoot--foo--bar"
-		kubernetesVersion  = semver.MustParse("1.23.3")
-		gardenerVersion    = semver.MustParse("1.30.0")
-		gardenerVersion153 = semver.MustParse("1.53.0")
+		seedNamespace     = "shoot--foo--bar"
+		kubernetesVersion = semver.MustParse("1.23.3")
+		gardenerVersion   = semver.MustParse("1.30.0")
 
 		// control plane deployments
 		gardenerResourceManagerDeployment = newDeployment(seedNamespace, v1beta1constants.DeploymentNameGardenerResourceManager, v1beta1constants.GardenRoleControlPlane, true)
@@ -261,11 +226,17 @@ var _ = Describe("health check", func() {
 
 		grafanaDeploymentOperators      = newDeployment(seedNamespace, v1beta1constants.DeploymentNameGrafanaOperators, v1beta1constants.GardenRoleMonitoring, true)
 		grafanaDeploymentUsers          = newDeployment(seedNamespace, v1beta1constants.DeploymentNameGrafanaUsers, v1beta1constants.GardenRoleMonitoring, true)
+		grafanaDeployment               = newDeployment(seedNamespace, v1beta1constants.DeploymentNameGrafana, v1beta1constants.GardenRoleMonitoring, true)
 		kubeStateMetricsShootDeployment = newDeployment(seedNamespace, v1beta1constants.DeploymentNameKubeStateMetrics, v1beta1constants.GardenRoleMonitoring, true)
 
-		requiredMonitoringControlPlaneDeployments = []*appsv1.Deployment{
+		requiredMonitoringControlPlaneDeploymentsLessThan164 = []*appsv1.Deployment{
 			grafanaDeploymentOperators,
 			grafanaDeploymentUsers,
+			kubeStateMetricsShootDeployment,
+		}
+
+		requiredMonitoringControlPlaneDeploymentsGreaterEqual164 = []*appsv1.Deployment{
+			grafanaDeployment,
 			kubeStateMetricsShootDeployment,
 		}
 
@@ -290,16 +261,30 @@ var _ = Describe("health check", func() {
 		}
 	)
 
+	BeforeEach(func() {
+		fakeClient = fakeclient.NewClientBuilder().WithScheme(kubernetes.SeedScheme).Build()
+		fakeClock = testclock.NewFakeClock(time.Now())
+		condition = gardencorev1beta1.Condition{
+			Type:               gardencorev1beta1.ConditionType("test"),
+			LastTransitionTime: metav1.Time{Time: fakeClock.Now()},
+		}
+	})
+
 	DescribeTable("#CheckControlPlane",
 		func(shoot *gardencorev1beta1.Shoot, deployments []*appsv1.Deployment, etcds []*druidv1alpha1.Etcd, workers []*extensionsv1alpha1.Worker, conditionMatcher types.GomegaMatcher) {
-			var (
-				deploymentLister = constDeploymentLister(deployments)
-				etcdLister       = constEtcdLister(etcds)
-				workerLister     = constWorkerLister(workers)
-				checker          = care.NewHealthChecker(map[gardencorev1beta1.ConditionType]time.Duration{}, nil, nil, kubernetesVersion, gardenerVersion)
-			)
+			for _, obj := range deployments {
+				Expect(fakeClient.Create(ctx, obj.DeepCopy())).To(Succeed(), "creating deployment "+client.ObjectKeyFromObject(obj).String())
+			}
+			for _, obj := range etcds {
+				Expect(fakeClient.Create(ctx, obj.DeepCopy())).To(Succeed(), "creating etcd "+client.ObjectKeyFromObject(obj).String())
+			}
+			for _, obj := range workers {
+				Expect(fakeClient.Create(ctx, obj.DeepCopy())).To(Succeed(), "creating worker "+client.ObjectKeyFromObject(obj).String())
+			}
 
-			exitCondition, err := checker.CheckControlPlane(shoot, seedNamespace, condition, deploymentLister, etcdLister, workerLister)
+			checker := care.NewHealthChecker(fakeClient, fakeClock, map[gardencorev1beta1.ConditionType]time.Duration{}, nil, nil, nil, kubernetesVersion, gardenerVersion)
+
+			exitCondition, err := checker.CheckControlPlane(ctx, shoot, seedNamespace, condition)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exitCondition).To(conditionMatcher)
 		},
@@ -325,9 +310,10 @@ var _ = Describe("health check", func() {
 			},
 			requiredControlPlaneEtcds,
 			[]*extensionsv1alpha1.Worker{
-				{Status: extensionsv1alpha1.WorkerStatus{DefaultStatus: extensionsv1alpha1.DefaultStatus{
-					LastOperation: &gardencorev1beta1.LastOperation{
-						State: gardencorev1beta1.LastOperationStateSucceeded}}}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: seedNamespace},
+					Status: extensionsv1alpha1.WorkerStatus{DefaultStatus: extensionsv1alpha1.DefaultStatus{
+						LastOperation: &gardencorev1beta1.LastOperation{
+							State: gardencorev1beta1.LastOperationStateSucceeded}}}},
 			},
 			BeNil()),
 		Entry("all healthy (needs VPA)",
@@ -340,9 +326,10 @@ var _ = Describe("health check", func() {
 			),
 			requiredControlPlaneEtcds,
 			[]*extensionsv1alpha1.Worker{
-				{Status: extensionsv1alpha1.WorkerStatus{DefaultStatus: extensionsv1alpha1.DefaultStatus{
-					LastOperation: &gardencorev1beta1.LastOperation{
-						State: gardencorev1beta1.LastOperationStateSucceeded}}}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: seedNamespace},
+					Status: extensionsv1alpha1.WorkerStatus{DefaultStatus: extensionsv1alpha1.DefaultStatus{
+						LastOperation: &gardencorev1beta1.LastOperation{
+							State: gardencorev1beta1.LastOperationStateSucceeded}}}},
 			},
 			BeNil()),
 		Entry("missing required deployments",
@@ -395,14 +382,18 @@ var _ = Describe("health check", func() {
 	)
 
 	DescribeTable("#CheckManagedResource",
-		func(conditions []gardencorev1beta1.Condition, upToDate bool, conditionMatcher types.GomegaMatcher) {
+		func(conditions []gardencorev1beta1.Condition, upToDate bool, stepTime bool, conditionMatcher types.GomegaMatcher) {
 			var (
 				mr      = new(resourcesv1alpha1.ManagedResource)
-				checker = care.NewHealthChecker(map[gardencorev1beta1.ConditionType]time.Duration{}, nil, nil, kubernetesVersion, gardenerVersion)
+				checker = care.NewHealthChecker(fakeClient, fakeClock, map[gardencorev1beta1.ConditionType]time.Duration{}, nil, &metav1.Duration{Duration: 5 * time.Minute}, nil, kubernetesVersion, gardenerVersion)
 			)
 
 			if !upToDate {
 				mr.Generation++
+			}
+
+			if stepTime {
+				fakeClock.Step(5 * time.Minute)
 			}
 
 			mr.Status.Conditions = conditions
@@ -413,6 +404,7 @@ var _ = Describe("health check", func() {
 		Entry("no conditions",
 			nil,
 			true,
+			false,
 			PointTo(beConditionWithStatusAndMsg(gardencorev1beta1.ConditionFalse, gardencorev1beta1.ManagedResourceMissingConditionError, ""))),
 		Entry("one true condition, one missing",
 			[]gardencorev1beta1.Condition{
@@ -422,6 +414,7 @@ var _ = Describe("health check", func() {
 				},
 			},
 			true,
+			false,
 			PointTo(beConditionWithStatusAndMsg(gardencorev1beta1.ConditionFalse, gardencorev1beta1.ManagedResourceMissingConditionError, string(resourcesv1alpha1.ResourcesHealthy)))),
 		Entry("multiple true conditions",
 			[]gardencorev1beta1.Condition{
@@ -436,9 +429,52 @@ var _ = Describe("health check", func() {
 					Type:   resourcesv1alpha1.ResourcesApplied,
 					Status: gardencorev1beta1.ConditionTrue,
 				},
+				{
+					Type:   resourcesv1alpha1.ResourcesProgressing,
+					Status: gardencorev1beta1.ConditionFalse,
+				},
 			},
 			true,
+			false,
 			BeNil()),
+		Entry("both progressing and healthy conditions are true for less than ManagedResourceProgressingThreshold",
+			[]gardencorev1beta1.Condition{
+				{
+					Type:               resourcesv1alpha1.ResourcesProgressing,
+					Status:             gardencorev1beta1.ConditionTrue,
+					LastTransitionTime: metav1.Time{Time: fakeClock.Now()},
+				},
+				{
+					Type:   resourcesv1alpha1.ResourcesHealthy,
+					Status: gardencorev1beta1.ConditionTrue,
+				},
+				{
+					Type:   resourcesv1alpha1.ResourcesApplied,
+					Status: gardencorev1beta1.ConditionTrue,
+				},
+			},
+			true,
+			false,
+			BeNil()),
+		Entry("both progressing and healthy conditions are true for more than ManagedResourceProgressingThreshold",
+			[]gardencorev1beta1.Condition{
+				{
+					Type:               resourcesv1alpha1.ResourcesProgressing,
+					Status:             gardencorev1beta1.ConditionTrue,
+					LastTransitionTime: metav1.Time{Time: fakeClock.Now()},
+				},
+				{
+					Type:   resourcesv1alpha1.ResourcesHealthy,
+					Status: gardencorev1beta1.ConditionTrue,
+				},
+				{
+					Type:   resourcesv1alpha1.ResourcesApplied,
+					Status: gardencorev1beta1.ConditionTrue,
+				},
+			},
+			true,
+			true,
+			PointTo(beConditionWithStatusAndMsg(gardencorev1beta1.ConditionFalse, gardencorev1beta1.ManagedResourceProgressingRolloutStuck, "ManagedResource  is progressing for more than 5m0s"))),
 		Entry("one false condition ResourcesApplied",
 			[]gardencorev1beta1.Condition{
 				{
@@ -451,6 +487,7 @@ var _ = Describe("health check", func() {
 				},
 			},
 			true,
+			false,
 			PointTo(beConditionWithStatus(gardencorev1beta1.ConditionFalse))),
 		Entry("one false condition ResourcesHealthy",
 			[]gardencorev1beta1.Condition{
@@ -464,23 +501,43 @@ var _ = Describe("health check", func() {
 				},
 			},
 			true,
+			false,
 			PointTo(beConditionWithStatus(gardencorev1beta1.ConditionFalse))),
-		Entry("multiple false conditions with reason & message",
+		Entry("multiple false conditions with reason & message & ResourcesApplied condition is not false",
 			[]gardencorev1beta1.Condition{
-				{
-					Type:    resourcesv1alpha1.ResourcesApplied,
-					Status:  gardencorev1beta1.ConditionFalse,
-					Reason:  "fooFailed",
-					Message: "foo is unhealthy",
-				},
 				{
 					Type:    resourcesv1alpha1.ResourcesHealthy,
 					Status:  gardencorev1beta1.ConditionFalse,
 					Reason:  "barFailed",
 					Message: "bar is unhealthy",
 				},
+				{
+					Type:    resourcesv1alpha1.ResourcesProgressing,
+					Status:  gardencorev1beta1.ConditionFalse,
+					Reason:  "fooFailed",
+					Message: "foo is unhealthy",
+				},
 			},
 			true,
+			false,
+			PointTo(beConditionWithStatusAndMsg(gardencorev1beta1.ConditionFalse, "barFailed", "bar is unhealthy"))),
+		Entry("multiple false conditions with reason & message & ResourcesApplied condition is false",
+			[]gardencorev1beta1.Condition{
+				{
+					Type:    resourcesv1alpha1.ResourcesHealthy,
+					Status:  gardencorev1beta1.ConditionFalse,
+					Reason:  "barFailed",
+					Message: "bar is unhealthy",
+				},
+				{
+					Type:    resourcesv1alpha1.ResourcesApplied,
+					Status:  gardencorev1beta1.ConditionFalse,
+					Reason:  "fooFailed",
+					Message: "foo is unhealthy",
+				},
+			},
+			true,
+			false,
 			PointTo(beConditionWithStatusAndMsg(gardencorev1beta1.ConditionFalse, "fooFailed", "foo is unhealthy"))),
 		Entry("outdated managed resource",
 			[]gardencorev1beta1.Condition{
@@ -498,6 +555,7 @@ var _ = Describe("health check", func() {
 				},
 			},
 			false,
+			false,
 			PointTo(beConditionWithStatusAndMsg(gardencorev1beta1.ConditionFalse, gardencorev1beta1.OutdatedStatusError, "outdated"))),
 		Entry("unknown condition status with reason and message",
 			[]gardencorev1beta1.Condition{
@@ -513,6 +571,7 @@ var _ = Describe("health check", func() {
 				},
 			},
 			true,
+			false,
 			PointTo(beConditionWithStatusAndMsg(gardencorev1beta1.ConditionFalse, "Unknown", "bar is unknown"))),
 	)
 
@@ -570,7 +629,7 @@ var _ = Describe("health check", func() {
 					return nil
 				})
 
-				checker := care.NewHealthChecker(map[gardencorev1beta1.ConditionType]time.Duration{}, nil, nil, kubernetesVersion, gardenerVersion)
+				checker := care.NewHealthChecker(fakeClient, fakeClock, map[gardencorev1beta1.ConditionType]time.Duration{}, nil, nil, nil, kubernetesVersion, gardenerVersion)
 
 				exitCondition, err := checker.CheckClusterNodes(ctx, c, workerPools, condition)
 				Expect(err).NotTo(HaveOccurred())
@@ -772,23 +831,36 @@ var _ = Describe("health check", func() {
 		)
 	})
 
+	gardenerVersion163 := semver.MustParse("1.63.0-mod1")
+	gardenerVersion164 := semver.MustParse("1.64.0")
 	DescribeTable("#CheckMonitoringControlPlane",
-		func(deployments []*appsv1.Deployment, statefulSets []*appsv1.StatefulSet, wantsShootMonitoring, wantsAlertmanager bool, conditionMatcher types.GomegaMatcher) {
-			var (
-				deploymentLister  = constDeploymentLister(deployments)
-				statefulSetLister = constStatefulSetLister(statefulSets)
-				checker           = care.NewHealthChecker(map[gardencorev1beta1.ConditionType]time.Duration{}, nil, nil, kubernetesVersion, gardenerVersion)
-			)
+		func(deployments []*appsv1.Deployment, statefulSets []*appsv1.StatefulSet, wantsShootMonitoring, wantsAlertmanager bool, gardenerVersion *semver.Version, conditionMatcher types.GomegaMatcher) {
+			for _, obj := range deployments {
+				Expect(fakeClient.Create(ctx, obj.DeepCopy())).To(Succeed(), "creating deployment "+client.ObjectKeyFromObject(obj).String())
+			}
+			for _, obj := range statefulSets {
+				Expect(fakeClient.Create(ctx, obj.DeepCopy())).To(Succeed(), "creating statefulset "+client.ObjectKeyFromObject(obj).String())
+			}
 
-			exitCondition, err := checker.CheckMonitoringControlPlane(seedNamespace, wantsShootMonitoring, wantsAlertmanager, condition, deploymentLister, statefulSetLister)
+			checker := care.NewHealthChecker(fakeClient, fakeClock, map[gardencorev1beta1.ConditionType]time.Duration{}, nil, nil, nil, kubernetesVersion, gardenerVersion)
+
+			exitCondition, err := checker.CheckMonitoringControlPlane(ctx, seedNamespace, wantsShootMonitoring, wantsAlertmanager, condition)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exitCondition).To(conditionMatcher)
 		},
-		Entry("all healthy",
-			requiredMonitoringControlPlaneDeployments,
+		Entry("all healthy (1.63)",
+			requiredMonitoringControlPlaneDeploymentsLessThan164,
 			requiredMonitoringControlPlaneStatefulSets,
 			true,
 			true,
+			gardenerVersion163,
+			BeNil()),
+		Entry("all healthy (1.64)",
+			requiredMonitoringControlPlaneDeploymentsGreaterEqual164,
+			requiredMonitoringControlPlaneStatefulSets,
+			true,
+			true,
+			gardenerVersion164,
 			BeNil()),
 		Entry("required deployment missing",
 			[]*appsv1.Deployment{
@@ -797,51 +869,58 @@ var _ = Describe("health check", func() {
 			requiredMonitoringControlPlaneStatefulSets,
 			true,
 			true,
+			gardenerVersion164,
 			PointTo(beConditionWithStatus(gardencorev1beta1.ConditionFalse))),
 		Entry("required stateful set set missing",
-			requiredMonitoringControlPlaneDeployments,
+			requiredMonitoringControlPlaneDeploymentsGreaterEqual164,
 			[]*appsv1.StatefulSet{
 				prometheusStatefulSet,
 			},
 			true,
 			true,
+			gardenerVersion164,
 			PointTo(beConditionWithStatus(gardencorev1beta1.ConditionFalse))),
 		Entry("deployment unhealthy",
 			[]*appsv1.Deployment{
-				newDeployment(grafanaDeploymentOperators.Namespace, grafanaDeploymentOperators.Name, roleOf(grafanaDeploymentOperators), false),
-				grafanaDeploymentUsers,
+				newDeployment(grafanaDeployment.Namespace, grafanaDeployment.Name, roleOf(grafanaDeployment), false),
 				kubeStateMetricsShootDeployment,
 			},
 			requiredMonitoringControlPlaneStatefulSets,
 			true,
 			true,
+			gardenerVersion164,
 			PointTo(beConditionWithStatus(gardencorev1beta1.ConditionFalse))),
 		Entry("stateful set unhealthy",
-			requiredMonitoringControlPlaneDeployments,
+			requiredMonitoringControlPlaneDeploymentsGreaterEqual164,
 			[]*appsv1.StatefulSet{
 				newStatefulSet(alertManagerStatefulSet.Namespace, alertManagerStatefulSet.Name, roleOf(alertManagerStatefulSet), false),
 				prometheusStatefulSet,
 			},
 			true,
 			true,
+			gardenerVersion164,
 			PointTo(beConditionWithStatus(gardencorev1beta1.ConditionFalse))),
 		Entry("shoot has monitoring disabled, omit all checks",
 			[]*appsv1.Deployment{},
 			[]*appsv1.StatefulSet{},
 			false,
 			true,
+			gardenerVersion164,
 			BeNil()),
 	)
 
 	DescribeTable("#CheckLoggingControlPlane",
 		func(deployments []*appsv1.Deployment, statefulSets []*appsv1.StatefulSet, isTestingShoot, eventLoggingEnabled, lokiEnabled bool, conditionMatcher types.GomegaMatcher, gardenerVersion *semver.Version) {
-			var (
-				statefulSetLister = constStatefulSetLister(statefulSets)
-				deploymentLister  = constDeploymentLister(deployments)
-				checker           = care.NewHealthChecker(map[gardencorev1beta1.ConditionType]time.Duration{}, nil, nil, kubernetesVersion, gardenerVersion)
-			)
+			for _, obj := range deployments {
+				Expect(fakeClient.Create(ctx, obj.DeepCopy())).To(Succeed(), "creating deployment "+client.ObjectKeyFromObject(obj).String())
+			}
+			for _, obj := range statefulSets {
+				Expect(fakeClient.Create(ctx, obj.DeepCopy())).To(Succeed(), "creating statefulset "+client.ObjectKeyFromObject(obj).String())
+			}
 
-			exitCondition, err := checker.CheckLoggingControlPlane(seedNamespace, isTestingShoot, eventLoggingEnabled, lokiEnabled, condition, deploymentLister, statefulSetLister)
+			checker := care.NewHealthChecker(fakeClient, fakeClock, map[gardencorev1beta1.ConditionType]time.Duration{}, nil, nil, nil, kubernetesVersion, gardenerVersion)
+
+			exitCondition, err := checker.CheckLoggingControlPlane(ctx, seedNamespace, isTestingShoot, eventLoggingEnabled, lokiEnabled, condition)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exitCondition).To(conditionMatcher)
 		},
@@ -852,7 +931,7 @@ var _ = Describe("health check", func() {
 			true,
 			true,
 			BeNil(),
-			gardenerVersion153,
+			gardenerVersion,
 		),
 		Entry("required stateful set missing",
 			requiredLoggingControlPlaneDeployments,
@@ -861,7 +940,7 @@ var _ = Describe("health check", func() {
 			true,
 			true,
 			PointTo(beConditionWithStatus(gardencorev1beta1.ConditionFalse)),
-			gardenerVersion153,
+			gardenerVersion,
 		),
 		Entry("required deployment is missing",
 			nil,
@@ -870,15 +949,8 @@ var _ = Describe("health check", func() {
 			true,
 			true,
 			PointTo(beConditionWithStatus(gardencorev1beta1.ConditionFalse)),
-			gardenerVersion153),
-		Entry("required deployment is missing, but garden version is 1.52.0",
-			nil,
-			requiredLoggingControlPlaneStatefulSets,
-			false,
-			true,
-			true,
-			BeNil(),
-			semver.MustParse("1.52.0")),
+			gardenerVersion,
+		),
 		Entry("stateful set unhealthy",
 			requiredLoggingControlPlaneDeployments,
 			[]*appsv1.StatefulSet{
@@ -888,7 +960,7 @@ var _ = Describe("health check", func() {
 			true,
 			true,
 			PointTo(beConditionWithStatus(gardencorev1beta1.ConditionFalse)),
-			gardenerVersion153,
+			gardenerVersion,
 		),
 		Entry("stateful set unhealthy",
 			[]*appsv1.Deployment{
@@ -899,7 +971,7 @@ var _ = Describe("health check", func() {
 			true,
 			true,
 			PointTo(beConditionWithStatus(gardencorev1beta1.ConditionFalse)),
-			gardenerVersion153,
+			gardenerVersion,
 		),
 		Entry("shoot purpose is testing, omit all checks",
 			[]*appsv1.Deployment{},
@@ -908,7 +980,7 @@ var _ = Describe("health check", func() {
 			true,
 			true,
 			BeNil(),
-			gardenerVersion153,
+			gardenerVersion,
 		),
 		Entry("loki is disabled in gardenlet config, omit stateful set check",
 			requiredLoggingControlPlaneDeployments,
@@ -917,7 +989,7 @@ var _ = Describe("health check", func() {
 			true,
 			false,
 			BeNil(),
-			gardenerVersion153,
+			gardenerVersion,
 		),
 		Entry("event logging is disabled in gardenlet config, omit deployment check",
 			[]*appsv1.Deployment{},
@@ -926,16 +998,14 @@ var _ = Describe("health check", func() {
 			false,
 			true,
 			BeNil(),
-			gardenerVersion153),
+			gardenerVersion,
+		),
 	)
 
 	DescribeTable("#FailedCondition",
-		func(thresholds map[gardencorev1beta1.ConditionType]time.Duration, lastOperation *gardencorev1beta1.LastOperation, transitionTime metav1.Time, now time.Time, condition gardencorev1beta1.Condition, reason, message string, expected types.GomegaMatcher) {
-			checker := care.NewHealthChecker(thresholds, nil, lastOperation, kubernetesVersion, gardenerVersion)
-			DeferCleanup(test.WithVars(
-				&gardencorev1beta1helper.Clock, testclock.NewFakeClock(transitionTime.Time),
-				&care.Now, func() time.Time { return now },
-			))
+		func(thresholds map[gardencorev1beta1.ConditionType]time.Duration, lastOperation *gardencorev1beta1.LastOperation, now time.Time, condition gardencorev1beta1.Condition, reason, message string, expected types.GomegaMatcher) {
+			fakeClock.SetTime(now)
+			checker := care.NewHealthChecker(fakeClient, fakeClock, thresholds, nil, nil, lastOperation, kubernetesVersion, gardenerVersion)
 			Expect(checker.FailedCondition(condition, reason, message)).To(expected)
 		},
 		Entry("true condition with threshold",
@@ -943,7 +1013,6 @@ var _ = Describe("health check", func() {
 				gardencorev1beta1.ShootControlPlaneHealthy: time.Minute,
 			},
 			nil,
-			zeroMetaTime,
 			zeroTime,
 			gardencorev1beta1.Condition{
 				Type:   gardencorev1beta1.ShootControlPlaneHealthy,
@@ -955,7 +1024,6 @@ var _ = Describe("health check", func() {
 		Entry("true condition without condition threshold",
 			map[gardencorev1beta1.ConditionType]time.Duration{},
 			nil,
-			zeroMetaTime,
 			zeroTime,
 			gardencorev1beta1.Condition{
 				Type:   gardencorev1beta1.ShootControlPlaneHealthy,
@@ -972,7 +1040,6 @@ var _ = Describe("health check", func() {
 				State:          gardencorev1beta1.LastOperationStateSucceeded,
 				LastUpdateTime: zeroMetaTime,
 			},
-			zeroMetaTime,
 			zeroTime,
 			gardencorev1beta1.Condition{
 				Type:   gardencorev1beta1.ShootControlPlaneHealthy,
@@ -989,7 +1056,6 @@ var _ = Describe("health check", func() {
 				State:          gardencorev1beta1.LastOperationStateSucceeded,
 				LastUpdateTime: zeroMetaTime,
 			},
-			zeroMetaTime,
 			zeroTime.Add(time.Minute+time.Second),
 			gardencorev1beta1.Condition{
 				Type:               gardencorev1beta1.ShootControlPlaneHealthy,
@@ -1007,7 +1073,6 @@ var _ = Describe("health check", func() {
 				State:          gardencorev1beta1.LastOperationStateSucceeded,
 				LastUpdateTime: zeroMetaTime,
 			},
-			zeroMetaTime,
 			zeroTime.Add(time.Minute+time.Second),
 			gardencorev1beta1.Condition{
 				Type:   gardencorev1beta1.ShootControlPlaneHealthy,
@@ -1024,7 +1089,6 @@ var _ = Describe("health check", func() {
 				State:          gardencorev1beta1.LastOperationStateSucceeded,
 				LastUpdateTime: zeroMetaTime,
 			},
-			zeroMetaTime,
 			zeroTime.Add(time.Minute-time.Second),
 			gardencorev1beta1.Condition{
 				Type:   gardencorev1beta1.ShootControlPlaneHealthy,
@@ -1041,7 +1105,6 @@ var _ = Describe("health check", func() {
 				State:          gardencorev1beta1.LastOperationStateSucceeded,
 				LastUpdateTime: zeroMetaTime,
 			},
-			zeroMetaTime,
 			zeroTime.Add(time.Minute+time.Second),
 			gardencorev1beta1.Condition{
 				Type:   gardencorev1beta1.ShootControlPlaneHealthy,
@@ -1059,7 +1122,6 @@ var _ = Describe("health check", func() {
 				State:          gardencorev1beta1.LastOperationStateSucceeded,
 				LastUpdateTime: zeroMetaTime,
 			},
-			zeroMetaTime,
 			zeroTime.Add(time.Minute+time.Second),
 			gardencorev1beta1.Condition{
 				Type:   gardencorev1beta1.ShootControlPlaneHealthy,
@@ -1077,7 +1139,6 @@ var _ = Describe("health check", func() {
 				State:          gardencorev1beta1.LastOperationStateSucceeded,
 				LastUpdateTime: zeroMetaTime,
 			},
-			zeroMetaTime,
 			zeroTime.Add(time.Minute+time.Second),
 			gardencorev1beta1.Condition{
 				Type:    gardencorev1beta1.ShootControlPlaneHealthy,
@@ -1090,7 +1151,6 @@ var _ = Describe("health check", func() {
 		Entry("failed condition without thresholds",
 			map[gardencorev1beta1.ConditionType]time.Duration{},
 			nil,
-			zeroMetaTime,
 			zeroTime,
 			gardencorev1beta1.Condition{
 				Type:   gardencorev1beta1.ShootControlPlaneHealthy,
@@ -1104,7 +1164,7 @@ var _ = Describe("health check", func() {
 	// CheckExtensionCondition
 	DescribeTable("#CheckExtensionCondition - HealthCheckReport",
 		func(healthCheckOutdatedThreshold *metav1.Duration, condition gardencorev1beta1.Condition, extensionsConditions []care.ExtensionCondition, expected types.GomegaMatcher) {
-			checker := care.NewHealthChecker(nil, healthCheckOutdatedThreshold, nil, kubernetesVersion, gardenerVersion)
+			checker := care.NewHealthChecker(fakeClient, fakeClock, nil, healthCheckOutdatedThreshold, nil, nil, kubernetesVersion, gardenerVersion)
 			updatedCondition := checker.CheckExtensionCondition(condition, extensionsConditions)
 			if expected == nil {
 				Expect(updatedCondition).To(BeNil())
@@ -1177,9 +1237,7 @@ var _ = Describe("health check", func() {
 					ExtensionNamespace: "shoot-namespace-in-seed",
 				},
 			},
-			PointTo(MatchFields(IgnoreExtras, Fields{
-				"Status": Equal(gardencorev1beta1.ConditionUnknown),
-			})),
+			PointTo(beConditionWithStatus(gardencorev1beta1.ConditionUnknown)),
 		),
 		Entry("should determine that health check report is outdated",
 			// 2 minute threshold for outdated health check reports
@@ -1201,9 +1259,7 @@ var _ = Describe("health check", func() {
 					LastHeartbeatTime: &metav1.MicroTime{Time: time.Now().Add(time.Minute * -3)},
 				},
 			},
-			PointTo(MatchFields(IgnoreExtras, Fields{
-				"Status": Equal(gardencorev1beta1.ConditionUnknown),
-			})),
+			PointTo(beConditionWithStatus(gardencorev1beta1.ConditionUnknown)),
 		),
 		Entry("health check reports status progressing",
 			nil,
@@ -1220,11 +1276,7 @@ var _ = Describe("health check", func() {
 					LastHeartbeatTime: &metav1.MicroTime{Time: time.Now()},
 				},
 			},
-			PointTo(MatchFields(IgnoreExtras, Fields{
-				"Status":  Equal(gardencorev1beta1.ConditionProgressing),
-				"Reason":  Equal("FooBar"),
-				"Message": Equal("Baz"),
-			})),
+			PointTo(beConditionWithStatusReasonAndMessage(gardencorev1beta1.ConditionProgressing, "FooBar", "Baz")),
 		),
 		Entry("health check reports status false",
 			nil,
@@ -1239,11 +1291,7 @@ var _ = Describe("health check", func() {
 					LastHeartbeatTime: &metav1.MicroTime{Time: time.Now()},
 				},
 			},
-			PointTo(MatchFields(IgnoreExtras, Fields{
-				"Status":  Equal(gardencorev1beta1.ConditionFalse),
-				"Reason":  Equal("FooUnhealthyReport"),
-				"Message": ContainSubstring("failing health check"),
-			})),
+			PointTo(beConditionWithStatusReasonAndMessage(gardencorev1beta1.ConditionFalse, "FooUnhealthyReport", "failing health check")),
 		),
 		Entry("health check reports status unknown",
 			nil,
@@ -1258,18 +1306,14 @@ var _ = Describe("health check", func() {
 					LastHeartbeatTime: &metav1.MicroTime{Time: time.Now()},
 				},
 			},
-			PointTo(MatchFields(IgnoreExtras, Fields{
-				"Status":  Equal(gardencorev1beta1.ConditionFalse),
-				"Reason":  Equal("FooUnhealthyReport"),
-				"Message": ContainSubstring("failing health check"),
-			})),
+			PointTo(beConditionWithStatusReasonAndMessage(gardencorev1beta1.ConditionFalse, "FooUnhealthyReport", "failing health check")),
 		),
 	)
 
 	DescribeTable("#PardonCondition",
 		func(condition gardencorev1beta1.Condition, lastOp *gardencorev1beta1.LastOperation, lastErrors []gardencorev1beta1.LastError, expected types.GomegaMatcher) {
 			conditions := []gardencorev1beta1.Condition{condition}
-			updatedConditions := care.PardonConditions(conditions, lastOp, lastErrors)
+			updatedConditions := care.PardonConditions(fakeClock, conditions, lastOp, lastErrors)
 			Expect(updatedConditions).To(expected)
 		},
 		Entry("should pardon false ConditionStatus when the last operation is nil",

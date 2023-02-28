@@ -22,9 +22,6 @@ import (
 	"net"
 	"time"
 
-	bootstraputil "github.com/gardener/gardener/pkg/gardenlet/bootstrap/util"
-	"github.com/gardener/gardener/pkg/utils/retry"
-
 	"github.com/go-logr/logr"
 	certificatesv1 "k8s.io/api/certificates/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +31,9 @@ import (
 	csrutil "k8s.io/client-go/util/certificate/csr"
 	"k8s.io/client-go/util/keyutil"
 	"k8s.io/utils/pointer"
+
+	gardenletbootstraputil "github.com/gardener/gardener/pkg/gardenlet/bootstrap/util"
+	"github.com/gardener/gardener/pkg/utils/retry"
 )
 
 // RequestCertificate will create a certificate signing request for the Gardenlet
@@ -71,9 +71,9 @@ func RequestCertificate(
 	return certData, privateKeyData, csrName, nil
 }
 
-// DigestedName is an alias for bootstraputil.DigestedName.
+// DigestedName is an alias for gardenletbootstraputil.DigestedName.
 // Exposed for testing.
-var DigestedName = bootstraputil.DigestedName
+var DigestedName = gardenletbootstraputil.DigestedName
 
 // requestCertificate will create a certificate signing request for the Gardenlet
 // and send it to API server, then it will watch the object's

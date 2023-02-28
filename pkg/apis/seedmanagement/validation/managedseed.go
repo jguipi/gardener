@@ -23,23 +23,17 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/pointer"
 
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	"github.com/gardener/gardener/pkg/apis/seedmanagement"
 	"github.com/gardener/gardener/pkg/apis/seedmanagement/helper"
 	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	confighelper "github.com/gardener/gardener/pkg/gardenlet/apis/config/helper"
-	configvalidation "github.com/gardener/gardener/pkg/gardenlet/apis/config/validation"
+	gardenlethelper "github.com/gardener/gardener/pkg/gardenlet/apis/config/helper"
+	gardenletvalidation "github.com/gardener/gardener/pkg/gardenlet/apis/config/validation"
 	"github.com/gardener/gardener/pkg/utils"
 )
 
 // ValidateManagedSeed validates a ManagedSeed object.
 func ValidateManagedSeed(managedSeed *seedmanagement.ManagedSeed) field.ErrorList {
 	allErrs := field.ErrorList{}
-
-	// Ensure namespace is garden
-	if managedSeed.Namespace != v1beta1constants.GardenNamespace {
-		allErrs = append(allErrs, field.Invalid(field.NewPath("metadata", "namespace"), managedSeed.Namespace, "namespace must be garden"))
-	}
 
 	allErrs = append(allErrs, apivalidation.ValidateObjectMeta(&managedSeed.ObjectMeta, true, apivalidation.NameIsDNSLabel, field.NewPath("metadata"))...)
 	allErrs = append(allErrs, ValidateManagedSeedSpec(&managedSeed.Spec, field.NewPath("spec"), false)...)
@@ -156,7 +150,7 @@ func validateGardenlet(gardenlet *seedmanagement.Gardenlet, fldPath *field.Path,
 		configPath := fldPath.Child("config")
 
 		// Convert gardenlet config to an internal version
-		gardenletConfig, err := confighelper.ConvertGardenletConfiguration(gardenlet.Config)
+		gardenletConfig, err := gardenlethelper.ConvertGardenletConfiguration(gardenlet.Config)
 		if err != nil {
 			allErrs = append(allErrs, field.Invalid(configPath, gardenlet.Config, fmt.Sprintf("could not convert gardenlet config: %v", err)))
 			return allErrs
@@ -183,14 +177,14 @@ func validateGardenletUpdate(newGardenlet, oldGardenlet *seedmanagement.Gardenle
 		configPath := fldPath.Child("config")
 
 		// Convert new gardenlet config to an internal version
-		newGardenletConfig, err := confighelper.ConvertGardenletConfiguration(newGardenlet.Config)
+		newGardenletConfig, err := gardenlethelper.ConvertGardenletConfiguration(newGardenlet.Config)
 		if err != nil {
 			allErrs = append(allErrs, field.Invalid(configPath, newGardenlet.Config, fmt.Sprintf("could not convert gardenlet config: %v", err)))
 			return allErrs
 		}
 
 		// Convert old gardenlet config to an internal version
-		oldGardenletConfig, err := confighelper.ConvertGardenletConfiguration(oldGardenlet.Config)
+		oldGardenletConfig, err := gardenlethelper.ConvertGardenletConfiguration(oldGardenlet.Config)
 		if err != nil {
 			allErrs = append(allErrs, field.Invalid(configPath, oldGardenlet.Config, fmt.Sprintf("could not convert gardenlet config: %v", err)))
 			return allErrs
@@ -263,7 +257,7 @@ func validateGardenletConfiguration(gardenletConfig *config.GardenletConfigurati
 	}
 
 	// Validate gardenlet config
-	allErrs = append(allErrs, configvalidation.ValidateGardenletConfiguration(gardenletConfig, fldPath, inTemplate)...)
+	allErrs = append(allErrs, gardenletvalidation.ValidateGardenletConfiguration(gardenletConfig, fldPath, inTemplate)...)
 
 	if gardenletConfig.GardenClientConnection != nil {
 		allErrs = append(allErrs, validateGardenClientConnection(gardenletConfig.GardenClientConnection, bootstrap, mergeWithParent, fldPath.Child("gardenClientConnection"))...)
@@ -275,7 +269,7 @@ func validateGardenletConfiguration(gardenletConfig *config.GardenletConfigurati
 func validateGardenletConfigurationUpdate(newGardenletConfig, oldGardenletConfig *config.GardenletConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	allErrs = append(allErrs, configvalidation.ValidateGardenletConfigurationUpdate(newGardenletConfig, oldGardenletConfig, fldPath)...)
+	allErrs = append(allErrs, gardenletvalidation.ValidateGardenletConfigurationUpdate(newGardenletConfig, oldGardenletConfig, fldPath)...)
 
 	return allErrs
 }

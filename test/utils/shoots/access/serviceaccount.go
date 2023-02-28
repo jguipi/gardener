@@ -19,13 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/controllerutils"
-	"github.com/gardener/gardener/pkg/utils"
-	"github.com/gardener/gardener/pkg/utils/flow"
-	"github.com/gardener/gardener/pkg/utils/retry"
-
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -33,6 +26,13 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/controllerutils"
+	"github.com/gardener/gardener/pkg/utils"
+	"github.com/gardener/gardener/pkg/utils/flow"
+	"github.com/gardener/gardener/pkg/utils/retry"
 )
 
 const namespaceE2ETestServiceAccountTokenAccess = metav1.NamespaceDefault
@@ -53,12 +53,11 @@ func CreateShootClientFromDynamicServiceAccountToken(ctx context.Context, shootC
 			},
 		}
 
-		result, err := shootClient.Kubernetes().CoreV1().ServiceAccounts(serviceAccount.Namespace).CreateToken(ctx, serviceAccount.Name, tokenRequest, metav1.CreateOptions{})
-		if err != nil {
+		if err := shootClient.Client().SubResource("token").Create(ctx, serviceAccount, tokenRequest); err != nil {
 			return "", err
 		}
 
-		return result.Status.Token, nil
+		return tokenRequest.Status.Token, nil
 	})
 }
 

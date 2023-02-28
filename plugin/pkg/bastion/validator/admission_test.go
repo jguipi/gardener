@@ -17,15 +17,6 @@ package validator_test
 import (
 	"context"
 
-	gardencore "github.com/gardener/gardener/pkg/apis/core"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/apis/operations"
-	operationsv1alpha1 "github.com/gardener/gardener/pkg/apis/operations/v1alpha1"
-	corefake "github.com/gardener/gardener/pkg/client/core/clientset/internalversion/fake"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-	. "github.com/gardener/gardener/plugin/pkg/bastion/validator"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
@@ -38,6 +29,15 @@ import (
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/client-go/testing"
 	"k8s.io/utils/pointer"
+
+	gardencore "github.com/gardener/gardener/pkg/apis/core"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/apis/operations"
+	operationsv1alpha1 "github.com/gardener/gardener/pkg/apis/operations/v1alpha1"
+	corefake "github.com/gardener/gardener/pkg/client/core/clientset/internalversion/fake"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
+	. "github.com/gardener/gardener/plugin/pkg/bastion/validator"
 )
 
 const (
@@ -215,6 +215,25 @@ var _ = Describe("Bastion", func() {
 		It("should forbid the Bastion creation if the Shoot is in deletion", func() {
 			now := metav1.Now()
 			shoot.DeletionTimestamp = &now
+
+			coreClient.AddReactor("get", "shoots", func(action testing.Action) (bool, runtime.Object, error) {
+				return true, shoot, nil
+			})
+
+			err := admissionHandler.Admit(context.TODO(), getBastionAttributes(bastion, nil, admission.Create), nil)
+			Expect(err).To(BeInvalidError())
+			Expect(getErrorList(err)).To(ConsistOf(
+				PointTo(MatchFields(IgnoreExtras, Fields{
+					"Type":  Equal(field.ErrorTypeInvalid),
+					"Field": Equal("spec.shootRef.name"),
+				})),
+			))
+		})
+
+		It("should forbid the Bastion creation if the Shoot's SSH access is disabled", func() {
+			shoot.Spec.Provider.WorkersSettings = &gardencore.WorkersSettings{
+				SSHAccess: &gardencore.SSHAccess{Enabled: false},
+			}
 
 			coreClient.AddReactor("get", "shoots", func(action testing.Action) (bool, runtime.Object, error) {
 				return true, shoot, nil

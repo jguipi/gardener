@@ -19,32 +19,23 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
-
-	"github.com/gardener/gardener/pkg/apis/core"
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	gardenerextensions "github.com/gardener/gardener/pkg/extensions"
-	"github.com/gardener/gardener/pkg/features"
-	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	gardenlethelper "github.com/gardener/gardener/pkg/gardenlet/apis/config/helper"
-	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/operation/common"
-	"github.com/gardener/gardener/pkg/operation/garden"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
 
 	"github.com/Masterminds/semver"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	gardenerextensions "github.com/gardener/gardener/pkg/extensions"
+	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
+	gardenlethelper "github.com/gardener/gardener/pkg/gardenlet/apis/config/helper"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
+	"github.com/gardener/gardener/pkg/operation/common"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 // NewBuilder returns a new Builder.
@@ -58,9 +49,6 @@ func NewBuilder() *Builder {
 		},
 		shootSecretFunc: func(context.Context, string, string) (*corev1.Secret, error) {
 			return nil, fmt.Errorf("shoot secret object is required but not set")
-		},
-		exposureClassFunc: func(context.Context, string) (*gardencorev1alpha1.ExposureClass, error) {
-			return nil, nil
 		},
 	}
 }
@@ -94,7 +82,7 @@ func (b *Builder) WithCloudProfileObject(cloudProfileObject *gardencorev1beta1.C
 func (b *Builder) WithCloudProfileObjectFrom(reader client.Reader) *Builder {
 	b.cloudProfileFunc = func(ctx context.Context, name string) (*gardencorev1beta1.CloudProfile, error) {
 		obj := &gardencorev1beta1.CloudProfile{}
-		return obj, reader.Get(ctx, kutil.Key(name), obj)
+		return obj, reader.Get(ctx, kubernetesutils.Key(name), obj)
 	}
 	return b
 }
@@ -121,36 +109,17 @@ func (b *Builder) WithShootSecret(secret *corev1.Secret) *Builder {
 func (b *Builder) WithShootSecretFrom(c client.Reader) *Builder {
 	b.shootSecretFunc = func(ctx context.Context, namespace, secretBindingName string) (*corev1.Secret, error) {
 		binding := &gardencorev1beta1.SecretBinding{}
-		if err := c.Get(ctx, kutil.Key(namespace, secretBindingName), binding); err != nil {
+		if err := c.Get(ctx, kubernetesutils.Key(namespace, secretBindingName), binding); err != nil {
 			return nil, err
 		}
 
 		secret := &corev1.Secret{}
-		if err := c.Get(ctx, kutil.Key(binding.SecretRef.Namespace, binding.SecretRef.Name), secret); err != nil {
+		if err := c.Get(ctx, kubernetesutils.Key(binding.SecretRef.Namespace, binding.SecretRef.Name), secret); err != nil {
 			return nil, err
 		}
 
 		return secret, nil
 	}
-	return b
-}
-
-// WithExposureClassFrom sets the exposureClassFunc attribute at the Builder after fetching
-// the exposure class with the given reader.
-func (b *Builder) WithExposureClassFrom(c client.Reader) *Builder {
-	b.exposureClassFunc = func(ctx context.Context, exposureClassName string) (*gardencorev1alpha1.ExposureClass, error) {
-		exposureClass := &gardencorev1alpha1.ExposureClass{}
-		if err := c.Get(ctx, kutil.Key(exposureClassName), exposureClass); err != nil {
-			return nil, err
-		}
-		return exposureClass, nil
-	}
-	return b
-}
-
-// WithDisableDNS sets the disableDNS attribute at the Builder.
-func (b *Builder) WithDisableDNS(disableDNS bool) *Builder {
-	b.disableDNS = disableDNS
 	return b
 }
 
@@ -161,13 +130,13 @@ func (b *Builder) WithProjectName(projectName string) *Builder {
 }
 
 // WithInternalDomain sets the internalDomain attribute at the Builder.
-func (b *Builder) WithInternalDomain(internalDomain *garden.Domain) *Builder {
+func (b *Builder) WithInternalDomain(internalDomain *gardenerutils.Domain) *Builder {
 	b.internalDomain = internalDomain
 	return b
 }
 
 // WithDefaultDomains sets the defaultDomains attribute at the Builder.
-func (b *Builder) WithDefaultDomains(defaultDomains []*garden.Domain) *Builder {
+func (b *Builder) WithDefaultDomains(defaultDomains []*gardenerutils.Domain) *Builder {
 	b.defaultDomains = defaultDomains
 	return b
 }
@@ -194,31 +163,23 @@ func (b *Builder) Build(ctx context.Context, c client.Reader) (*Shoot, error) {
 	}
 	shoot.Secret = secret
 
-	if shootObject.Spec.ExposureClassName != nil {
-		exposureClass, err := b.exposureClassFunc(ctx, *shootObject.Spec.ExposureClassName)
-		if err != nil {
-			return nil, err
-		}
-		shoot.ExposureClass = exposureClass
-	}
-
-	shoot.DisableDNS = b.disableDNS
-	shoot.HibernationEnabled = gardencorev1beta1helper.HibernationIsEnabled(shootObject)
+	shoot.HibernationEnabled = v1beta1helper.HibernationIsEnabled(shootObject)
 	shoot.SeedNamespace = ComputeTechnicalID(b.projectName, shootObject)
-	shoot.InternalClusterDomain = ConstructInternalClusterDomain(shootObject.Name, b.projectName, b.internalDomain)
-	shoot.ExternalClusterDomain = ConstructExternalClusterDomain(shootObject)
-	shoot.IgnoreAlerts = gardencorev1beta1helper.ShootIgnoresAlerts(shootObject)
-	shoot.WantsAlertmanager = gardencorev1beta1helper.ShootWantsAlertManager(shootObject)
-	shoot.WantsVerticalPodAutoscaler = gardencorev1beta1helper.ShootWantsVerticalPodAutoscaler(shootObject)
+	shoot.InternalClusterDomain = gardenerutils.ConstructInternalClusterDomain(shootObject.Name, b.projectName, b.internalDomain)
+	shoot.ExternalClusterDomain = gardenerutils.ConstructExternalClusterDomain(shootObject)
+	shoot.IgnoreAlerts = v1beta1helper.ShootIgnoresAlerts(shootObject)
+	shoot.WantsAlertmanager = v1beta1helper.ShootWantsAlertManager(shootObject)
+	shoot.WantsVerticalPodAutoscaler = v1beta1helper.ShootWantsVerticalPodAutoscaler(shootObject)
 	shoot.Components = &Components{
 		Extensions:       &Extensions{},
 		ControlPlane:     &ControlPlane{},
 		SystemComponents: &SystemComponents{},
 		Logging:          &Logging{},
+		Addons:           &Addons{},
 	}
 
 	// Determine information about external domain for shoot cluster.
-	externalDomain, err := ConstructExternalDomain(ctx, c, shootObject, secret, b.defaultDomains)
+	externalDomain, err := gardenerutils.ConstructExternalDomain(ctx, c, shootObject, secret, b.defaultDomains)
 	if err != nil {
 		return nil, err
 	}
@@ -237,22 +198,14 @@ func (b *Builder) Build(ctx context.Context, c client.Reader) (*Shoot, error) {
 	}
 	shoot.GardenerVersion = gardenerVersion
 
-	shoot.ReversedVPNEnabled = gardenletfeatures.FeatureGate.Enabled(features.ReversedVPN)
-	if reversedVPNEnabled, err := strconv.ParseBool(shoot.GetInfo().Annotations[v1beta1constants.AnnotationReversedVPN]); err == nil {
-		if gardenletfeatures.FeatureGate.Enabled(features.APIServerSNI) {
-			shoot.ReversedVPNEnabled = reversedVPNEnabled
-		}
+	shoot.VPNHighAvailabilityEnabled = v1beta1helper.IsHAControlPlaneConfigured(shoot.GetInfo())
+	if haVPNEnabled, err := strconv.ParseBool(shoot.GetInfo().GetAnnotations()[v1beta1constants.ShootAlphaControlPlaneHAVPN]); err == nil {
+		shoot.VPNHighAvailabilityEnabled = haVPNEnabled
 	}
-	if shoot.ReversedVPNEnabled {
-		shoot.VPNHighAvailabilityEnabled = shoot.GetInfo().Spec.ControlPlane != nil && shoot.GetInfo().Spec.ControlPlane.HighAvailability != nil
-		if haVPNEnabled, err := strconv.ParseBool(shoot.GetInfo().GetAnnotations()[v1beta1constants.ShootAlphaControlPlaneHAVPN]); err == nil {
-			shoot.VPNHighAvailabilityEnabled = haVPNEnabled
-		}
-		shoot.VPNHighAvailabilityNumberOfSeedServers = 2
-		shoot.VPNHighAvailabilityNumberOfShootClients = 2
-	}
+	shoot.VPNHighAvailabilityNumberOfSeedServers = vpnseedserver.HighAvailabilityReplicaCount
+	shoot.VPNHighAvailabilityNumberOfShootClients = vpnseedserver.HighAvailabilityReplicaCount
 
-	needsClusterAutoscaler, err := gardencorev1beta1helper.ShootWantsClusterAutoscaler(shootObject)
+	needsClusterAutoscaler, err := v1beta1helper.ShootWantsClusterAutoscaler(shootObject)
 	if err != nil {
 		return nil, err
 	}
@@ -264,12 +217,12 @@ func (b *Builder) Build(ctx context.Context, c client.Reader) (*Shoot, error) {
 	}
 	shoot.Networks = networks
 
-	shoot.NodeLocalDNSEnabled = helper.IsNodeLocalDNSEnabled(shoot.GetInfo().Spec.SystemComponents, shoot.GetInfo().Annotations)
-	shoot.Purpose = gardencorev1beta1helper.GetPurpose(shootObject)
+	shoot.NodeLocalDNSEnabled = v1beta1helper.IsNodeLocalDNSEnabled(shoot.GetInfo().Spec.SystemComponents, shoot.GetInfo().Annotations)
+	shoot.Purpose = v1beta1helper.GetPurpose(shootObject)
 
-	shoot.PSPDisabled = gardencorev1beta1helper.IsPSPDisabled(shoot.GetInfo())
+	shoot.PSPDisabled = v1beta1helper.IsPSPDisabled(shoot.GetInfo())
 
-	backupEntryName, err := gutil.GenerateBackupEntryName(shootObject.Status.TechnicalID, shootObject.UID)
+	backupEntryName, err := gardenerutils.GenerateBackupEntryName(shootObject.Status.TechnicalID, shootObject.UID)
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +345,7 @@ func (s *Shoot) GetIngressFQDN(subDomain string) string {
 	if shoot.Spec.DNS == nil || shoot.Spec.DNS.Domain == nil {
 		return ""
 	}
-	return fmt.Sprintf("%s.%s.%s", subDomain, gutil.IngressPrefix, *shoot.Spec.DNS.Domain)
+	return fmt.Sprintf("%s.%s.%s", subDomain, gardenerutils.IngressPrefix, *shoot.Spec.DNS.Domain)
 }
 
 // GetWorkerNames returns a list of names of the worker groups in the Shoot manifest.
@@ -443,19 +396,15 @@ func (s *Shoot) ComputeInClusterAPIServerAddress(runsInShootNamespace bool) stri
 // ComputeOutOfClusterAPIServerAddress returns the external address for the shoot API server depending on whether
 // the caller wants to use the internal cluster domain and whether DNS is disabled on this seed.
 func (s *Shoot) ComputeOutOfClusterAPIServerAddress(apiServerAddress string, useInternalClusterDomain bool) string {
-	if s.DisableDNS {
-		return apiServerAddress
-	}
-
-	if gardencorev1beta1helper.ShootUsesUnmanagedDNS(s.GetInfo()) {
-		return gutil.GetAPIServerDomain(s.InternalClusterDomain)
+	if v1beta1helper.ShootUsesUnmanagedDNS(s.GetInfo()) {
+		return gardenerutils.GetAPIServerDomain(s.InternalClusterDomain)
 	}
 
 	if useInternalClusterDomain {
-		return gutil.GetAPIServerDomain(s.InternalClusterDomain)
+		return gardenerutils.GetAPIServerDomain(s.InternalClusterDomain)
 	}
 
-	return gutil.GetAPIServerDomain(*s.ExternalClusterDomain)
+	return gardenerutils.GetAPIServerDomain(*s.ExternalClusterDomain)
 }
 
 // IPVSEnabled returns true if IPVS is enabled for the shoot.
@@ -482,88 +431,7 @@ func ComputeTechnicalID(projectName string, shoot *gardencorev1beta1.Shoot) stri
 	}
 
 	// New clusters shall be created with the new technical id (double hyphens).
-	return fmt.Sprintf("%s%s--%s", v1beta1constants.TechnicalIDPrefix, projectName, shoot.Name)
-}
-
-// ConstructInternalClusterDomain constructs the internal base domain pof this shoot cluster.
-// It is only used for internal purposes (all kubeconfigs except the one which is received by the
-// user will only talk with the kube-apiserver via a DNS record of domain). In case the given <internalDomain>
-// already contains "internal", the result is constructed as "<shootName>.<shootProject>.<internalDomain>."
-// In case it does not, the word "internal" will be appended, resulting in
-// "<shootName>.<shootProject>.internal.<internalDomain>".
-func ConstructInternalClusterDomain(shootName, shootProject string, internalDomain *garden.Domain) string {
-	if internalDomain == nil {
-		return ""
-	}
-	if strings.Contains(internalDomain.Domain, gutil.InternalDomainKey) {
-		return fmt.Sprintf("%s.%s.%s", shootName, shootProject, internalDomain.Domain)
-	}
-	return fmt.Sprintf("%s.%s.%s.%s", shootName, shootProject, gutil.InternalDomainKey, internalDomain.Domain)
-}
-
-// ConstructExternalClusterDomain constructs the external Shoot cluster domain, i.e. the domain which will be put
-// into the Kubeconfig handed out to the user.
-func ConstructExternalClusterDomain(shoot *gardencorev1beta1.Shoot) *string {
-	if shoot.Spec.DNS == nil || shoot.Spec.DNS.Domain == nil {
-		return nil
-	}
-	return shoot.Spec.DNS.Domain
-}
-
-// ConstructExternalDomain constructs an object containing all relevant information of the external domain that
-// shall be used for a shoot cluster - based on the configuration of the Garden cluster and the shoot itself.
-func ConstructExternalDomain(ctx context.Context, c client.Reader, shoot *gardencorev1beta1.Shoot, shootSecret *corev1.Secret, defaultDomains []*garden.Domain) (*garden.Domain, error) {
-	externalClusterDomain := ConstructExternalClusterDomain(shoot)
-	if externalClusterDomain == nil {
-		return nil, nil
-	}
-
-	var (
-		externalDomain  = &garden.Domain{Domain: *shoot.Spec.DNS.Domain}
-		defaultDomain   = garden.DomainIsDefaultDomain(*externalClusterDomain, defaultDomains)
-		primaryProvider = gardencorev1beta1helper.FindPrimaryDNSProvider(shoot.Spec.DNS.Providers)
-	)
-
-	switch {
-	case defaultDomain != nil:
-		externalDomain.SecretData = defaultDomain.SecretData
-		externalDomain.Provider = defaultDomain.Provider
-		externalDomain.Zone = defaultDomain.Zone
-		externalDomain.IncludeDomains = defaultDomain.IncludeDomains
-		externalDomain.ExcludeDomains = defaultDomain.ExcludeDomains
-		externalDomain.IncludeZones = defaultDomain.IncludeZones
-		externalDomain.ExcludeZones = defaultDomain.ExcludeZones
-
-	case primaryProvider != nil:
-		if primaryProvider.SecretName != nil {
-			secret := &corev1.Secret{}
-			if err := c.Get(ctx, kutil.Key(shoot.Namespace, *primaryProvider.SecretName), secret); err != nil {
-				return nil, fmt.Errorf("could not get dns provider secret %q: %+v", *shoot.Spec.DNS.Providers[0].SecretName, err)
-			}
-			externalDomain.SecretData = secret.Data
-		} else {
-			externalDomain.SecretData = shootSecret.Data
-		}
-		if primaryProvider.Type != nil {
-			externalDomain.Provider = *primaryProvider.Type
-		}
-		if domains := primaryProvider.Domains; domains != nil {
-			externalDomain.IncludeDomains = domains.Include
-			externalDomain.ExcludeDomains = domains.Exclude
-		}
-		if zones := primaryProvider.Zones; zones != nil {
-			externalDomain.IncludeZones = zones.Include
-			externalDomain.ExcludeZones = zones.Exclude
-			if len(zones.Include) == 1 {
-				externalDomain.Zone = zones.Include[0]
-			}
-		}
-
-	default:
-		return nil, &IncompleteDNSConfigError{}
-	}
-
-	return externalDomain, nil
+	return fmt.Sprintf("%s-%s--%s", v1beta1constants.TechnicalIDPrefix, projectName, shoot.Name)
 }
 
 // ToNetworks return a network with computed cidrs and ClusterIPs
@@ -603,77 +471,4 @@ func ToNetworks(s *gardencorev1beta1.Shoot) (*Networks, error) {
 		Services:  svc,
 		APIServer: apiserver,
 	}, nil
-}
-
-// ComputeRequiredExtensions compute the extension kind/type combinations that are required for the
-// reconciliation flow.
-func ComputeRequiredExtensions(shoot *gardencorev1beta1.Shoot, seed *gardencorev1beta1.Seed, controllerRegistrationList *gardencorev1beta1.ControllerRegistrationList, internalDomain, externalDomain *garden.Domain) sets.String {
-	requiredExtensions := sets.NewString()
-
-	if seed.Spec.Backup != nil {
-		requiredExtensions.Insert(gardenerextensions.Id(extensionsv1alpha1.BackupBucketResource, seed.Spec.Backup.Provider))
-		requiredExtensions.Insert(gardenerextensions.Id(extensionsv1alpha1.BackupEntryResource, seed.Spec.Backup.Provider))
-	}
-	// Hint: This is actually a temporary work-around to request the control plane extension of the seed provider type as
-	// it might come with webhooks that are configuring the exposure of shoot control planes. The ControllerRegistration resource
-	// does not reflect this today.
-	requiredExtensions.Insert(gardenerextensions.Id(extensionsv1alpha1.ControlPlaneResource, seed.Spec.Provider.Type))
-
-	requiredExtensions.Insert(gardenerextensions.Id(extensionsv1alpha1.ControlPlaneResource, shoot.Spec.Provider.Type))
-	requiredExtensions.Insert(gardenerextensions.Id(extensionsv1alpha1.InfrastructureResource, shoot.Spec.Provider.Type))
-	requiredExtensions.Insert(gardenerextensions.Id(extensionsv1alpha1.NetworkResource, shoot.Spec.Networking.Type))
-	requiredExtensions.Insert(gardenerextensions.Id(extensionsv1alpha1.WorkerResource, shoot.Spec.Provider.Type))
-
-	disabledExtensions := sets.NewString()
-	for _, extension := range shoot.Spec.Extensions {
-		id := gardenerextensions.Id(extensionsv1alpha1.ExtensionResource, extension.Type)
-
-		if pointer.BoolDeref(extension.Disabled, false) {
-			disabledExtensions.Insert(id)
-		} else {
-			requiredExtensions.Insert(id)
-		}
-	}
-
-	for _, pool := range shoot.Spec.Provider.Workers {
-		if pool.Machine.Image != nil {
-			requiredExtensions.Insert(gardenerextensions.Id(extensionsv1alpha1.OperatingSystemConfigResource, pool.Machine.Image.Name))
-		}
-		if pool.CRI != nil {
-			for _, cr := range pool.CRI.ContainerRuntimes {
-				requiredExtensions.Insert(gardenerextensions.Id(extensionsv1alpha1.ContainerRuntimeResource, cr.Type))
-			}
-		}
-	}
-
-	if seed.Spec.Settings.ShootDNS.Enabled {
-		if shoot.Spec.DNS != nil {
-			for _, provider := range shoot.Spec.DNS.Providers {
-				if provider.Type != nil && *provider.Type != core.DNSUnmanaged {
-					if provider.Primary != nil && *provider.Primary {
-						requiredExtensions.Insert(gardenerextensions.Id(extensionsv1alpha1.DNSRecordResource, *provider.Type))
-					}
-				}
-			}
-		}
-
-		if internalDomain != nil && internalDomain.Provider != core.DNSUnmanaged {
-			requiredExtensions.Insert(gardenerextensions.Id(extensionsv1alpha1.DNSRecordResource, internalDomain.Provider))
-		}
-
-		if externalDomain != nil && externalDomain.Provider != core.DNSUnmanaged {
-			requiredExtensions.Insert(gardenerextensions.Id(extensionsv1alpha1.DNSRecordResource, externalDomain.Provider))
-		}
-	}
-
-	for _, controllerRegistration := range controllerRegistrationList.Items {
-		for _, resource := range controllerRegistration.Spec.Resources {
-			id := gardenerextensions.Id(extensionsv1alpha1.ExtensionResource, resource.Type)
-			if resource.Kind == extensionsv1alpha1.ExtensionResource && resource.GloballyEnabled != nil && *resource.GloballyEnabled && !disabledExtensions.Has(id) {
-				requiredExtensions.Insert(id)
-			}
-		}
-	}
-
-	return requiredExtensions
 }

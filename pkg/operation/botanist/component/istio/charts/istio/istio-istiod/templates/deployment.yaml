@@ -3,6 +3,10 @@ kind: Deployment
 metadata:
   name: istiod
   namespace: {{ .Release.Namespace }}
+{{- if .Values.ignoreMode }}
+  annotations:
+    resources.gardener.cloud/mode: Ignore
+{{- end }}
   labels:
 {{ .Values.labels | toYaml | indent 4 }}
 spec:
@@ -18,7 +22,8 @@ spec:
   template:
     metadata:
       labels:
-        networking.gardener.cloud/to-seed-apiserver: allowed
+        networking.gardener.cloud/to-dns: allowed
+        networking.gardener.cloud/to-runtime-apiserver: allowed
 {{ .Values.labels | toYaml | indent 8 }}
       annotations:
         sidecar.istio.io/inject: "false"
@@ -39,7 +44,6 @@ spec:
         - --log_output_level=all:warn,ads:error
         - --domain
         - {{ .Values.trustDomain }}
-        - --plugins=authn,authz,health # remove mixer plugin
         - --keepaliveMaxServerConnectionAge
         - "30m"
         ports:

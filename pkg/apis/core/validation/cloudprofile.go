@@ -19,17 +19,17 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	"github.com/gardener/gardener/pkg/apis/core/helper"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/utils"
-
 	"github.com/Masterminds/semver"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/strings/slices"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	"github.com/gardener/gardener/pkg/apis/core/helper"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/utils"
 )
 
 // ValidateCloudProfileCreation validates a CloudProfile object when it is initially created.
@@ -142,7 +142,7 @@ func ValidateCloudProfileSpec(spec *core.CloudProfileSpec, fldPath *field.Path) 
 	allErrs = append(allErrs, validateVolumeTypes(spec.VolumeTypes, fldPath.Child("volumeTypes"))...)
 	allErrs = append(allErrs, validateRegions(spec.Regions, fldPath.Child("regions"))...)
 	if spec.SeedSelector != nil {
-		allErrs = append(allErrs, metav1validation.ValidateLabelSelector(&spec.SeedSelector.LabelSelector, fldPath.Child("seedSelector"))...)
+		allErrs = append(allErrs, metav1validation.ValidateLabelSelector(&spec.SeedSelector.LabelSelector, metav1validation.LabelSelectorValidationOptions{AllowInvalidLabelValueInSelector: true}, fldPath.Child("seedSelector"))...)
 	}
 
 	if spec.CABundle != nil {
@@ -168,7 +168,7 @@ func validateKubernetesSettings(kubernetes core.KubernetesSettings, fldPath *fie
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("versions[]").Child("expirationDate"), latestKubernetesVersion.ExpirationDate, fmt.Sprintf("expiration date of latest kubernetes version ('%s') must not be set", latestKubernetesVersion.Version)))
 	}
 
-	versionsFound := sets.NewString()
+	versionsFound := sets.New[string]()
 	r, _ := regexp.Compile(`^([0-9]+\.){2}[0-9]+$`)
 	for i, version := range kubernetes.Versions {
 		idxPath := fldPath.Child("versions").Index(i)
@@ -185,12 +185,12 @@ func validateKubernetesSettings(kubernetes core.KubernetesSettings, fldPath *fie
 	return allErrs
 }
 
-var supportedVersionClassifications = sets.NewString(string(core.ClassificationPreview), string(core.ClassificationSupported), string(core.ClassificationDeprecated))
+var supportedVersionClassifications = sets.New[string](string(core.ClassificationPreview), string(core.ClassificationSupported), string(core.ClassificationDeprecated))
 
 func validateExpirableVersion(version core.ExpirableVersion, allVersions []core.ExpirableVersion, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	if version.Classification != nil && !supportedVersionClassifications.Has(string(*version.Classification)) {
-		allErrs = append(allErrs, field.NotSupported(fldPath.Child("classification"), *version.Classification, supportedVersionClassifications.List()))
+		allErrs = append(allErrs, field.NotSupported(fldPath.Child("classification"), *version.Classification, sets.List(supportedVersionClassifications)))
 	}
 
 	if version.Classification != nil && *version.Classification == core.ClassificationSupported {
@@ -291,8 +291,8 @@ func validateMachineImages(machineImages []core.MachineImage, fldPath *field.Pat
 		allErrs = append(allErrs, field.Invalid(fldPath, latestMachineImages, err.Error()))
 	}
 
-	duplicateNameVersion := sets.String{}
-	duplicateName := sets.String{}
+	duplicateNameVersion := sets.Set[string]{}
+	duplicateName := sets.Set[string]{}
 	for i, image := range machineImages {
 		idxPath := fldPath.Index(i)
 		if duplicateName.Has(image.Name) {
@@ -327,6 +327,12 @@ func validateMachineImages(machineImages []core.MachineImage, fldPath *field.Pat
 			allErrs = append(allErrs, validateExpirableVersion(machineVersion.ExpirableVersion, helper.ToExpirableVersions(image.Versions), versionsPath)...)
 			allErrs = append(allErrs, validateContainerRuntimesInterfaces(machineVersion.CRI, versionsPath.Child("cri"))...)
 			allErrs = append(allErrs, validateMachineImageVersionArchitecture(machineVersion.Architectures, versionsPath.Child("architecture"))...)
+
+			if machineVersion.KubeletVersionConstraint != nil {
+				if _, err := semver.NewConstraint(*machineVersion.KubeletVersionConstraint); err != nil {
+					allErrs = append(allErrs, field.Invalid(versionsPath.Child("kubeletVersionConstraint"), machineVersion.KubeletVersionConstraint, fmt.Sprintf("cannot parse the kubeletVersionConstraint: %s", err.Error())))
+				}
+			}
 		}
 	}
 
@@ -335,7 +341,7 @@ func validateMachineImages(machineImages []core.MachineImage, fldPath *field.Pat
 
 func validateContainerRuntimesInterfaces(cris []core.CRI, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	duplicateCRI := sets.String{}
+	duplicateCRI := sets.Set[string]{}
 	hasDocker := false
 
 	if len(cris) == 0 {
@@ -355,7 +361,7 @@ func validateContainerRuntimesInterfaces(cris []core.CRI, fldPath *field.Path) f
 		}
 
 		if !availableWorkerCRINames.Has(string(cri.Name)) {
-			allErrs = append(allErrs, field.NotSupported(criPath, cri, availableWorkerCRINames.List()))
+			allErrs = append(allErrs, field.NotSupported(criPath, cri, sets.List(availableWorkerCRINames)))
 		}
 		allErrs = append(allErrs, validateContainerRuntimes(cri.ContainerRuntimes, criPath.Child("containerRuntimes"))...)
 	}
@@ -369,7 +375,7 @@ func validateContainerRuntimesInterfaces(cris []core.CRI, fldPath *field.Path) f
 
 func validateContainerRuntimes(containerRuntimes []core.ContainerRuntime, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	duplicateCR := sets.String{}
+	duplicateCR := sets.Set[string]{}
 
 	for i, cr := range containerRuntimes {
 		if duplicateCR.Has(cr.Type) {
@@ -441,7 +447,7 @@ func validateRegions(regions []core.Region, fldPath *field.Path) field.ErrorList
 		allErrs = append(allErrs, field.Required(fldPath, "must provide at least one region"))
 	}
 
-	regionsFound := sets.NewString()
+	regionsFound := sets.New[string]()
 	for i, region := range regions {
 		idxPath := fldPath.Index(i)
 		namePath := idxPath.Child("name")
@@ -456,7 +462,7 @@ func validateRegions(regions []core.Region, fldPath *field.Path) field.ErrorList
 			regionsFound.Insert(region.Name)
 		}
 
-		zonesFound := sets.NewString()
+		zonesFound := sets.New[string]()
 		for j, zone := range region.Zones {
 			namePath := zonesPath.Index(j).Child("name")
 			if len(zone.Name) == 0 {

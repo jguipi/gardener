@@ -17,15 +17,15 @@ package managedresource
 import (
 	"fmt"
 
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 )
 
 type objectIndex struct {
 	index        map[string]resourcesv1alpha1.ObjectReference
-	found        sets.String
+	found        sets.Set[string]
 	equivalences Equivalences
 }
 
@@ -36,7 +36,7 @@ type objectIndex struct {
 func NewObjectIndex(references []resourcesv1alpha1.ObjectReference, withEquivalences Equivalences) *objectIndex {
 	index := &objectIndex{
 		make(map[string]resourcesv1alpha1.ObjectReference, len(references)),
-		sets.String{},
+		sets.Set[string]{},
 		withEquivalences,
 	}
 

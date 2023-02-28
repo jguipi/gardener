@@ -15,13 +15,13 @@
 package validation
 
 import (
+	"testing"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"testing"
 )
 
-func TestSeedManagerValidation(t *testing.T) {
+func TestValidation(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Gardener Scheduler Configuration Validation Suite")
+	RunSpecs(t, "Scheduler APIs Config Validation Suite")
 }

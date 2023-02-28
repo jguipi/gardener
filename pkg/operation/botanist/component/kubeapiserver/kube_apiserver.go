@@ -21,18 +21,6 @@ import (
 	"net"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/utils"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/pkg/utils/kubernetes/health"
-	"github.com/gardener/gardener/pkg/utils/managedresources"
-	"github.com/gardener/gardener/pkg/utils/retry"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-	"github.com/gardener/gardener/pkg/utils/version"
-
 	"github.com/Masterminds/semver"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -42,11 +30,25 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/runtime/serializer/json"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	webhookadmissionv1 "k8s.io/apiserver/pkg/admission/plugin/webhook/config/apis/webhookadmission/v1"
+	webhookadmissionv1alpha1 "k8s.io/apiserver/pkg/admission/plugin/webhook/config/apis/webhookadmission/v1alpha1"
 	apiserverv1alpha1 "k8s.io/apiserver/pkg/apis/apiserver/v1alpha1"
 	auditv1 "k8s.io/apiserver/pkg/apis/audit/v1"
 	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	"github.com/gardener/gardener/pkg/utils"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/kubernetes/health"
+	"github.com/gardener/gardener/pkg/utils/managedresources"
+	"github.com/gardener/gardener/pkg/utils/retry"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
+	"github.com/gardener/gardener/pkg/utils/version"
 )
 
 var (
@@ -59,6 +61,8 @@ func init() {
 	utilruntime.Must(apiserverv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(apiserverconfigv1.AddToScheme(scheme))
 	utilruntime.Must(auditv1.AddToScheme(scheme))
+	utilruntime.Must(webhookadmissionv1.AddToScheme(scheme))
+	utilruntime.Must(webhookadmissionv1alpha1.AddToScheme(scheme))
 
 	var (
 		ser = json.NewSerializerWithOptions(json.DefaultMetaFactory, scheme, scheme, json.SerializerOptions{
@@ -70,6 +74,8 @@ func init() {
 			apiserverv1alpha1.SchemeGroupVersion,
 			apiserverconfigv1.SchemeGroupVersion,
 			auditv1.SchemeGroupVersion,
+			webhookadmissionv1.SchemeGroupVersion,
+			webhookadmissionv1alpha1.SchemeGroupVersion,
 		})
 	)
 
@@ -77,14 +83,10 @@ func init() {
 }
 
 const (
-	// Port is the port exposed by the kube-apiserver.
-	Port = 443
 	// SecretNameUserKubeconfig is the name for the user kubeconfig.
 	SecretNameUserKubeconfig = "user-kubeconfig"
 	// ServicePortName is the name of the port in the service.
 	ServicePortName = "kube-apiserver"
-	// UserNameVPNSeed is the user name for the vpn-seed components (used as common name in its client certificate)
-	UserNameVPNSeed = "vpn-seed"
 	// UserNameVPNSeedClient is the user name for the HA vpn-seed-client components (used as common name in its client certificate)
 	UserNameVPNSeedClient = "vpn-seed-client"
 
@@ -121,7 +123,7 @@ type Interface interface {
 // Values contains configuration values for the kube-apiserver resources.
 type Values struct {
 	// EnabledAdmissionPlugins is the list of admission plugins that should be enabled with configuration for the kube-apiserver.
-	EnabledAdmissionPlugins []gardencorev1beta1.AdmissionPlugin
+	EnabledAdmissionPlugins []AdmissionPluginConfig
 	// DisabledAdmissionPlugins is the list of admission plugins that should be disabled for the kube-apiserver.
 	DisabledAdmissionPlugins []gardencorev1beta1.AdmissionPlugin
 	// AnonymousAuthenticationEnabled states whether anonymous authentication is enabled.
@@ -133,6 +135,12 @@ type Values struct {
 	Audit *AuditConfig
 	// Autoscaling contains information for configuring autoscaling settings for the kube-apiserver.
 	Autoscaling AutoscalingConfig
+	// DefaultNotReadyTolerationSeconds indicates the tolerationSeconds of the toleration for notReady:NoExecute
+	// that is added by default to every pod that does not already have such a toleration (flag `--default-not-ready-toleration-seconds`).
+	DefaultNotReadyTolerationSeconds *int64
+	// DefaultUnreachableTolerationSeconds indicates the tolerationSeconds of the toleration for unreachable:NoExecute
+	// that is added by default to every pod that does not already have such a toleration (flag `--default-unreachable-toleration-seconds`).
+	DefaultUnreachableTolerationSeconds *int64
 	// ETCDEncryption contains configuration for the encryption of resources in etcd.
 	ETCDEncryption ETCDEncryptionConfig
 	// EventTTL is the amount of time to retain events.
@@ -145,18 +153,27 @@ type Values struct {
 	FeatureGates map[string]bool
 	// Images is a set of container images used for the containers of the kube-apiserver pods.
 	Images Images
+	// IsNodeless specifies whether the cluster managed by this API server has worker nodes.
+	IsNodeless bool
 	// Logging contains configuration settings for the log and access logging verbosity
 	Logging *gardencorev1beta1.KubeAPIServerLogging
 	// OIDC contains information for configuring OIDC settings for the kube-apiserver.
 	OIDC *gardencorev1beta1.OIDCConfig
 	// Requests contains configuration for the kube-apiserver requests.
 	Requests *gardencorev1beta1.KubeAPIServerRequests
+	// ResourcesToStoreInETCDEvents is a list of resources which should be stored in the etcd-events instead of the
+	// etcd-main. The `events` resource in the `core` group is always stored in etcd-events.
+	ResourcesToStoreInETCDEvents []schema.GroupResource
 	// RuntimeConfig is the set of runtime configurations.
 	RuntimeConfig map[string]bool
+	// RuntimeVersion is the Kubernetes version of the runtime cluster.
+	RuntimeVersion *semver.Version
 	// ServerCertificate contains configuration for the server certificate.
 	ServerCertificate ServerCertificateConfig
 	// ServiceAccount contains information for configuring ServiceAccount settings for the kube-apiserver.
 	ServiceAccount ServiceAccountConfig
+	// ServiceNetworkCIDR is the CIDR of the service network.
+	ServiceNetworkCIDR string
 	// SNI contains information for configuring SNI settings for the kube-apiserver.
 	SNI SNIConfig
 	// StaticTokenKubeconfigEnabled indicates whether static token kubeconfig secret will be created for shoot.
@@ -167,6 +184,14 @@ type Values struct {
 	VPN VPNConfig
 	// WatchCacheSizes are the configured sizes for the watch caches.
 	WatchCacheSizes *gardencorev1beta1.WatchCacheSizes
+}
+
+// AdmissionPluginConfig contains information about a specific admission plugin and its corresponding configuration.
+type AdmissionPluginConfig struct {
+	gardencorev1beta1.AdmissionPlugin
+	// Kubeconfig is an optional kubeconfig for the configuration of this admission plugins. The configs for some
+	// admission plugins like `ImagePolicyWebhook` or `ValidatingAdmissionWebhook` can take a reference to a kubeconfig.
+	Kubeconfig []byte
 }
 
 // AuditConfig contains information for configuring audit settings for the kube-apiserver.
@@ -198,7 +223,7 @@ type AutoscalingConfig struct {
 // ETCDEncryptionConfig contains configuration for the encryption of resources in etcd.
 type ETCDEncryptionConfig struct {
 	// RotationPhase specifies the credentials rotation phase of the encryption key.
-	RotationPhase gardencorev1beta1.ShootCredentialsRotationPhase
+	RotationPhase gardencorev1beta1.CredentialsRotationPhase
 	// EncryptWithCurrentKey specifies whether the current encryption key should be used for encryption. If this is
 	// false and if there are two keys then the old key will be used for encryption while the current/new key will only
 	// be used for decryption.
@@ -207,29 +232,25 @@ type ETCDEncryptionConfig struct {
 
 // Images is a set of container images used for the containers of the kube-apiserver pods.
 type Images struct {
-	// AlpineIPTables is the container image for alpine-iptables.
-	AlpineIPTables string
 	// APIServerProxyPodWebhook is the container image for the apiserver-proxy-pod-webhook.
 	APIServerProxyPodWebhook string
 	// KubeAPIServer is the container image for the kube-apiserver.
 	KubeAPIServer string
-	// VPNSeed is the container image for the vpn-seed.
-	VPNSeed string
 	// VPNClient is the container image for the vpn-seed-client.
 	VPNClient string
+	// Watchdog is the container image for the termination-handler.
+	Watchdog string
 }
 
 // VPNConfig contains information for configuring the VPN settings for the kube-apiserver.
 type VPNConfig struct {
-	// ReversedVPNEnabled states whether the 'ReversedVPN' feature gate is enabled.
-	ReversedVPNEnabled bool
+	// Enabled states whether VPN is enabled.
+	Enabled bool
 	// PodNetworkCIDR is the CIDR of the pod network.
 	PodNetworkCIDR string
-	// ServiceNetworkCIDR is the CIDR of the service network.
-	ServiceNetworkCIDR string
 	// NodeNetworkCIDR is the CIDR of the node network.
 	NodeNetworkCIDR *string
-	// HighAvailabilityEnabled states if VPN uses HA configuration (only works together with ReversedVPNEnabled=true)
+	// HighAvailabilityEnabled states if VPN uses HA configuration.
 	HighAvailabilityEnabled bool
 	// HighAvailabilityNumberOfSeedServers is the number of VPN seed servers used for HA
 	HighAvailabilityNumberOfSeedServers int
@@ -251,14 +272,12 @@ type ServiceAccountConfig struct {
 	Issuer string
 	// AcceptedIssuers is an additional set of issuers that are used to determine which service account tokens are accepted.
 	AcceptedIssuers []string
-	// SigningKey is the key used when service accounts are signed.
-	SigningKey []byte
 	// ExtendTokenExpiration states whether the service account token expirations should be extended.
 	ExtendTokenExpiration *bool
 	// MaxTokenExpiration states what the maximal token expiration should be.
 	MaxTokenExpiration *metav1.Duration
 	// RotationPhase specifies the credentials rotation phase of the service account signing key.
-	RotationPhase gardencorev1beta1.ShootCredentialsRotationPhase
+	RotationPhase gardencorev1beta1.CredentialsRotationPhase
 }
 
 // SNIConfig contains information for configuring SNI settings for the kube-apiserver.
@@ -271,6 +290,27 @@ type SNIConfig struct {
 	APIServerFQDN string
 	// AdvertiseAddress is the address which should be advertised by the kube-apiserver.
 	AdvertiseAddress string
+	// TLS contains information for configuring the TLS SNI settings for the kube-apiserver.
+	TLS []TLSSNIConfig
+}
+
+// TLSSNIConfig contains information for configuring the TLS SNI settings for the kube-apiserver.
+type TLSSNIConfig struct {
+	// SecretName is the name for an existing secret containing the TLS certificate and private key. Either this or both
+	// Certificate and PrivateKey must be specified. If both is provided, SecretName is taking precedence.
+	SecretName *string
+	// Certificate is the TLS certificate. Either both this and PrivateKey, or SecretName must be specified. If both is
+	// provided, SecretName is taking precedence.
+	Certificate []byte
+	// PrivateKey is the TLS certificate. Either both this and Certificate, or SecretName must be specified. If both is
+	// provided, SecretName is taking precedence.
+	PrivateKey []byte
+	// DomainPatterns is an optional list of domain patterns which are fully qualified domain names, possibly with
+	// prefixed wildcard segments. The domain patterns also allow IP addresses, but IPs should only be used if the
+	// apiserver has visibility to the IP address requested by a client. If no domain patterns are provided, the names
+	// of the certificate are extracted. Non-wildcard matches trump over wildcard matches, explicit domain patterns
+	// trump over extracted names.
+	DomainPatterns []string
 }
 
 // New creates a new instance of DeployWaiter for the kube-apiserver.
@@ -292,33 +332,25 @@ type kubeAPIServer struct {
 
 func (k *kubeAPIServer) Deploy(ctx context.Context) error {
 	var (
-		deployment                                 = k.emptyDeployment()
-		podDisruptionBudget                        client.Object
-		horizontalPodAutoscaler                    client.Object
-		verticalPodAutoscaler                      = k.emptyVerticalPodAutoscaler()
-		hvpa                                       = k.emptyHVPA()
-		networkPolicyAllowFromShootAPIServer       = k.emptyNetworkPolicy(networkPolicyNameAllowFromShootAPIServer)
-		networkPolicyAllowToShootAPIServer         = k.emptyNetworkPolicy(networkPolicyNameAllowToShootAPIServer)
-		networkPolicyAllowKubeAPIServer            = k.emptyNetworkPolicy(networkPolicyNameAllowKubeAPIServer)
-		secretETCDEncryptionConfiguration          = k.emptySecret(v1beta1constants.SecretNamePrefixETCDEncryptionConfiguration)
-		secretOIDCCABundle                         = k.emptySecret(secretOIDCCABundleNamePrefix)
-		secretUserProvidedServiceAccountSigningKey = k.emptySecret(secretServiceAccountSigningKeyNamePrefix)
-		configMapAdmission                         = k.emptyConfigMap(configMapAdmissionNamePrefix)
-		configMapAuditPolicy                       = k.emptyConfigMap(configMapAuditPolicyNamePrefix)
-		configMapEgressSelector                    = k.emptyConfigMap(configMapEgressSelectorNamePrefix)
+		deployment                           = k.emptyDeployment()
+		podDisruptionBudget                  client.Object
+		horizontalPodAutoscaler              client.Object
+		verticalPodAutoscaler                = k.emptyVerticalPodAutoscaler()
+		hvpa                                 = k.emptyHVPA()
+		networkPolicyAllowFromShootAPIServer = k.emptyNetworkPolicy(networkPolicyNameAllowFromShootAPIServer)
+		networkPolicyAllowToShootAPIServer   = k.emptyNetworkPolicy(networkPolicyNameAllowToShootAPIServer)
+		networkPolicyAllowKubeAPIServer      = k.emptyNetworkPolicy(networkPolicyNameAllowKubeAPIServer)
+		secretETCDEncryptionConfiguration    = k.emptySecret(v1beta1constants.SecretNamePrefixETCDEncryptionConfiguration)
+		secretOIDCCABundle                   = k.emptySecret(secretOIDCCABundleNamePrefix)
+		configMapAdmissionConfigs            = k.emptyConfigMap(configMapAdmissionNamePrefix)
+		secretAdmissionKubeconfigs           = k.emptySecret(secretAdmissionKubeconfigsNamePrefix)
+		configMapAuditPolicy                 = k.emptyConfigMap(configMapAuditPolicyNamePrefix)
+		configMapEgressSelector              = k.emptyConfigMap(configMapEgressSelectorNamePrefix)
+		configMapTerminationHandler          = k.emptyConfigMap(watchdogConfigMapNamePrefix)
 	)
 
-	seedK8sVersionGreaterEqual121, err := version.CompareVersions(k.client.Version(), ">=", "1.21")
-	if err != nil {
-		return err
-	}
-	seedK8sVersionGreaterEqual123, err := version.CompareVersions(k.client.Version(), ">=", "1.23")
-	if err != nil {
-		return err
-	}
-
-	podDisruptionBudget = k.emptyPodDisruptionBudget(seedK8sVersionGreaterEqual121)
-	horizontalPodAutoscaler = k.emptyHorizontalPodAutoscaler(seedK8sVersionGreaterEqual123)
+	podDisruptionBudget = k.emptyPodDisruptionBudget()
+	horizontalPodAutoscaler = k.emptyHorizontalPodAutoscaler()
 
 	if err := k.reconcilePodDisruptionBudget(ctx, podDisruptionBudget); err != nil {
 		return err
@@ -340,11 +372,13 @@ func (k *kubeAPIServer) Deploy(ctx context.Context) error {
 		return err
 	}
 
+	// TODO(rfranzke): Delete this network policy in a future release.
 	if err := k.reconcileNetworkPolicyAllowToShootAPIServer(ctx, networkPolicyAllowToShootAPIServer); err != nil {
 		return err
 	}
 
-	if err := k.reconcileNetworkPolicyAllowKubeAPIServer(ctx, networkPolicyAllowKubeAPIServer); err != nil {
+	// TODO(rfranzke): Remove this in a future release.
+	if err := kubernetesutils.DeleteObject(ctx, k.client.Client(), networkPolicyAllowKubeAPIServer); err != nil {
 		return err
 	}
 
@@ -353,10 +387,6 @@ func (k *kubeAPIServer) Deploy(ctx context.Context) error {
 	}
 
 	if err := k.reconcileSecretOIDCCABundle(ctx, secretOIDCCABundle); err != nil {
-		return err
-	}
-
-	if err := k.reconcileSecretUserProvidedServiceAccountSigningKey(ctx, secretUserProvidedServiceAccountSigningKey); err != nil {
 		return err
 	}
 
@@ -390,7 +420,10 @@ func (k *kubeAPIServer) Deploy(ctx context.Context) error {
 		return err
 	}
 
-	if err := k.reconcileConfigMapAdmission(ctx, configMapAdmission); err != nil {
+	if err := k.reconcileConfigMapAdmission(ctx, configMapAdmissionConfigs); err != nil {
+		return err
+	}
+	if err := k.reconcileSecretAdmissionKubeconfigs(ctx, secretAdmissionKubeconfigs); err != nil {
 		return err
 	}
 
@@ -399,16 +432,6 @@ func (k *kubeAPIServer) Deploy(ctx context.Context) error {
 	}
 
 	if err := k.reconcileConfigMapEgressSelector(ctx, configMapEgressSelector); err != nil {
-		return err
-	}
-
-	secretLegacyVPNSeed, err := k.reconcileSecretLegacyVPNSeed(ctx)
-	if err != nil {
-		return err
-	}
-
-	secretLegacyVPNSeedTLSAuth, err := k.reconcileSecretLegacyVPNSeedTLSAuth(ctx)
-	if err != nil {
 		return err
 	}
 
@@ -422,7 +445,12 @@ func (k *kubeAPIServer) Deploy(ctx context.Context) error {
 		return err
 	}
 
-	if k.values.VPN.HighAvailabilityEnabled {
+	tlsSNISecrets, err := k.reconcileTLSSNISecrets(ctx)
+	if err != nil {
+		return err
+	}
+
+	if k.values.VPN.Enabled && k.values.VPN.HighAvailabilityEnabled {
 		if err := k.reconcileServiceAccount(ctx); err != nil {
 			return err
 		}
@@ -433,7 +461,7 @@ func (k *kubeAPIServer) Deploy(ctx context.Context) error {
 			return err
 		}
 	} else {
-		err = kutil.DeleteObjects(ctx, k.client.Client(),
+		err = kubernetesutils.DeleteObjects(ctx, k.client.Client(),
 			k.emptyServiceAccount(),
 			k.emptyRoleHAVPN(),
 			k.emptyRoleBindingHAVPN(),
@@ -443,25 +471,31 @@ func (k *kubeAPIServer) Deploy(ctx context.Context) error {
 		}
 	}
 
+	if version.ConstraintK8sEqual124.Check(k.values.Version) {
+		if err := k.reconcileTerminationHandlerConfigMap(ctx, configMapTerminationHandler); err != nil {
+			return err
+		}
+	}
+
 	if err := k.reconcileDeployment(
 		ctx,
 		deployment,
 		configMapAuditPolicy,
-		configMapAdmission,
+		configMapAdmissionConfigs,
+		secretAdmissionKubeconfigs,
 		configMapEgressSelector,
+		configMapTerminationHandler,
 		secretETCDEncryptionConfiguration,
 		secretOIDCCABundle,
-		secretUserProvidedServiceAccountSigningKey,
 		secretServiceAccountKey,
 		secretStaticToken,
 		secretServer,
 		secretKubeletClient,
 		secretKubeAggregator,
 		secretHTTPProxy,
-		secretLegacyVPNSeed,
-		secretLegacyVPNSeedTLSAuth,
 		secretHAVPNSeedClient,
 		secretHAVPNClientSeedTLSAuth,
+		tlsSNISecrets,
 	); err != nil {
 		return err
 	}
@@ -481,22 +515,13 @@ func (k *kubeAPIServer) Deploy(ctx context.Context) error {
 }
 
 func (k *kubeAPIServer) Destroy(ctx context.Context) error {
-	seedK8sVersionGreaterEqual121, err := version.CompareVersions(k.client.Version(), ">=", "1.21")
-	if err != nil {
-		return err
-	}
-	seedK8sVersionGreaterEqual123, err := version.CompareVersions(k.client.Version(), ">=", "1.23")
-	if err != nil {
-		return err
-	}
-
-	return kutil.DeleteObjects(ctx, k.client.Client(),
+	return kubernetesutils.DeleteObjects(ctx, k.client.Client(),
 		k.emptyManagedResource(),
 		k.emptyManagedResourceSecret(),
-		k.emptyHorizontalPodAutoscaler(seedK8sVersionGreaterEqual123),
+		k.emptyHorizontalPodAutoscaler(),
 		k.emptyVerticalPodAutoscaler(),
 		k.emptyHVPA(),
-		k.emptyPodDisruptionBudget(seedK8sVersionGreaterEqual121),
+		k.emptyPodDisruptionBudget(),
 		k.emptyDeployment(),
 		k.emptyNetworkPolicy(networkPolicyNameAllowFromShootAPIServer),
 		k.emptyNetworkPolicy(networkPolicyNameAllowToShootAPIServer),
@@ -533,7 +558,7 @@ func (k *kubeAPIServer) Wait(ctx context.Context) error {
 			return err
 		}
 
-		newestPod, err2 := kutil.NewestPodForDeployment(ctx, k.client.APIReader(), deployment)
+		newestPod, err2 := kubernetesutils.NewestPodForDeployment(ctx, k.client.APIReader(), deployment)
 		if err2 != nil {
 			return fmt.Errorf("failure to find the newest pod for deployment to read the logs: %s: %w", err2.Error(), err)
 		}
@@ -541,7 +566,7 @@ func (k *kubeAPIServer) Wait(ctx context.Context) error {
 			return err
 		}
 
-		logs, err2 := kutil.MostRecentCompleteLogs(ctx, k.client.Kubernetes().CoreV1().Pods(newestPod.Namespace), newestPod, ContainerNameKubeAPIServer, tailLines, headBytes)
+		logs, err2 := kubernetesutils.MostRecentCompleteLogs(ctx, k.client.Kubernetes().CoreV1().Pods(newestPod.Namespace), newestPod, ContainerNameKubeAPIServer, tailLines, headBytes)
 		if err2 != nil {
 			return fmt.Errorf("failure to read the logs: %s: %w", err2.Error(), err)
 		}

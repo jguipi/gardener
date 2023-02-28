@@ -17,13 +17,6 @@ package kuberbacproxy_test
 import (
 	"context"
 
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	. "github.com/gardener/gardener/pkg/operation/botanist/component/logging/kuberbacproxy"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/types"
@@ -33,6 +26,13 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	. "github.com/gardener/gardener/pkg/operation/botanist/component/logging/kuberbacproxy"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("KubeRBACProxy", func() {
@@ -90,7 +90,7 @@ var _ = Describe("KubeRBACProxy", func() {
 		kubeRBACProxyDeployer, err = New(c, namespace)
 		Expect(err).ToNot(HaveOccurred())
 
-		By("creating secrets managed outside of this package for which secretsmanager.Get() will be called")
+		By("Create secrets managed outside of this package for which secretsmanager.Get() will be called")
 		Expect(c.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "generic-token-kubeconfig", Namespace: namespace}})).To(Succeed())
 	})
 

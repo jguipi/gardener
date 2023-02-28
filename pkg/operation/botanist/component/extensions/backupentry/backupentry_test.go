@@ -19,19 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/extensions"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/backupentry"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
@@ -44,6 +31,18 @@ import (
 	testclock "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/extensions"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/backupentry"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("#BackupEntry", func() {
@@ -166,11 +165,11 @@ var _ = Describe("#BackupEntry", func() {
 		})
 
 		It("should return error if we haven't observed the latest timestamp annotation", func() {
-			By("deploy")
+			By("Deploy")
 			// Deploy should fill internal state with the added timestamp annotation
 			Expect(defaultDepWaiter.Deploy(ctx)).To(Succeed())
 
-			By("patch object")
+			By("Patch object")
 			patch := client.MergeFrom(expected.DeepCopy())
 			expected.Status.LastError = nil
 			// remove operation annotation, add old timestamp annotation
@@ -182,16 +181,16 @@ var _ = Describe("#BackupEntry", func() {
 			}
 			Expect(c.Patch(ctx, expected, patch)).To(Succeed(), "patching backupentry succeeds")
 
-			By("wait")
+			By("Wait")
 			Expect(defaultDepWaiter.Wait(ctx)).NotTo(Succeed(), "backupentry indicates error")
 		})
 
 		It("should return no error when it's ready", func() {
-			By("deploy")
+			By("Deploy")
 			// Deploy should fill internal state with the added timestamp annotation
 			Expect(defaultDepWaiter.Deploy(ctx)).To(Succeed())
 
-			By("patch object")
+			By("Patch object")
 			patch := client.MergeFrom(expected.DeepCopy())
 			expected.Status.LastError = nil
 			// remove operation annotation, add up-to-date timestamp annotation
@@ -203,7 +202,7 @@ var _ = Describe("#BackupEntry", func() {
 			}
 			Expect(c.Patch(ctx, expected, patch)).To(Succeed(), "patching backupentry succeeds")
 
-			By("wait")
+			By("Wait")
 			Expect(defaultDepWaiter.Wait(ctx)).To(Succeed(), "backupentry is ready")
 		})
 	})
@@ -221,7 +220,7 @@ var _ = Describe("#BackupEntry", func() {
 		It("should return error when it's not deleted successfully", func() {
 			defer test.WithVars(
 				&extensions.TimeNow, mockNow.Do,
-				&gutil.TimeNow, mockNow.Do,
+				&gardenerutils.TimeNow, mockNow.Do,
 			)()
 
 			mockNow.EXPECT().Do().Return(fakeClock.Now().UTC()).AnyTimes()
@@ -229,7 +228,7 @@ var _ = Describe("#BackupEntry", func() {
 
 			expected = empty.DeepCopy()
 			expected.SetAnnotations(map[string]string{
-				gutil.ConfirmationDeletion:         "true",
+				gardenerutils.ConfirmationDeletion: "true",
 				v1beta1constants.GardenerTimestamp: fakeClock.Now().UTC().String(),
 			})
 
@@ -260,13 +259,13 @@ var _ = Describe("#BackupEntry", func() {
 	Describe("#Restore", func() {
 		var (
 			state      = &runtime.RawExtension{Raw: []byte(`{"dummy":"state"}`)}
-			shootState *gardencorev1alpha1.ShootState
+			shootState *gardencorev1beta1.ShootState
 		)
 
 		BeforeEach(func() {
-			shootState = &gardencorev1alpha1.ShootState{
-				Spec: gardencorev1alpha1.ShootStateSpec{
-					Extensions: []gardencorev1alpha1.ExtensionResourceState{
+			shootState = &gardencorev1beta1.ShootState{
+				Spec: gardencorev1beta1.ShootStateSpec{
+					Extensions: []gardencorev1beta1.ExtensionResourceState{
 						{
 							Name:  &expected.Name,
 							Kind:  extensionsv1alpha1.BackupEntryResource,
@@ -290,7 +289,9 @@ var _ = Describe("#BackupEntry", func() {
 			mockNow.EXPECT().Do().Return(fakeClock.Now().UTC()).AnyTimes()
 
 			mc := mockclient.NewMockClient(ctrl)
-			mc.EXPECT().Status().Return(mc)
+			mockStatusWriter := mockclient.NewMockStatusWriter(ctrl)
+
+			mc.EXPECT().Status().Return(mockStatusWriter)
 
 			mc.EXPECT().Get(ctx, client.ObjectKeyFromObject(empty), gomock.AssignableToTypeOf(empty)).
 				Return(apierrors.NewNotFound(extensionsv1alpha1.Resource("backupentries"), name))
@@ -309,7 +310,7 @@ var _ = Describe("#BackupEntry", func() {
 			// restore state
 			expectedWithState := obj.DeepCopy()
 			expectedWithState.Status.State = state
-			test.EXPECTPatch(ctx, mc, expectedWithState, obj, types.MergePatchType)
+			test.EXPECTStatusPatch(ctx, mockStatusWriter, expectedWithState, obj, types.MergePatchType)
 
 			// annotate with restore annotation
 			expectedWithRestore := expectedWithState.DeepCopy()

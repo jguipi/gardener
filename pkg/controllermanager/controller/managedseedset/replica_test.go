@@ -30,10 +30,9 @@ import (
 	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
 	seedmanagementv1alpha1constants "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1/constants"
 	. "github.com/gardener/gardener/pkg/controllermanager/controller/managedseedset"
-	configv1alpha1 "github.com/gardener/gardener/pkg/gardenlet/apis/config/v1alpha1"
+	gardenletv1alpha1 "github.com/gardener/gardener/pkg/gardenlet/apis/config/v1alpha1"
 	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	operationshoot "github.com/gardener/gardener/pkg/operation/shoot"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 )
 
 const (
@@ -72,8 +71,8 @@ var _ = Describe("Replica", func() {
 					Spec: seedmanagementv1alpha1.ManagedSeedSpec{
 						Gardenlet: &seedmanagementv1alpha1.Gardenlet{
 							Config: runtime.RawExtension{
-								Object: &configv1alpha1.GardenletConfiguration{
-									SeedConfig: &configv1alpha1.SeedConfig{
+								Object: &gardenletv1alpha1.GardenletConfiguration{
+									SeedConfig: &gardenletv1alpha1.SeedConfig{
 										SeedTemplate: gardencorev1beta1.SeedTemplate{
 											Spec: gardencorev1beta1.SeedSpec{
 												DNS: gardencorev1beta1.SeedDNS{
@@ -112,7 +111,7 @@ var _ = Describe("Replica", func() {
 			deletionTimestamp *metav1.Time,
 			lastOperationType gardencorev1beta1.LastOperationType,
 			lastOperationState gardencorev1beta1.LastOperationState,
-			shs operationshoot.Status,
+			shs gardenerutils.ShootStatus,
 			protected bool,
 		) *gardencorev1beta1.Shoot {
 			labels := make(map[string]string)
@@ -280,22 +279,22 @@ var _ = Describe("Replica", func() {
 	)
 
 	DescribeTable("#GetShootHealthStatus",
-		func(shoot *gardencorev1beta1.Shoot, shs operationshoot.Status) {
+		func(shoot *gardencorev1beta1.Shoot, shs gardenerutils.ShootStatus) {
 			replica := NewReplica(managedSeedSet, shoot, nil, nil, false)
 			Expect(replica.GetShootHealthStatus()).To(Equal(shs))
 		},
 		Entry("should return unhealthy",
-			nil, operationshoot.StatusUnhealthy),
+			nil, gardenerutils.ShootStatusUnhealthy),
 		Entry("should return progressing",
-			shoot(nil, "", "", "", false), operationshoot.StatusProgressing),
+			shoot(nil, "", "", "", false), gardenerutils.ShootStatusProgressing),
 		Entry("should return healthy",
-			shoot(nil, "", "", operationshoot.StatusHealthy, false), operationshoot.StatusHealthy),
+			shoot(nil, "", "", gardenerutils.ShootStatusHealthy, false), gardenerutils.ShootStatusHealthy),
 		Entry("should return progressing",
-			shoot(nil, "", "", operationshoot.StatusProgressing, false), operationshoot.StatusProgressing),
+			shoot(nil, "", "", gardenerutils.ShootStatusProgressing, false), gardenerutils.ShootStatusProgressing),
 		Entry("should return unhealthy",
-			shoot(nil, "", "", operationshoot.StatusUnhealthy, false), operationshoot.StatusUnhealthy),
+			shoot(nil, "", "", gardenerutils.ShootStatusUnhealthy, false), gardenerutils.ShootStatusUnhealthy),
 		Entry("should return unknown",
-			shoot(nil, "", "", operationshoot.StatusUnknown, false), operationshoot.StatusUnknown),
+			shoot(nil, "", "", gardenerutils.ShootStatusUnknown, false), gardenerutils.ShootStatusUnknown),
 	)
 
 	DescribeTable("#IsDeletable",
@@ -370,8 +369,8 @@ var _ = Describe("Replica", func() {
 							},
 							Gardenlet: &seedmanagementv1alpha1.Gardenlet{
 								Config: runtime.RawExtension{
-									Object: &configv1alpha1.GardenletConfiguration{
-										SeedConfig: &configv1alpha1.SeedConfig{
+									Object: &gardenletv1alpha1.GardenletConfiguration{
+										SeedConfig: &gardenletv1alpha1.SeedConfig{
 											SeedTemplate: gardencorev1beta1.SeedTemplate{
 												Spec: gardencorev1beta1.SeedSpec{
 													DNS: gardencorev1beta1.SeedDNS{
@@ -400,7 +399,7 @@ var _ = Describe("Replica", func() {
 			shoot := shoot(nil, "", "", "", false)
 			c.EXPECT().Patch(ctx, gomock.AssignableToTypeOf(&gardencorev1beta1.Shoot{}), gomock.Any()).DoAndReturn(
 				func(_ context.Context, s *gardencorev1beta1.Shoot, _ client.Patch, _ ...client.PatchOption) error {
-					Expect(s.Annotations).To(HaveKeyWithValue(gutil.ConfirmationDeletion, "true"))
+					Expect(s.Annotations).To(HaveKeyWithValue(gardenerutils.ConfirmationDeletion, "true"))
 					*shoot = *s
 					return nil
 				},

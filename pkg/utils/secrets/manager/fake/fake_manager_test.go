@@ -17,10 +17,6 @@ package fake_test
 import (
 	"context"
 
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-	. "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
@@ -30,6 +26,10 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
+	. "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
 )
 
 var _ = Describe("FakeManager", func() {
@@ -85,7 +85,7 @@ var _ = Describe("FakeManager", func() {
 
 	Describe("#Generate", func() {
 		var (
-			config         = &secretutils.BasicAuthSecretConfig{Name: name, Format: secretutils.BasicAuthFormatNormal}
+			config         = &secretsutils.BasicAuthSecretConfig{Name: name, Format: secretsutils.BasicAuthFormatNormal}
 			configChecksum = "17492942871593004096"
 			secretName     = name + "-fa646dad"
 		)

@@ -13,7 +13,6 @@ vpa:
   enabled: true
   resourcePolicy:
     minAllowed:
-      cpu: 50m
       memory: 64Mi
   updatePolicy:
     updateMode: "Auto"
@@ -34,6 +33,9 @@ controllers:
   service:
     concurrentSyncs: 5
     hostIP: "127.0.0.1"
+    zone0IP: "127.0.0.10"
+    zone1IP: "127.0.0.11"
+    zone2IP: "127.0.0.12"
     apiServerSNIEnabled: true
   backupbucket:
     localDir: "/dev/local-backupbuckets"

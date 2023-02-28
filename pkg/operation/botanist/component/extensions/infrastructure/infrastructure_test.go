@@ -19,20 +19,6 @@ import (
 	"errors"
 	"time"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/extensions"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/infrastructure"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	"github.com/gardener/gardener/pkg/utils/retry"
-	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
@@ -46,6 +32,19 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/extensions"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/infrastructure"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/retry"
+	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("#Interface", func() {
@@ -164,10 +163,11 @@ var _ = Describe("#Interface", func() {
 			)()
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
-			deployWaiter.SetSSHPublicKey(sshPublicKey)
+			deployWaiter.SetSSHPublicKey([]byte(""))
 			Expect(deployWaiter.Deploy(ctx)).To(Succeed())
 
 			actual := &extensionsv1alpha1.Infrastructure{}
+			expected.Spec.SSHPublicKey = []byte("")
 			Expect(c.Get(ctx, client.ObjectKeyFromObject(expected), actual)).To(Succeed())
 			expected.SetAnnotations(map[string]string{
 				v1beta1constants.GardenerTimestamp: now.UTC().String(),
@@ -211,13 +211,13 @@ var _ = Describe("#Interface", func() {
 			)()
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
-			By("deploy")
+			By("Deploy")
 			// Deploy should fill internal state with the added timestamp annotation
 			values.AnnotateOperation = true
 			deployWaiter.SetSSHPublicKey(sshPublicKey)
 			Expect(deployWaiter.Deploy(ctx)).To(Succeed())
 
-			By("patch object")
+			By("Patch object")
 			patch := client.MergeFrom(expected.DeepCopy())
 			expected.Status.LastError = nil
 			// remove operation annotation, add old timestamp annotation
@@ -229,7 +229,7 @@ var _ = Describe("#Interface", func() {
 			}
 			Expect(c.Patch(ctx, expected, patch)).To(Succeed(), "patching infrastructure succeeds")
 
-			By("wait")
+			By("Wait")
 			Expect(deployWaiter.Wait(ctx)).NotTo(Succeed(), "infrastructure indicates error")
 		})
 
@@ -239,13 +239,13 @@ var _ = Describe("#Interface", func() {
 			)()
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
-			By("deploy")
+			By("Deploy")
 			// Deploy should fill internal state with the added timestamp annotation
 			values.AnnotateOperation = true
 			deployWaiter.SetSSHPublicKey(sshPublicKey)
 			Expect(deployWaiter.Deploy(ctx)).To(Succeed())
 
-			By("patch object")
+			By("Patch object")
 			patch := client.MergeFrom(expected.DeepCopy())
 			expected.Status.LastError = nil
 			// remove operation annotation, add up-to-date timestamp annotation
@@ -259,10 +259,10 @@ var _ = Describe("#Interface", func() {
 			expected.Status.ProviderStatus = providerStatus
 			Expect(c.Patch(ctx, expected, patch)).To(Succeed(), "patching infrastructure succeeds")
 
-			By("wait")
+			By("Wait")
 			Expect(deployWaiter.Wait(ctx)).To(Succeed(), "infrastructure is ready")
 
-			By("verify status")
+			By("Verify status")
 			Expect(deployWaiter.ProviderStatus()).To(Equal(providerStatus))
 			Expect(deployWaiter.NodesCIDR()).To(Equal(nodesCIDR))
 		})
@@ -296,7 +296,7 @@ var _ = Describe("#Interface", func() {
 		It("should return error when it's not deleted successfully", func() {
 			defer test.WithVars(
 				&extensions.TimeNow, mockNow.Do,
-				&gutil.TimeNow, mockNow.Do,
+				&gardenerutils.TimeNow, mockNow.Do,
 			)()
 
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
@@ -304,7 +304,7 @@ var _ = Describe("#Interface", func() {
 
 			expected = empty.DeepCopy()
 			expected.SetAnnotations(map[string]string{
-				gutil.ConfirmationDeletion:         "true",
+				gardenerutils.ConfirmationDeletion: "true",
 				v1beta1constants.GardenerTimestamp: now.UTC().String(),
 			})
 
@@ -335,9 +335,9 @@ var _ = Describe("#Interface", func() {
 	Describe("#Restore", func() {
 		var (
 			state      = &runtime.RawExtension{Raw: []byte(`{"dummy":"state"}`)}
-			shootState = &gardencorev1alpha1.ShootState{
-				Spec: gardencorev1alpha1.ShootStateSpec{
-					Extensions: []gardencorev1alpha1.ExtensionResourceState{
+			shootState = &gardencorev1beta1.ShootState{
+				Spec: gardencorev1beta1.ShootStateSpec{
+					Extensions: []gardencorev1beta1.ExtensionResourceState{
 						{
 							Name:  pointer.String(name),
 							Kind:  extensionsv1alpha1.InfrastructureResource,
@@ -356,7 +356,9 @@ var _ = Describe("#Interface", func() {
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
 			mc := mockclient.NewMockClient(ctrl)
-			mc.EXPECT().Status().Return(mc)
+			mockStatusWriter := mockclient.NewMockStatusWriter(ctrl)
+
+			mc.EXPECT().Status().Return(mockStatusWriter)
 
 			values.SSHPublicKey = sshPublicKey
 			values.AnnotateOperation = true
@@ -378,7 +380,7 @@ var _ = Describe("#Interface", func() {
 			// restore state
 			expectedWithState := obj.DeepCopy()
 			expectedWithState.Status.State = state
-			test.EXPECTPatch(ctx, mc, expectedWithState, obj, types.MergePatchType)
+			test.EXPECTStatusPatch(ctx, mockStatusWriter, expectedWithState, obj, types.MergePatchType)
 
 			// annotate with restore annotation
 			expectedWithRestore := expectedWithState.DeepCopy()

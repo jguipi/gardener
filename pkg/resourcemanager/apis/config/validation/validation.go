@@ -39,10 +39,10 @@ func ValidateResourceManagerConfiguration(conf *config.ResourceManagerConfigurat
 	allErrs = append(allErrs, validateServerConfiguration(conf.Server, field.NewPath("server"))...)
 	allErrs = append(allErrs, componentbaseconfigvalidation.ValidateLeaderElectionConfiguration(&conf.LeaderElection, field.NewPath("leaderElection"))...)
 
-	if !sets.NewString(logger.AllLogLevels...).Has(conf.LogLevel) {
+	if !sets.New[string](logger.AllLogLevels...).Has(conf.LogLevel) {
 		allErrs = append(allErrs, field.NotSupported(field.NewPath("logLevel"), conf.LogLevel, logger.AllLogLevels))
 	}
-	if !sets.NewString(logger.AllLogFormats...).Has(conf.LogFormat) {
+	if !sets.New[string](logger.AllLogFormats...).Has(conf.LogFormat) {
 		allErrs = append(allErrs, field.NotSupported(field.NewPath("logFormat"), conf.LogFormat, logger.AllLogFormats))
 	}
 
@@ -119,7 +119,6 @@ func validateResourceManagerControllerConfiguration(conf config.ResourceManagerC
 	allErrs = append(allErrs, validateSyncPeriod(conf.Health.SyncPeriod, fldPath.Child("health"))...)
 
 	allErrs = append(allErrs, validateManagedResourceControllerConfiguration(conf.ManagedResource, fldPath.Child("managedResources"))...)
-	allErrs = append(allErrs, validateRootCAPublisherControllerConfiguration(conf.RootCAPublisher, fldPath.Child("rootCAPublisher"))...)
 
 	allErrs = append(allErrs, validateConcurrentSyncs(conf.Secret.ConcurrentSyncs, fldPath.Child("secret"))...)
 
@@ -138,20 +137,6 @@ func validateManagedResourceControllerConfiguration(conf config.ManagedResourceC
 
 	if len(pointer.StringDeref(conf.ManagedByLabelValue, "")) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("managedByLabelValue"), "must specify value of managed-by label"))
-	}
-
-	return allErrs
-}
-
-func validateRootCAPublisherControllerConfiguration(conf config.RootCAPublisherControllerConfig, fldPath *field.Path) field.ErrorList {
-	allErrs := field.ErrorList{}
-
-	if conf.Enabled {
-		allErrs = append(allErrs, validateConcurrentSyncs(conf.ConcurrentSyncs, fldPath)...)
-
-		if len(pointer.StringDeref(conf.RootCAFile, "")) == 0 {
-			allErrs = append(allErrs, field.Required(fldPath.Child("rootCAFile"), "must specify path to root CA file"))
-		}
 	}
 
 	return allErrs

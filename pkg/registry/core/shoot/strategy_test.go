@@ -36,6 +36,114 @@ import (
 )
 
 var _ = Describe("Strategy", func() {
+	Describe("#PrepareForCreate", func() {
+		var (
+			shoot *core.Shoot
+		)
+
+		BeforeEach(func() {
+			shoot = &core.Shoot{}
+		})
+
+		DescribeTable("HAControlPlanes feature gate on shoot creation",
+			func(featureGateEnabled bool, shootCP, resultingShootCP *core.ControlPlane) {
+
+				testFeatureGate := featuregate.NewFeatureGate()
+				Expect(testFeatureGate.Add(features.GetFeatures(
+					features.HAControlPlanes,
+				))).To(Succeed())
+				Expect(testFeatureGate.Set(fmt.Sprintf("%s=%v", features.HAControlPlanes, featureGateEnabled))).To(Succeed())
+
+				DeferCleanup(test.WithVars(
+					&utilfeature.DefaultFeatureGate,
+					testFeatureGate,
+				))
+
+				shoot.Spec.ControlPlane = shootCP
+
+				shootregistry.NewStrategy(0).PrepareForCreate(context.TODO(), shoot)
+
+				Expect(shoot.Spec.ControlPlane).To(Equal(resultingShootCP))
+			},
+
+			Entry("HAControlPlanes false, new shoot HA",
+				false,
+				newControlPlaneWithFailureTypeNode(),
+				newControlPlaneWithHighAvailabilityNil(),
+			),
+			Entry("HAControlPlanes true, new shoot HA",
+				true,
+				newControlPlaneWithFailureTypeNode(),
+				newControlPlaneWithFailureTypeNode(),
+			),
+			Entry("HAControlPlanes false, new shoot no HA",
+				false,
+				nil,
+				nil,
+			),
+			Entry("HAControlPlanes true, new shoot no HA",
+				true,
+				nil,
+				nil,
+			),
+		)
+
+		Context("enableBasicAuthentication field", func() {
+			It("should drop the enableBasicAuthentication field when the kubeAPIServer is not nil", func() {
+				shoot.Spec.Kubernetes.KubeAPIServer = &core.KubeAPIServerConfig{
+					EnableBasicAuthentication: pointer.Bool(false),
+				}
+
+				shootregistry.NewStrategy(0).PrepareForCreate(context.TODO(), shoot)
+
+				Expect(shoot.Spec.Kubernetes.KubeAPIServer.EnableBasicAuthentication).To(BeNil())
+			})
+
+			It("should do nothing when kubeAPIServer is nil", func() {
+				shoot.Spec.Kubernetes.KubeAPIServer = nil
+
+				shootregistry.NewStrategy(0).PrepareForCreate(context.TODO(), shoot)
+
+				Expect(shoot.Spec.Kubernetes.KubeAPIServer).To(BeNil())
+			})
+		})
+
+		DescribeTable("kubernetesDashboard.authenticationMode field",
+			func(addons *core.Addons, expected *core.Addons) {
+				shoot := &core.Shoot{
+					Spec: core.ShootSpec{
+						Addons: addons,
+					},
+				}
+
+				shootregistry.NewStrategy(0).PrepareForCreate(context.TODO(), shoot)
+
+				Expect(shoot.Spec.Addons).To(Equal(expected))
+			},
+
+			Entry("addons field is nil",
+				nil,
+				nil,
+			),
+			Entry("kubernetesDashboard field is nil",
+				&core.Addons{KubernetesDashboard: nil},
+				&core.Addons{KubernetesDashboard: nil},
+			),
+			Entry("authMode is nil",
+				&core.Addons{KubernetesDashboard: &core.KubernetesDashboard{AuthenticationMode: nil}},
+				&core.Addons{KubernetesDashboard: &core.KubernetesDashboard{AuthenticationMode: nil}},
+			),
+			Entry("authMode is basic",
+				&core.Addons{KubernetesDashboard: &core.KubernetesDashboard{AuthenticationMode: pointer.String("basic")}},
+				&core.Addons{KubernetesDashboard: &core.KubernetesDashboard{AuthenticationMode: pointer.String("token")}},
+			),
+			Entry("authMode is token",
+				&core.Addons{KubernetesDashboard: &core.KubernetesDashboard{AuthenticationMode: pointer.String("token")}},
+				&core.Addons{KubernetesDashboard: &core.KubernetesDashboard{AuthenticationMode: pointer.String("token")}},
+			),
+		)
+	})
+
 	Describe("#PrepareForUpdate", func() {
 		Context("seedName change", func() {
 			var (
@@ -244,49 +352,6 @@ var _ = Describe("Strategy", func() {
 				)
 			})
 
-			DescribeTable("HAControlPlanes feature gate on shoot creation",
-				func(featureGateEnabled bool, newShootCP, resultingShootCP *core.ControlPlane) {
-
-					testFeatureGate := featuregate.NewFeatureGate()
-					Expect(testFeatureGate.Add(features.GetFeatures(
-						features.HAControlPlanes,
-					))).To(Succeed())
-					Expect(testFeatureGate.Set(fmt.Sprintf("%s=%v", features.HAControlPlanes, featureGateEnabled))).To(Succeed())
-
-					DeferCleanup(test.WithVars(
-						&utilfeature.DefaultFeatureGate,
-						testFeatureGate,
-					))
-
-					newShoot.Spec.ControlPlane = newShootCP
-
-					shootregistry.NewStrategy(0).PrepareForCreate(context.TODO(), newShoot)
-
-					Expect(newShoot.Spec.ControlPlane).To(Equal(resultingShootCP))
-				},
-
-				Entry("HAControlPlanes false, new shoot HA",
-					false,
-					newControlPlaneWithFailureTypeNode(),
-					newControlPlaneWithHighAvailabilityNil(),
-				),
-				Entry("HAControlPlanes true, new shoot HA",
-					true,
-					newControlPlaneWithFailureTypeNode(),
-					newControlPlaneWithFailureTypeNode(),
-				),
-				Entry("HAControlPlanes false, new shoot no HA",
-					false,
-					nil,
-					nil,
-				),
-				Entry("HAControlPlanes true, new shoot no HA",
-					true,
-					nil,
-					nil,
-				),
-			)
-
 			DescribeTable("HAControlPlanes feature gate on shoot update",
 				func(featureGateEnabled bool, oldShootCP, newShootCP, resultingShootCP *core.ControlPlane) {
 
@@ -415,13 +480,13 @@ var _ = Describe("Strategy", func() {
 				),
 
 				Entry("rotate-credentials-start",
-					v1beta1constants.ShootOperationRotateCredentialsStart,
+					v1beta1constants.OperationRotateCredentialsStart,
 					nil,
 					true,
 					true,
 				),
 				Entry("rotate-credentials-complete",
-					v1beta1constants.ShootOperationRotateCredentialsComplete,
+					v1beta1constants.OperationRotateCredentialsComplete,
 					nil,
 					true,
 					true,
@@ -447,39 +512,39 @@ var _ = Describe("Strategy", func() {
 				),
 
 				Entry("rotate-etcd-encryption-key-start",
-					v1beta1constants.ShootOperationRotateETCDEncryptionKeyStart,
+					v1beta1constants.OperationRotateETCDEncryptionKeyStart,
 					nil,
 					true,
 					true,
 				),
 				Entry("rotate-etcd-encryption-key-complete",
-					v1beta1constants.ShootOperationRotateETCDEncryptionKeyComplete,
+					v1beta1constants.OperationRotateETCDEncryptionKeyComplete,
 					nil,
 					true,
 					true,
 				),
 
 				Entry("rotate-ca-start",
-					v1beta1constants.ShootOperationRotateCAStart,
+					v1beta1constants.OperationRotateCAStart,
 					nil,
 					true,
 					true,
 				),
 				Entry("rotate-ca-complete",
-					v1beta1constants.ShootOperationRotateCAComplete,
+					v1beta1constants.OperationRotateCAComplete,
 					nil,
 					true,
 					true,
 				),
 
 				Entry("rotate-serviceaccount-key-start",
-					v1beta1constants.ShootOperationRotateServiceAccountKeyStart,
+					v1beta1constants.OperationRotateServiceAccountKeyStart,
 					nil,
 					true,
 					true,
 				),
 				Entry("rotate-serviceaccount-key-complete",
-					v1beta1constants.ShootOperationRotateServiceAccountKeyComplete,
+					v1beta1constants.OperationRotateServiceAccountKeyComplete,
 					nil,
 					true,
 					true,
@@ -487,92 +552,71 @@ var _ = Describe("Strategy", func() {
 			)
 		})
 
-		Context("migration", func() {
-			Context("migrate HA annotation", func() {
-				var shoot, oldShoot *core.Shoot
+		Context("enableBasicAuthentication field", func() {
+			var (
+				oldShoot *core.Shoot
+				newShoot *core.Shoot
+			)
 
-				BeforeEach(func() {
-					shoot = &core.Shoot{}
-					oldShoot = shoot.DeepCopy()
+			BeforeEach(func() {
+				oldShoot = &core.Shoot{}
+				newShoot = oldShoot.DeepCopy()
+			})
 
-					featureEnabled := utilfeature.DefaultFeatureGate.Enabled(features.HAControlPlanes)
-					if !featureEnabled {
-						Expect(utilfeature.DefaultMutableFeatureGate.SetFromMap(map[string]bool{string(features.HAControlPlanes): true})).To(Succeed())
-						DeferCleanup(func() {
-							Expect(utilfeature.DefaultMutableFeatureGate.SetFromMap(map[string]bool{string(features.HAControlPlanes): featureEnabled})).To(Succeed())
-						})
-					}
-				})
+			It("should drop the enableBasicAuthentication field when the kubeAPIServer is not nil", func() {
+				newShoot.Spec.Kubernetes.KubeAPIServer = &core.KubeAPIServerConfig{
+					EnableBasicAuthentication: pointer.Bool(false),
+				}
 
-				It("should not modify the spec if already set", func() {
-					shoot.ObjectMeta = metav1.ObjectMeta{
-						Annotations: map[string]string{
-							v1beta1constants.ShootAlphaControlPlaneHighAvailability: v1beta1constants.ShootAlphaControlPlaneHighAvailabilitySingleZone,
-						},
-					}
+				shootregistry.NewStrategy(0).PrepareForUpdate(context.TODO(), newShoot, oldShoot)
 
-					failureTolerance := core.FailureTolerance{
-						Type: core.FailureToleranceTypeNode,
-					}
+				Expect(newShoot.Spec.Kubernetes.KubeAPIServer.EnableBasicAuthentication).To(BeNil())
+			})
 
-					shoot.Spec.ControlPlane = &core.ControlPlane{
-						HighAvailability: &core.HighAvailability{
-							FailureTolerance: failureTolerance,
-						},
-					}
+			It("should do nothing when kubeAPIServer is nil", func() {
+				newShoot.Spec.Kubernetes.KubeAPIServer = nil
 
-					shootregistry.NewStrategy(0).PrepareForUpdate(context.TODO(), shoot, oldShoot)
+				shootregistry.NewStrategy(0).PrepareForUpdate(context.TODO(), newShoot, oldShoot)
 
-					Expect(shoot.Spec.ControlPlane).NotTo(BeNil())
-					Expect(shoot.Spec.ControlPlane.HighAvailability).NotTo(BeNil())
-					Expect(shoot.Spec.ControlPlane.HighAvailability.FailureTolerance).To(Equal(failureTolerance))
-					Expect(shoot.Annotations).ToNot(HaveKey("alpha.control-plane.shoot.gardener.cloud/high-availability"))
-				})
-
-				It("should not modify the spec when annotation is set to an unknown value", func() {
-					shoot.ObjectMeta = metav1.ObjectMeta{
-						Annotations: map[string]string{
-							v1beta1constants.ShootAlphaControlPlaneHighAvailability: "foo",
-						},
-					}
-
-					shootregistry.NewStrategy(0).PrepareForUpdate(context.TODO(), shoot, oldShoot)
-
-					Expect(shoot.Spec.ControlPlane).To(BeNil())
-					Expect(shoot.Annotations).ToNot(HaveKey("alpha.control-plane.shoot.gardener.cloud/high-availability"))
-				})
-
-				It("should migrate to tolerance type node", func() {
-					shoot.ObjectMeta = metav1.ObjectMeta{
-						Annotations: map[string]string{
-							v1beta1constants.ShootAlphaControlPlaneHighAvailability: v1beta1constants.ShootAlphaControlPlaneHighAvailabilitySingleZone,
-						},
-					}
-
-					shootregistry.NewStrategy(0).PrepareForUpdate(context.TODO(), shoot, oldShoot)
-
-					Expect(shoot.Spec.ControlPlane).NotTo(BeNil())
-					Expect(shoot.Spec.ControlPlane.HighAvailability).NotTo(BeNil())
-					Expect(shoot.Spec.ControlPlane.HighAvailability.FailureTolerance.Type).To(Equal(core.FailureToleranceTypeNode))
-					Expect(shoot.Annotations).ToNot(HaveKey("alpha.control-plane.shoot.gardener.cloud/high-availability"))
-				})
-
-				It("should migrate to tolerance type node", func() {
-					shoot.ObjectMeta = metav1.ObjectMeta{
-						Annotations: map[string]string{
-							v1beta1constants.ShootAlphaControlPlaneHighAvailability: v1beta1constants.ShootAlphaControlPlaneHighAvailabilitySingleZone,
-						},
-					}
-
-					shootregistry.NewStrategy(0).PrepareForUpdate(context.TODO(), shoot, oldShoot)
-
-					Expect(shoot.Spec.ControlPlane).NotTo(BeNil())
-					Expect(shoot.Spec.ControlPlane.HighAvailability).NotTo(BeNil())
-					Expect(shoot.Spec.ControlPlane.HighAvailability.FailureTolerance.Type).To(Equal(core.FailureToleranceTypeNode))
-					Expect(shoot.Annotations).ToNot(HaveKey("alpha.control-plane.shoot.gardener.cloud/high-availability"))
-				})
+				Expect(newShoot.Spec.Kubernetes.KubeAPIServer).To(BeNil())
 			})
 		})
+
+		DescribeTable("kubernetesDashboard.authenticationMode field",
+			func(addons *core.Addons, expected *core.Addons) {
+				newShoot := &core.Shoot{
+					Spec: core.ShootSpec{
+						Addons: addons,
+					},
+				}
+				oldShoot := &core.Shoot{}
+
+				shootregistry.NewStrategy(0).PrepareForUpdate(context.TODO(), newShoot, oldShoot)
+
+				Expect(newShoot.Spec.Addons).To(Equal(expected))
+			},
+
+			Entry("addons field is nil",
+				nil,
+				nil,
+			),
+			Entry("kubernetesDashboard field is nil",
+				&core.Addons{KubernetesDashboard: nil},
+				&core.Addons{KubernetesDashboard: nil},
+			),
+			Entry("authMode is nil",
+				&core.Addons{KubernetesDashboard: &core.KubernetesDashboard{AuthenticationMode: nil}},
+				&core.Addons{KubernetesDashboard: &core.KubernetesDashboard{AuthenticationMode: nil}},
+			),
+			Entry("authMode is basic",
+				&core.Addons{KubernetesDashboard: &core.KubernetesDashboard{AuthenticationMode: pointer.String("basic")}},
+				&core.Addons{KubernetesDashboard: &core.KubernetesDashboard{AuthenticationMode: pointer.String("token")}},
+			),
+			Entry("authMode is token",
+				&core.Addons{KubernetesDashboard: &core.KubernetesDashboard{AuthenticationMode: pointer.String("token")}},
+				&core.Addons{KubernetesDashboard: &core.KubernetesDashboard{AuthenticationMode: pointer.String("token")}},
+			),
+		)
 	})
 
 	Describe("#Canonicalize", func() {

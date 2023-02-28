@@ -17,6 +17,11 @@ package rest
 import (
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apiserver/pkg/registry/generic"
+	"k8s.io/apiserver/pkg/registry/rest"
+	genericapiserver "k8s.io/apiserver/pkg/server"
+
 	"github.com/gardener/gardener/pkg/api"
 	"github.com/gardener/gardener/pkg/apis/core"
 	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
@@ -34,11 +39,6 @@ import (
 	seedstore "github.com/gardener/gardener/pkg/registry/core/seed/storage"
 	shootstore "github.com/gardener/gardener/pkg/registry/core/shoot/storage"
 	shootstatestore "github.com/gardener/gardener/pkg/registry/core/shootstate/storage"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apiserver/pkg/registry/generic"
-	"k8s.io/apiserver/pkg/registry/rest"
-	genericapiserver "k8s.io/apiserver/pkg/server"
 )
 
 // StorageProvider contains configurations related to the core resources.
@@ -141,6 +141,9 @@ func (p StorageProvider) v1beta1Storage(restOptionsGetter generic.RESTOptionsGet
 	storage["controllerinstallations"] = controllerInstallationStorage.ControllerInstallation
 	storage["controllerinstallations/status"] = controllerInstallationStorage.Status
 
+	exposureClassStorage := exposureclassstore.NewStorage(restOptionsGetter)
+	storage["exposureclasses"] = exposureClassStorage.ExposureClass
+
 	projectStorage := projectstore.NewStorage(restOptionsGetter)
 	storage["projects"] = projectStorage.Project
 	storage["projects/status"] = projectStorage.Status
@@ -154,6 +157,9 @@ func (p StorageProvider) v1beta1Storage(restOptionsGetter generic.RESTOptionsGet
 	seedStorage := seedstore.NewStorage(restOptionsGetter, cloudprofileStorage.CloudProfile)
 	storage["seeds"] = seedStorage.Seed
 	storage["seeds/status"] = seedStorage.Status
+
+	shootStateStorage := shootstatestore.NewStorage(restOptionsGetter)
+	storage["shootstates"] = shootStateStorage.ShootState
 
 	shootStorage := shootstore.NewStorage(restOptionsGetter, shootstatestore.NewStorage(restOptionsGetter).ShootState.Store, p.AdminKubeconfigMaxExpiration, p.CredentialsRotationInterval)
 	storage["shoots"] = shootStorage.Shoot

@@ -18,16 +18,16 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	"github.com/gardener/gardener/pkg/controllerutils"
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
 	extensionsdnsrecord "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/dnsrecord"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 )
 
 // DefaultExternalDNSRecord creates the default deployer for the external DNSRecord resource.
@@ -46,7 +46,7 @@ func (b *Botanist) DefaultExternalDNSRecord() extensionsdnsrecord.Interface {
 			values.Zone = &b.Shoot.ExternalDomain.Zone
 		}
 		values.SecretData = b.Shoot.ExternalDomain.SecretData
-		values.DNSName = gutil.GetAPIServerDomain(*b.Shoot.ExternalClusterDomain)
+		values.DNSName = gardenerutils.GetAPIServerDomain(*b.Shoot.ExternalClusterDomain)
 	}
 
 	return extensionsdnsrecord.New(
@@ -78,7 +78,7 @@ func (b *Botanist) DefaultInternalDNSRecord() extensionsdnsrecord.Interface {
 			values.Zone = &b.Garden.InternalDomain.Zone
 		}
 		values.SecretData = b.Garden.InternalDomain.SecretData
-		values.DNSName = gutil.GetAPIServerDomain(b.Shoot.InternalClusterDomain)
+		values.DNSName = gardenerutils.GetAPIServerDomain(b.Shoot.InternalClusterDomain)
 	}
 
 	return extensionsdnsrecord.New(
@@ -108,7 +108,7 @@ func (b *Botanist) DefaultOwnerDNSRecord() extensionsdnsrecord.Interface {
 			values.Zone = &b.Garden.InternalDomain.Zone
 		}
 		values.SecretData = b.Garden.InternalDomain.SecretData
-		values.DNSName = gutil.GetOwnerDomain(b.Shoot.InternalClusterDomain)
+		values.DNSName = gardenerutils.GetOwnerDomain(b.Shoot.InternalClusterDomain)
 		values.RecordType = extensionsv1alpha1.DNSRecordTypeTXT
 		values.Values = []string{*b.Seed.GetInfo().Status.ClusterIdentity}
 	}

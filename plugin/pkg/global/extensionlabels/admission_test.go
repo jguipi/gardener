@@ -18,29 +18,29 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	internalcoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
-	. "github.com/gardener/gardener/plugin/pkg/global/extensionlabels"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/utils/pointer"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	. "github.com/gardener/gardener/plugin/pkg/global/extensionlabels"
 )
 
 var _ = Describe("ExtensionLabels tests", func() {
 	var (
 		admissionHandler                  *ExtensionLabels
-		gardenInternalCoreInformerFactory internalcoreinformers.SharedInformerFactory
+		gardenInternalCoreInformerFactory gardencoreinformers.SharedInformerFactory
 	)
 
 	BeforeEach(func() {
 		admissionHandler, _ = New()
 		admissionHandler.AssignReadyFunc(func() bool { return true })
 
-		gardenInternalCoreInformerFactory = internalcoreinformers.NewSharedInformerFactory(nil, 0)
+		gardenInternalCoreInformerFactory = gardencoreinformers.NewSharedInformerFactory(nil, 0)
 		admissionHandler.SetInternalCoreInformerFactory(gardenInternalCoreInformerFactory)
 	})
 
@@ -545,7 +545,7 @@ var _ = Describe("ExtensionLabels tests", func() {
 
 		It("should not return error if BackupBucketLister and core client are set", func() {
 			el, _ := New()
-			el.SetInternalCoreInformerFactory(internalcoreinformers.NewSharedInformerFactory(nil, 0))
+			el.SetInternalCoreInformerFactory(gardencoreinformers.NewSharedInformerFactory(nil, 0))
 			err := el.ValidateInitialization()
 			Expect(err).ToNot(HaveOccurred())
 		})

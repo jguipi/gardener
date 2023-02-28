@@ -66,9 +66,9 @@ func (shootStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
 	shoot.Generation = 1
 	shoot.Status = core.ShootStatus{}
 
-	runMigration(shoot)
-
 	dropDisabledFields(shoot, nil)
+	dropEnableBasicAuthenticationField(shoot)
+	setKubernetesDashboardAuthMode(shoot)
 }
 
 func (shootStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
@@ -78,45 +78,13 @@ func (shootStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Obje
 	newShoot.Status = oldShoot.Status               // can only be changed by shoots/status subresource
 	newShoot.Spec.SeedName = oldShoot.Spec.SeedName // can only be changed by shoots/binding subresource
 
-	runMigration(newShoot)
-
 	if mustIncreaseGeneration(oldShoot, newShoot) {
 		newShoot.Generation = oldShoot.Generation + 1
 	}
 
 	dropDisabledFields(newShoot, oldShoot)
-}
-
-func runMigration(shoot *core.Shoot) {
-	// TODO(timuthy): Remove in a future Gardener release.
-	migrateHighAvailabilityAnnotation(shoot)
-}
-
-func migrateHighAvailabilityAnnotation(shoot *core.Shoot) {
-	if val, ok := shoot.Annotations[v1beta1constants.ShootAlphaControlPlaneHighAvailability]; ok {
-		if shoot.Spec.ControlPlane == nil || shoot.Spec.ControlPlane.HighAvailability == nil {
-			switch val {
-			case v1beta1constants.ShootAlphaControlPlaneHighAvailabilitySingleZone:
-				shoot.Spec.ControlPlane = &core.ControlPlane{
-					HighAvailability: &core.HighAvailability{
-						FailureTolerance: core.FailureTolerance{
-							Type: core.FailureToleranceTypeNode,
-						},
-					},
-				}
-			case v1beta1constants.ShootAlphaControlPlaneHighAvailabilityMultiZone:
-				shoot.Spec.ControlPlane = &core.ControlPlane{
-					HighAvailability: &core.HighAvailability{
-						FailureTolerance: core.FailureTolerance{
-							Type: core.FailureToleranceTypeZone,
-						},
-					},
-				}
-			}
-		}
-	}
-
-	delete(shoot.Annotations, v1beta1constants.ShootAlphaControlPlaneHighAvailability)
+	dropEnableBasicAuthenticationField(newShoot)
+	setKubernetesDashboardAuthMode(newShoot)
 }
 
 // dropDisabledFields removes disabled fields from shoot.
@@ -125,6 +93,23 @@ func dropDisabledFields(newShoot, oldShoot *core.Shoot) {
 	oldShootIsHA := oldShoot != nil && helper.IsHAControlPlaneConfigured(oldShoot)
 	if !utilfeature.DefaultFeatureGate.Enabled(features.HAControlPlanes) && !oldShootIsHA && newShoot.Spec.ControlPlane != nil {
 		newShoot.Spec.ControlPlane.HighAvailability = nil
+	}
+}
+
+// dropEnableBasicAuthenticationField sets the enableBasicAuthentication to nil.
+func dropEnableBasicAuthenticationField(shoot *core.Shoot) {
+	if shoot.Spec.Kubernetes.KubeAPIServer != nil {
+		shoot.Spec.Kubernetes.KubeAPIServer.EnableBasicAuthentication = nil
+	}
+}
+
+// setKubernetesDashboardAuthMode sets the kubernetes-dashboard authentication mode to "token", if its current value is not "token" (for example "basic").
+func setKubernetesDashboardAuthMode(shoot *core.Shoot) {
+	if shoot.Spec.Addons != nil && shoot.Spec.Addons.KubernetesDashboard != nil {
+		if authMode := shoot.Spec.Addons.KubernetesDashboard.AuthenticationMode; authMode != nil && *authMode != core.KubernetesDashboardAuthModeToken {
+			defaultAuthMode := core.KubernetesDashboardAuthModeToken
+			shoot.Spec.Addons.KubernetesDashboard.AuthenticationMode = &defaultAuthMode
+		}
 	}
 }
 
@@ -156,14 +141,14 @@ func mustIncreaseGeneration(oldShoot, newShoot *core.Shoot) bool {
 			case v1beta1constants.GardenerOperationReconcile:
 				mustIncrease, mustRemoveOperationAnnotation = true, true
 
-			case v1beta1constants.ShootOperationRotateCredentialsStart,
-				v1beta1constants.ShootOperationRotateCredentialsComplete,
-				v1beta1constants.ShootOperationRotateCAStart,
-				v1beta1constants.ShootOperationRotateCAComplete,
-				v1beta1constants.ShootOperationRotateServiceAccountKeyStart,
-				v1beta1constants.ShootOperationRotateServiceAccountKeyComplete,
-				v1beta1constants.ShootOperationRotateETCDEncryptionKeyStart,
-				v1beta1constants.ShootOperationRotateETCDEncryptionKeyComplete,
+			case v1beta1constants.OperationRotateCredentialsStart,
+				v1beta1constants.OperationRotateCredentialsComplete,
+				v1beta1constants.OperationRotateCAStart,
+				v1beta1constants.OperationRotateCAComplete,
+				v1beta1constants.OperationRotateServiceAccountKeyStart,
+				v1beta1constants.OperationRotateServiceAccountKeyComplete,
+				v1beta1constants.OperationRotateETCDEncryptionKeyStart,
+				v1beta1constants.OperationRotateETCDEncryptionKeyComplete,
 				v1beta1constants.ShootOperationRotateKubeconfigCredentials,
 				v1beta1constants.ShootOperationRotateSSHKeypair,
 				v1beta1constants.ShootOperationRotateObservabilityCredentials:

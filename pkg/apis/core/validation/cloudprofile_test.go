@@ -18,9 +18,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	. "github.com/gardener/gardener/pkg/apis/core/validation"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
@@ -29,6 +26,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/pointer"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	. "github.com/gardener/gardener/pkg/apis/core/validation"
 )
 
 var (
@@ -615,6 +615,69 @@ var _ = Describe("CloudProfile Validation Tests ", func() {
 						"Type":  Equal(field.ErrorTypeNotSupported),
 						"Field": Equal("spec.machineImages[0].versions[0].architecture"),
 					}))))
+				})
+
+				It("should allow valid kubeletVersionConstraint constraint for machine image versions", func() {
+					cloudProfile.Spec.MachineImages = []core.MachineImage{
+						{
+							Name: "some-machineimage",
+							Versions: []core.MachineImageVersion{
+								{
+									ExpirableVersion: core.ExpirableVersion{
+										Version: "0.1.2",
+									},
+									CRI:                      []core.CRI{{Name: "docker"}},
+									KubeletVersionConstraint: pointer.String("< 1.26"),
+								},
+								{
+									ExpirableVersion: core.ExpirableVersion{
+										Version: "0.1.3",
+									},
+									CRI:                      []core.CRI{{Name: "docker"}},
+									KubeletVersionConstraint: pointer.String(">= 1.26"),
+								},
+							},
+						},
+					}
+
+					errorList := ValidateCloudProfile(cloudProfile)
+					Expect(errorList).To(BeEmpty())
+				})
+
+				It("should forbid invalid kubeletVersionConstraint constraint for machine image versions", func() {
+					cloudProfile.Spec.MachineImages = []core.MachineImage{
+						{
+							Name: "some-machineimage",
+							Versions: []core.MachineImageVersion{
+								{
+									ExpirableVersion: core.ExpirableVersion{
+										Version: "0.1.2",
+									},
+									CRI:                      []core.CRI{{Name: "docker"}},
+									KubeletVersionConstraint: pointer.String(""),
+								},
+								{
+									ExpirableVersion: core.ExpirableVersion{
+										Version: "0.1.3",
+									},
+									CRI:                      []core.CRI{{Name: "docker"}},
+									KubeletVersionConstraint: pointer.String("invalid-version"),
+								},
+							},
+						},
+					}
+
+					errorList := ValidateCloudProfile(cloudProfile)
+					Expect(errorList).To(ConsistOf(
+						PointTo(MatchFields(IgnoreExtras, Fields{
+							"Type":  Equal(field.ErrorTypeInvalid),
+							"Field": Equal("spec.machineImages[0].versions[0].kubeletVersionConstraint"),
+						})),
+						PointTo(MatchFields(IgnoreExtras, Fields{
+							"Type":  Equal(field.ErrorTypeInvalid),
+							"Field": Equal("spec.machineImages[0].versions[1].kubeletVersionConstraint"),
+						})),
+					))
 				})
 			})
 

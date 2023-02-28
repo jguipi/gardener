@@ -21,6 +21,13 @@ spec:
 {{ .Values.labels | toYaml | indent 8 }}
         service.istio.io/canonical-name: "istio-ingressgateway"
         service.istio.io/canonical-revision: "1.7"
+        networking.gardener.cloud/to-dns: allowed
+{{- if .Values.vpn.enabled }}
+        networking.resources.gardener.cloud/to-all-shoots-vpn-seed-server-tcp-1194: allowed
+{{- range $i := until (int .Values.vpn.highAvailabilityReplicas) }}
+        networking.resources.gardener.cloud/to-all-shoots-vpn-seed-server-{{$i}}-tcp-1194: allowed
+{{- end }}
+{{- end }}
       annotations:
         sidecar.istio.io/inject: "false"
         checksum/configmap-bootstrap-config-override: {{ include (print $.Template.BasePath "/bootstrap-config-override.yaml") . | sha256sum }}
@@ -64,15 +71,8 @@ spec:
         - --proxyLogLevel=warning
         - --proxyComponentLogLevel=misc:error
         - --log_output_level=all:warn,ads:error
-        - --drainDuration=45s
-        - --parentShutdownDuration=1m0s
-        - --connectTimeout=10s
         - --serviceCluster=istio-ingressgateway
-        - --proxyAdminPort=15000
         - --concurrency=4
-        - --statusPort=15021
-        - --controlPlaneAuthPolicy=NONE
-        - --discoveryAddress=istiod.{{ .Values.istiodNamespace }}.svc:15012
         readinessProbe:
           failureThreshold: 30
           httpGet:

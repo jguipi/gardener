@@ -15,10 +15,16 @@ build:
         - charts
         - cmd/gardener-operator/app
         - cmd/utils
+        - extensions/pkg/apis/config
+        - extensions/pkg/controller
+        - extensions/pkg/util
+        - extensions/pkg/webhook
+        - extensions/pkg/webhook/certificates
+        - extensions/pkg/webhook/shoot
+        - pkg/api/extensions
         - pkg/apis/core
         - pkg/apis/core/install
         - pkg/apis/core/v1alpha1
-        - pkg/apis/core/v1alpha1/helper
         - pkg/apis/core/v1beta1
         - pkg/apis/core/v1beta1/constants
         - pkg/apis/core/v1beta1/helper
@@ -26,12 +32,15 @@ build:
         - pkg/apis/core/validation
         - pkg/apis/extensions
         - pkg/apis/extensions/v1alpha1
+        - pkg/apis/extensions/v1alpha1/helper
         - pkg/apis/extensions/validation
         - pkg/apis/operations
         - pkg/apis/operations/install
         - pkg/apis/operations/v1alpha1
         - pkg/apis/operator
         - pkg/apis/operator/v1alpha1
+        - pkg/apis/operator/v1alpha1/helper
+        - pkg/apis/operator/v1alpha1/validation
         - pkg/apis/resources
         - pkg/apis/resources/v1alpha1
         - pkg/apis/seedmanagement
@@ -44,7 +53,9 @@ build:
         - pkg/chartrenderer
         - pkg/client/kubernetes
         - pkg/client/kubernetes/cache
+        - pkg/controller/service
         - pkg/controllerutils
+        - pkg/controllerutils/predicate
         - pkg/controllerutils/reconciler
         - pkg/controllerutils/routes
         - pkg/extensions
@@ -56,14 +67,18 @@ build:
         - pkg/operation/botanist/component
         - pkg/operation/botanist/component/dependencywatchdog
         - pkg/operation/botanist/component/etcd
+        - pkg/operation/botanist/component/etcd/constants
         - pkg/operation/botanist/component/gardensystem
         - pkg/operation/botanist/component/hvpa
         - pkg/operation/botanist/component/kubeapiserver
+        - pkg/operation/botanist/component/kubeapiserver/constants
+        - pkg/operation/botanist/component/kubeapiserverexposure
         - pkg/operation/botanist/component/kubescheduler
-        - pkg/operation/botanist/component/monitoring
         - pkg/operation/botanist/component/resourcemanager
+        - pkg/operation/botanist/component/resourcemanager/constants
         - pkg/operation/botanist/component/shared
         - pkg/operation/botanist/component/vpa
+        - pkg/operation/botanist/component/vpa/constants
         - pkg/operation/botanist/component/vpnseedserver
         - pkg/operator/apis/config
         - pkg/operator/apis/config/v1alpha1
@@ -72,10 +87,11 @@ build:
         - pkg/operator/controller
         - pkg/operator/controller/garden
         - pkg/operator/features
+        - pkg/operator/webhook
+        - pkg/operator/webhook/validation
         - pkg/resourcemanager/apis/config
         - pkg/resourcemanager/apis/config/v1alpha1
         - pkg/resourcemanager/controller/garbagecollector/references
-        - pkg/resourcemanager/controller/rootcapublisher
         - pkg/resourcemanager/webhook/crddeletionprotection
         - pkg/resourcemanager/webhook/extensionvalidation
         - pkg/resourcemanager/webhook/highavailabilityconfig
@@ -83,6 +99,7 @@ build:
         - pkg/resourcemanager/webhook/podtopologyspreadconstraints
         - pkg/resourcemanager/webhook/projectedtokenmount
         - pkg/resourcemanager/webhook/seccompprofile
+        - pkg/resourcemanager/webhook/systemcomponentsconfig
         - pkg/resourcemanager/webhook/tokeninvalidator
         - pkg/utils
         - pkg/utils/chart
@@ -106,6 +123,7 @@ build:
         - pkg/utils/validation/features
         - pkg/utils/version
         - vendor
+        - VERSION
   - image: eu.gcr.io/gardener-project/gardener/resource-manager
     ko:
       main: ./cmd/gardener-resource-manager
@@ -117,17 +135,18 @@ build:
         - cmd/gardener-resource-manager/app/bootstrappers
         - cmd/utils
         - pkg/api/extensions
+        - pkg/api/indexer
         - pkg/apis/core
         - pkg/apis/core/helper
         - pkg/apis/core/install
         - pkg/apis/core/v1alpha1
-        - pkg/apis/core/v1alpha1/helper
         - pkg/apis/core/v1beta1
         - pkg/apis/core/v1beta1/constants
         - pkg/apis/core/v1beta1/helper
         - pkg/apis/core/validation
         - pkg/apis/extensions
         - pkg/apis/extensions/v1alpha1
+        - pkg/apis/extensions/v1alpha1/helper
         - pkg/apis/extensions/validation
         - pkg/apis/operations
         - pkg/apis/operations/install
@@ -152,7 +171,7 @@ build:
         - pkg/controllerutils/predicate
         - pkg/controllerutils/reconciler
         - pkg/controllerutils/routes
-        - pkg/extensions
+        - pkg/features
         - pkg/gardenlet/apis/config
         - pkg/gardenlet/apis/config/v1alpha1
         - pkg/healthz
@@ -170,7 +189,8 @@ build:
         - pkg/resourcemanager/controller/health/progressing
         - pkg/resourcemanager/controller/health/utils
         - pkg/resourcemanager/controller/managedresource
-        - pkg/resourcemanager/controller/rootcapublisher
+        - pkg/resourcemanager/controller/node
+        - pkg/resourcemanager/controller/node/helper
         - pkg/resourcemanager/controller/secret
         - pkg/resourcemanager/controller/tokeninvalidator
         - pkg/resourcemanager/controller/tokenrequestor
@@ -179,10 +199,12 @@ build:
         - pkg/resourcemanager/webhook/crddeletionprotection
         - pkg/resourcemanager/webhook/extensionvalidation
         - pkg/resourcemanager/webhook/highavailabilityconfig
+        - pkg/resourcemanager/controller/networkpolicy
         - pkg/resourcemanager/webhook/podschedulername
         - pkg/resourcemanager/webhook/podtopologyspreadconstraints
         - pkg/resourcemanager/webhook/projectedtokenmount
         - pkg/resourcemanager/webhook/seccompprofile
+        - pkg/resourcemanager/webhook/systemcomponentsconfig
         - pkg/resourcemanager/webhook/tokeninvalidator
         - pkg/utils
         - pkg/utils/context
@@ -191,7 +213,6 @@ build:
         - pkg/utils/gardener
         - pkg/utils/kubernetes
         - pkg/utils/kubernetes/health
-        - pkg/utils/kubernetes/unstructured
         - pkg/utils/retry
         - pkg/utils/secrets
         - pkg/utils/timewindow
@@ -200,6 +221,7 @@ build:
         - pkg/utils/validation/features
         - pkg/utils/version
         - vendor
+        - VERSION
 deploy:
   helm:
     releases:
@@ -222,5 +244,8 @@ deploy:
           - name: gardener-resource-manager
             repository: localhost:5001/eu_gcr_io_gardener-project_gardener_resource-manager
             tag: "{{.IMAGE_TAG2}}"
+        env:
+        - name: GARDENER_OPERATOR_LOCAL
+          value: "true"
       imageStrategy:
         helm: {}

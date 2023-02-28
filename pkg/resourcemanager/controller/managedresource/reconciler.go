@@ -24,6 +24,7 @@ import (
 	"io"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +44,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/utils/clock"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -58,13 +61,13 @@ import (
 	"github.com/gardener/gardener/pkg/resourcemanager/apis/config"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
 	resourcemanagerpredicate "github.com/gardener/gardener/pkg/resourcemanager/predicate"
-	errorutils "github.com/gardener/gardener/pkg/utils/errors"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	errorsutils "github.com/gardener/gardener/pkg/utils/errors"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 var (
 	deletePropagationForeground = metav1.DeletePropagationForeground
-	foregroundDeletionAPIGroups = sets.NewString(appsv1.GroupName, extensionsv1beta1.GroupName, batchv1.GroupName)
+	foregroundDeletionAPIGroups = sets.New[string](appsv1.GroupName, extensionsv1beta1.GroupName, batchv1.GroupName)
 )
 
 // Reconciler manages the resources reference by ManagedResources.
@@ -74,6 +77,7 @@ type Reconciler struct {
 	TargetScheme                  *runtime.Scheme
 	TargetRESTMapper              meta.RESTMapper
 	Config                        config.ManagedResourceControllerConfig
+	Clock                         clock.Clock
 	ClassFilter                   *resourcemanagerpredicate.ClassFilter
 	ClusterID                     string
 	GarbageCollectorActivated     bool
@@ -158,12 +162,12 @@ func (r *Reconciler) reconcile(ctx context.Context, log logr.Logger, mr *resourc
 	defer cancel()
 
 	// Initialize condition based on the current status.
-	conditionResourcesApplied := v1beta1helper.GetOrInitCondition(mr.Status.Conditions, resourcesv1alpha1.ResourcesApplied)
+	conditionResourcesApplied := v1beta1helper.GetOrInitConditionWithClock(r.Clock, mr.Status.Conditions, resourcesv1alpha1.ResourcesApplied)
 
 	for _, ref := range mr.Spec.SecretRefs {
 		secret := &corev1.Secret{}
 		if err := r.SourceClient.Get(reconcileCtx, client.ObjectKey{Namespace: mr.Namespace, Name: ref.Name}, secret); err != nil {
-			conditionResourcesApplied = v1beta1helper.UpdatedCondition(conditionResourcesApplied, gardencorev1beta1.ConditionFalse, "CannotReadSecret", err.Error())
+			conditionResourcesApplied = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesApplied, gardencorev1beta1.ConditionFalse, "CannotReadSecret", err.Error())
 			if err := updateConditions(ctx, r.SourceClient, mr, conditionResourcesApplied); err != nil {
 				return reconcile.Result{}, fmt.Errorf("could not update the ManagedResource status: %w", err)
 			}
@@ -288,11 +292,11 @@ func (r *Reconciler) reconcile(ctx context.Context, log logr.Logger, mr *resourc
 
 	// invalidate conditions, if resources have been added/removed from the managed resource
 	if !apiequality.Semantic.DeepEqual(mr.Status.Resources, newResourcesObjectReferences) || mr.Status.SecretsDataChecksum == nil || *mr.Status.SecretsDataChecksum != secretsDataChecksum {
-		conditionResourcesHealthy := v1beta1helper.GetOrInitCondition(mr.Status.Conditions, resourcesv1alpha1.ResourcesHealthy)
-		conditionResourcesHealthy = v1beta1helper.UpdatedCondition(conditionResourcesHealthy, gardencorev1beta1.ConditionUnknown,
+		conditionResourcesHealthy := v1beta1helper.GetOrInitConditionWithClock(r.Clock, mr.Status.Conditions, resourcesv1alpha1.ResourcesHealthy)
+		conditionResourcesHealthy = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesHealthy, gardencorev1beta1.ConditionUnknown,
 			resourcesv1alpha1.ConditionChecksPending, "The health checks have not yet been executed for the current set of resources.")
-		conditionResourcesProgressing := v1beta1helper.GetOrInitCondition(mr.Status.Conditions, resourcesv1alpha1.ResourcesProgressing)
-		conditionResourcesProgressing = v1beta1helper.UpdatedCondition(conditionResourcesProgressing, gardencorev1beta1.ConditionUnknown,
+		conditionResourcesProgressing := v1beta1helper.GetOrInitConditionWithClock(r.Clock, mr.Status.Conditions, resourcesv1alpha1.ResourcesProgressing)
+		conditionResourcesProgressing = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesProgressing, gardencorev1beta1.ConditionUnknown,
 			resourcesv1alpha1.ConditionChecksPending, "Checks have not yet been executed for the current set of resources.")
 
 		reason := resourcesv1alpha1.ConditionApplyProgressing
@@ -303,7 +307,7 @@ func (r *Reconciler) reconcile(ctx context.Context, log logr.Logger, mr *resourc
 			reason = conditionResourcesApplied.Reason
 			msg = conditionResourcesApplied.Message
 		}
-		conditionResourcesApplied = v1beta1helper.UpdatedCondition(conditionResourcesApplied, gardencorev1beta1.ConditionProgressing, reason, msg)
+		conditionResourcesApplied = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesApplied, gardencorev1beta1.ConditionProgressing, reason, msg)
 
 		if err := updateConditions(ctx, r.SourceClient, mr, conditionResourcesHealthy, conditionResourcesProgressing, conditionResourcesApplied); err != nil {
 			return reconcile.Result{}, fmt.Errorf("could not update the ManagedResource status: %w", err)
@@ -325,7 +329,7 @@ func (r *Reconciler) reconcile(ctx context.Context, log logr.Logger, mr *resourc
 			log.Error(err, "Deletion of old resources failed")
 		}
 
-		conditionResourcesApplied = v1beta1helper.UpdatedCondition(conditionResourcesApplied, status, reason, err.Error())
+		conditionResourcesApplied = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesApplied, status, reason, err.Error())
 		if err := updateConditions(ctx, r.SourceClient, mr, conditionResourcesApplied); err != nil {
 			return reconcile.Result{}, fmt.Errorf("could not update the ManagedResource status: %w", err)
 		}
@@ -338,7 +342,7 @@ func (r *Reconciler) reconcile(ctx context.Context, log logr.Logger, mr *resourc
 	}
 
 	if err := r.releaseOrphanedResources(ctx, log, orphanedObjectReferences, origin); err != nil {
-		conditionResourcesApplied = v1beta1helper.UpdatedCondition(conditionResourcesApplied, gardencorev1beta1.ConditionFalse, resourcesv1alpha1.ReleaseOfOrphanedResourcesFailed, err.Error())
+		conditionResourcesApplied = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesApplied, gardencorev1beta1.ConditionFalse, resourcesv1alpha1.ReleaseOfOrphanedResourcesFailed, err.Error())
 		if err := updateConditions(ctx, r.SourceClient, mr, conditionResourcesApplied); err != nil {
 			return reconcile.Result{}, fmt.Errorf("could not update the ManagedResource status: %w", err)
 		}
@@ -348,7 +352,7 @@ func (r *Reconciler) reconcile(ctx context.Context, log logr.Logger, mr *resourc
 
 	injectLabels := mergeMaps(mr.Spec.InjectLabels, map[string]string{resourcesv1alpha1.ManagedBy: *r.Config.ManagedByLabelValue})
 	if err := r.applyNewResources(reconcileCtx, log, origin, newResourcesObjects, injectLabels, equivalences); err != nil {
-		conditionResourcesApplied = v1beta1helper.UpdatedCondition(conditionResourcesApplied, gardencorev1beta1.ConditionFalse, resourcesv1alpha1.ConditionApplyFailed, err.Error())
+		conditionResourcesApplied = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesApplied, gardencorev1beta1.ConditionFalse, resourcesv1alpha1.ConditionApplyFailed, err.Error())
 		if err := updateConditions(ctx, r.SourceClient, mr, conditionResourcesApplied); err != nil {
 			return reconcile.Result{}, fmt.Errorf("could not update the ManagedResource status: %w", err)
 		}
@@ -357,9 +361,9 @@ func (r *Reconciler) reconcile(ctx context.Context, log logr.Logger, mr *resourc
 	}
 
 	if len(decodingErrors) != 0 {
-		conditionResourcesApplied = v1beta1helper.UpdatedCondition(conditionResourcesApplied, gardencorev1beta1.ConditionFalse, resourcesv1alpha1.ConditionDecodingFailed, fmt.Sprintf("Could not decode all new resources: %v", decodingErrors))
+		conditionResourcesApplied = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesApplied, gardencorev1beta1.ConditionFalse, resourcesv1alpha1.ConditionDecodingFailed, fmt.Sprintf("Could not decode all new resources: %v", decodingErrors))
 	} else {
-		conditionResourcesApplied = v1beta1helper.UpdatedCondition(conditionResourcesApplied, gardencorev1beta1.ConditionTrue, resourcesv1alpha1.ConditionApplySucceeded, "All resources are applied.")
+		conditionResourcesApplied = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesApplied, gardencorev1beta1.ConditionTrue, resourcesv1alpha1.ConditionApplySucceeded, "All resources are applied.")
 	}
 
 	if err := updateManagedResourceStatus(ctx, r.SourceClient, mr, &secretsDataChecksum, newResourcesObjectReferences, conditionResourcesApplied); err != nil {
@@ -380,7 +384,7 @@ func (r *Reconciler) delete(ctx context.Context, log logr.Logger, mr *resourcesv
 		return reconcile.Result{}, fmt.Errorf("could not update the ManagedResource status: %w", err)
 	}
 
-	conditionResourcesApplied := v1beta1helper.GetOrInitCondition(mr.Status.Conditions, resourcesv1alpha1.ResourcesApplied)
+	conditionResourcesApplied := v1beta1helper.GetOrInitConditionWithClock(r.Clock, mr.Status.Conditions, resourcesv1alpha1.ResourcesApplied)
 
 	if keepObjects := mr.Spec.KeepObjects; keepObjects == nil || !*keepObjects {
 		existingResourcesIndex := NewObjectIndex(mr.Status.Resources, nil)
@@ -391,7 +395,7 @@ func (r *Reconciler) delete(ctx context.Context, log logr.Logger, mr *resourcesv
 			// keep condition message if deletion is pending / failed
 			msg = conditionResourcesApplied.Message
 		}
-		conditionResourcesApplied = v1beta1helper.UpdatedCondition(conditionResourcesApplied, gardencorev1beta1.ConditionProgressing, resourcesv1alpha1.ConditionDeletionPending, msg)
+		conditionResourcesApplied = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesApplied, gardencorev1beta1.ConditionProgressing, resourcesv1alpha1.ConditionDeletionPending, msg)
 		if err := updateConditions(ctx, r.SourceClient, mr, conditionResourcesApplied); err != nil {
 			return reconcile.Result{}, fmt.Errorf("could not update the ManagedResource status: %w", err)
 		}
@@ -411,7 +415,7 @@ func (r *Reconciler) delete(ctx context.Context, log logr.Logger, mr *resourcesv
 				log.Error(err, "Deletion of all resources failed")
 			}
 
-			conditionResourcesApplied = v1beta1helper.UpdatedCondition(conditionResourcesApplied, status, reason, err.Error())
+			conditionResourcesApplied = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesApplied, status, reason, err.Error())
 			if err := updateConditions(ctx, r.SourceClient, mr, conditionResourcesApplied); err != nil {
 				return reconcile.Result{}, fmt.Errorf("could not update the ManagedResource status: %w", err)
 			}
@@ -441,12 +445,12 @@ func (r *Reconciler) delete(ctx context.Context, log logr.Logger, mr *resourcesv
 
 func (r *Reconciler) updateConditionsForIgnoredManagedResource(ctx context.Context, mr *resourcesv1alpha1.ManagedResource) error {
 	message := "ManagedResource is marked to be ignored."
-	conditionResourcesApplied := v1beta1helper.GetOrInitCondition(mr.Status.Conditions, resourcesv1alpha1.ResourcesApplied)
-	conditionResourcesApplied = v1beta1helper.UpdatedCondition(conditionResourcesApplied, gardencorev1beta1.ConditionTrue, resourcesv1alpha1.ConditionManagedResourceIgnored, message)
-	conditionResourcesHealthy := v1beta1helper.GetOrInitCondition(mr.Status.Conditions, resourcesv1alpha1.ResourcesHealthy)
-	conditionResourcesHealthy = v1beta1helper.UpdatedCondition(conditionResourcesHealthy, gardencorev1beta1.ConditionTrue, resourcesv1alpha1.ConditionManagedResourceIgnored, message)
-	conditionResourcesProgressing := v1beta1helper.GetOrInitCondition(mr.Status.Conditions, resourcesv1alpha1.ResourcesProgressing)
-	conditionResourcesProgressing = v1beta1helper.UpdatedCondition(conditionResourcesProgressing, gardencorev1beta1.ConditionFalse, resourcesv1alpha1.ConditionManagedResourceIgnored, message)
+	conditionResourcesApplied := v1beta1helper.GetOrInitConditionWithClock(r.Clock, mr.Status.Conditions, resourcesv1alpha1.ResourcesApplied)
+	conditionResourcesApplied = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesApplied, gardencorev1beta1.ConditionTrue, resourcesv1alpha1.ConditionManagedResourceIgnored, message)
+	conditionResourcesHealthy := v1beta1helper.GetOrInitConditionWithClock(r.Clock, mr.Status.Conditions, resourcesv1alpha1.ResourcesHealthy)
+	conditionResourcesHealthy = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesHealthy, gardencorev1beta1.ConditionTrue, resourcesv1alpha1.ConditionManagedResourceIgnored, message)
+	conditionResourcesProgressing := v1beta1helper.GetOrInitConditionWithClock(r.Clock, mr.Status.Conditions, resourcesv1alpha1.ResourcesProgressing)
+	conditionResourcesProgressing = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesProgressing, gardencorev1beta1.ConditionFalse, resourcesv1alpha1.ConditionManagedResourceIgnored, message)
 
 	oldMr := mr.DeepCopy()
 	mr.Status.Conditions = v1beta1helper.MergeConditions(mr.Status.Conditions, conditionResourcesApplied, conditionResourcesHealthy, conditionResourcesProgressing)
@@ -458,10 +462,10 @@ func (r *Reconciler) updateConditionsForIgnoredManagedResource(ctx context.Conte
 }
 
 func (r *Reconciler) updateConditionsForDeletion(ctx context.Context, mr *resourcesv1alpha1.ManagedResource) error {
-	conditionResourcesHealthy := v1beta1helper.GetOrInitCondition(mr.Status.Conditions, resourcesv1alpha1.ResourcesHealthy)
-	conditionResourcesHealthy = v1beta1helper.UpdatedCondition(conditionResourcesHealthy, gardencorev1beta1.ConditionFalse, resourcesv1alpha1.ConditionDeletionPending, "The resources are currently being deleted.")
-	conditionResourcesProgressing := v1beta1helper.GetOrInitCondition(mr.Status.Conditions, resourcesv1alpha1.ResourcesProgressing)
-	conditionResourcesProgressing = v1beta1helper.UpdatedCondition(conditionResourcesProgressing, gardencorev1beta1.ConditionTrue, resourcesv1alpha1.ConditionDeletionPending, "The resources are currently being deleted.")
+	conditionResourcesHealthy := v1beta1helper.GetOrInitConditionWithClock(r.Clock, mr.Status.Conditions, resourcesv1alpha1.ResourcesHealthy)
+	conditionResourcesHealthy = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesHealthy, gardencorev1beta1.ConditionFalse, resourcesv1alpha1.ConditionDeletionPending, "The resources are currently being deleted.")
+	conditionResourcesProgressing := v1beta1helper.GetOrInitConditionWithClock(r.Clock, mr.Status.Conditions, resourcesv1alpha1.ResourcesProgressing)
+	conditionResourcesProgressing = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionResourcesProgressing, gardencorev1beta1.ConditionTrue, resourcesv1alpha1.ConditionDeletionPending, "The resources are currently being deleted.")
 	return updateConditions(ctx, r.SourceClient, mr, conditionResourcesHealthy, conditionResourcesProgressing)
 }
 
@@ -484,9 +488,11 @@ func (r *Reconciler) applyNewResources(ctx context.Context, log logr.Logger, ori
 			scaledVertically   = isScaled(obj.obj, verticallyScaledObjects, equivalences)
 		)
 
-		log.Info("Applying", "resource", resource)
+		resourceLogger := log.WithValues("resource", resource)
 
-		if operationResult, err := controllerutils.TypedCreateOrUpdate(ctx, r.TargetClient, r.TargetScheme, current, pointer.BoolDeref(r.Config.AlwaysUpdate, false), func() error {
+		resourceLogger.V(1).Info("Applying")
+
+		operationResult, err := controllerutils.TypedCreateOrUpdate(ctx, r.TargetClient, r.TargetScheme, current, pointer.BoolDeref(r.Config.AlwaysUpdate, false), func() error {
 			metadata, err := meta.Accessor(obj.obj)
 			if err != nil {
 				return fmt.Errorf("error getting metadata of object %q: %s", resource, err)
@@ -505,22 +511,30 @@ func (r *Reconciler) applyNewResources(ctx context.Context, log logr.Logger, ori
 			}
 
 			return merge(origin, obj.obj, current, obj.forceOverwriteLabels, obj.oldInformation.Labels, obj.forceOverwriteAnnotations, obj.oldInformation.Annotations, scaledHorizontally, scaledVertically)
-		}); err != nil {
+		})
+		if err != nil {
 			if apierrors.IsConflict(err) {
-				log.Info("Conflict while applying object", "object", resource, "err", err)
-				// return conflict error directly, so that the update will be retried
 				return err
 			}
 
-			if apierrors.IsInvalid(err) && operationResult == controllerutil.OperationResultUpdated && deleteOnInvalidUpdate(current) {
+			if apierrors.IsInvalid(err) && operationResult == controllerutil.OperationResultUpdated && deleteOnInvalidUpdate(current, err) {
 				if deleteErr := r.TargetClient.Delete(ctx, current); client.IgnoreNotFound(deleteErr) != nil {
 					return fmt.Errorf("error deleting object %q after 'invalid' update error: %s", resource, deleteErr)
 				}
 				// return error directly, so that the create after delete will be retried
-				return fmt.Errorf("deleted object %q because of 'invalid' update error and 'delete-on-invalid-update' annotation on object (%s)", resource, err)
+				return fmt.Errorf("deleted object %q because of 'invalid' update error, and 'delete-on-invalid-update' annotation on object or the resource is an immutable ConfigMap/Secret: %s", resource, err)
 			}
 
 			return fmt.Errorf("error during apply of object %q: %s", resource, err)
+		}
+
+		switch operationResult {
+		case controllerutil.OperationResultCreated:
+			resourceLogger.Info("Created resource because it was not existing before")
+		case controllerutil.OperationResultUpdated:
+			resourceLogger.Info("Updated resource because its actual state differed from the desired state")
+		case controllerutil.OperationResultNone:
+			resourceLogger.V(1).Info("Resource was neither created nor updated because its actual state matches with the desired state")
 		}
 	}
 
@@ -532,9 +546,9 @@ func (r *Reconciler) applyNewResources(ctx context.Context, log logr.Logger, ori
 // second one contains keys to objects that are vertically scaled by an HVPA.
 // VPAs are not checked, as they don't update the spec of Deployments/StatefulSets/... and only mutate resource
 // requirements via a MutatingWebhook. This way VPAs don't interfere with the resource manager and must not be considered.
-func computeAllScaledObjectKeys(ctx context.Context, c client.Client) (horizontallyScaledObjects, verticallyScaledObjects sets.String, err error) {
-	horizontallyScaledObjects = sets.NewString()
-	verticallyScaledObjects = sets.NewString()
+func computeAllScaledObjectKeys(ctx context.Context, c client.Client) (horizontallyScaledObjects, verticallyScaledObjects sets.Set[string], err error) {
+	horizontallyScaledObjects = sets.New[string]()
+	verticallyScaledObjects = sets.New[string]()
 
 	// get all HPAs' targets
 	hpaList := &autoscalingv1.HorizontalPodAutoscalerList{}
@@ -590,7 +604,7 @@ func targetObjectKeyFromHVPA(hvpa hvpav1alpha1.Hvpa) (string, error) {
 	return objectKey(targetGV.Group, hvpa.Spec.TargetRef.Kind, hvpa.Namespace, hvpa.Spec.TargetRef.Name), nil
 }
 
-func isScaled(obj *unstructured.Unstructured, scaledObjectKeys sets.String, equivalences Equivalences) bool {
+func isScaled(obj *unstructured.Unstructured, scaledObjectKeys sets.Set[string], equivalences Equivalences) bool {
 	key := objectKeyFromUnstructured(obj)
 
 	if scaledObjectKeys.Has(key) {
@@ -624,8 +638,16 @@ func ignore(meta metav1.Object) bool {
 	return keyExistsAndValueTrue(meta.GetAnnotations(), resourcesv1alpha1.Ignore)
 }
 
-func deleteOnInvalidUpdate(meta metav1.Object) bool {
-	return keyExistsAndValueTrue(meta.GetAnnotations(), resourcesv1alpha1.DeleteOnInvalidUpdate)
+func deleteOnInvalidUpdate(obj *unstructured.Unstructured, err error) bool {
+	isImmutableConfigMapOrSecret := false
+	if obj.GetAPIVersion() == "v1" && sets.New[string]("ConfigMap", "Secret").Has(obj.GetKind()) {
+		cause, ok := apierrors.StatusCause(err, metav1.CauseType(field.ErrorTypeForbidden))
+		if ok && strings.Contains(cause.Message, "field is immutable when `immutable` is set") {
+			isImmutableConfigMapOrSecret = true
+		}
+	}
+
+	return keyExistsAndValueTrue(obj.GetAnnotations(), resourcesv1alpha1.DeleteOnInvalidUpdate) || isImmutableConfigMapOrSecret
 }
 
 func keepObject(meta metav1.Object) bool {
@@ -634,7 +656,7 @@ func keepObject(meta metav1.Object) bool {
 
 func isGarbageCollectableResource(obj *unstructured.Unstructured) bool {
 	return keyExistsAndValueTrue(obj.GetLabels(), references.LabelKeyGarbageCollectable) &&
-		obj.GetAPIVersion() == "v1" && sets.NewString("ConfigMap", "Secret").Has(obj.GetKind())
+		obj.GetAPIVersion() == "v1" && sets.New[string]("ConfigMap", "Secret").Has(obj.GetKind())
 }
 
 func keyExistsAndValueTrue(kv map[string]string, key string) bool {
@@ -659,7 +681,7 @@ func (r *Reconciler) cleanOldResources(ctx context.Context, log logr.Logger, mr 
 		deletePVCs      = mr.Spec.DeletePersistentVolumeClaims != nil && *mr.Spec.DeletePersistentVolumeClaims
 		deletionPending = false
 		errorList       = &multierror.Error{
-			ErrorFormat: errorutils.NewErrorFormatFuncWithPrefix("Could not clean all old resources"),
+			ErrorFormat: errorsutils.NewErrorFormatFuncWithPrefix("Could not clean all old resources"),
 		}
 	)
 
@@ -774,7 +796,7 @@ func (r *Reconciler) releaseOrphanedResources(ctx context.Context, log logr.Logg
 		results   = make(chan error)
 		wg        sync.WaitGroup
 		errorList = &multierror.Error{
-			ErrorFormat: errorutils.NewErrorFormatFuncWithPrefix("Could not release all orphaned resources"),
+			ErrorFormat: errorsutils.NewErrorFormatFuncWithPrefix("Could not release all orphaned resources"),
 		}
 	)
 
@@ -857,7 +879,7 @@ func eventsForObject(ctx context.Context, scheme *runtime.Scheme, c client.Clien
 
 	for _, gk := range relevantGKs {
 		if gk == obj.GetObjectKind().GroupVersionKind().GroupKind() {
-			return kutil.FetchEventMessages(ctx, scheme, c, obj, corev1.EventTypeWarning, eventLimit)
+			return kubernetesutils.FetchEventMessages(ctx, scheme, c, obj, corev1.EventTypeWarning, eventLimit)
 		}
 	}
 	return "", nil

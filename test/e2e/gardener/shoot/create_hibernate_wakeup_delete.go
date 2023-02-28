@@ -18,10 +18,11 @@ import (
 	"context"
 	"time"
 
-	e2e "github.com/gardener/gardener/test/e2e/gardener"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	e2e "github.com/gardener/gardener/test/e2e/gardener"
+	"github.com/gardener/gardener/test/e2e/gardener/shoot/internal/node"
 )
 
 var _ = Describe("Shoot Tests", Label("Shoot", "default"), func() {
@@ -35,10 +36,20 @@ var _ = Describe("Shoot Tests", Label("Shoot", "default"), func() {
 		Expect(f.CreateShootAndWaitForCreation(ctx, false)).To(Succeed())
 		f.Verify()
 
+		By("Verify Bootstrapping of Nodes with node-critical components")
+		// We verify the node readiness feature in this specific e2e test because it uses a single-node shoot cluster.
+		// The default shoot e2e test deals with multiple nodes, deleting all of them and waiting for them to be recreated
+		// might increase the test duration undesirably.
+		ctx, cancel = context.WithTimeout(parentCtx, 15*time.Minute)
+		defer cancel()
+		node.VerifyNodeCriticalComponentsBootstrapping(ctx, f.ShootFramework)
+
 		By("Hibernate Shoot")
 		ctx, cancel = context.WithTimeout(parentCtx, 10*time.Minute)
 		defer cancel()
 		Expect(f.HibernateShoot(ctx, f.Shoot)).To(Succeed())
+
+		verifyNoPodsRunning(ctx, f)
 
 		By("Wake up Shoot")
 		ctx, cancel = context.WithTimeout(parentCtx, 15*time.Minute)

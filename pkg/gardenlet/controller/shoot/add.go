@@ -23,12 +23,9 @@ import (
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap"
-	"github.com/gardener/gardener/pkg/features"
 	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	confighelper "github.com/gardener/gardener/pkg/gardenlet/apis/config/helper"
-	"github.com/gardener/gardener/pkg/gardenlet/controller/shoot/migration"
+	"github.com/gardener/gardener/pkg/gardenlet/controller/shoot/care"
 	"github.com/gardener/gardener/pkg/gardenlet/controller/shoot/shoot"
-	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
 	"github.com/gardener/gardener/pkg/utils/imagevector"
 )
 
@@ -54,13 +51,16 @@ func AddToManager(
 		return fmt.Errorf("failed adding main reconciler: %w", err)
 	}
 
-	if gardenletfeatures.FeatureGate.Enabled(features.ForceRestore) && confighelper.OwnerChecksEnabledInSeedConfig(cfg.SeedConfig) {
-		if err := (&migration.Reconciler{
-			Config:   *cfg.Controllers.ShootMigration,
-			SeedName: cfg.SeedConfig.Name,
-		}).AddToManager(mgr, gardenCluster); err != nil {
-			return fmt.Errorf("failed adding migration reconciler: %w", err)
-		}
+	if err := (&care.Reconciler{
+		SeedClientSet:         seedClientSet,
+		ShootClientMap:        shootClientMap,
+		Config:                cfg,
+		ImageVector:           imageVector,
+		Identity:              identity,
+		GardenClusterIdentity: gardenClusterIdentity,
+		SeedName:              cfg.SeedConfig.Name,
+	}).AddToManager(mgr, gardenCluster); err != nil {
+		return fmt.Errorf("failed adding care reconciler: %w", err)
 	}
 
 	return nil

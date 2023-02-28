@@ -19,18 +19,6 @@ import (
 	"errors"
 	"time"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	fakekubernetes "github.com/gardener/gardener/pkg/client/kubernetes/fake"
-	"github.com/gardener/gardener/pkg/logger"
-	"github.com/gardener/gardener/pkg/operation"
-	"github.com/gardener/gardener/pkg/operation/botanist"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/extension"
-	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
-
 	"github.com/go-logr/logr"
 	"github.com/hashicorp/go-multierror"
 	. "github.com/onsi/ginkgo/v2"
@@ -45,6 +33,17 @@ import (
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	kubernetesfake "github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	"github.com/gardener/gardener/pkg/logger"
+	"github.com/gardener/gardener/pkg/operation"
+	"github.com/gardener/gardener/pkg/operation/botanist"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/extension"
+	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
 )
 
 type errorClient struct {
@@ -88,7 +87,7 @@ var _ = Describe("Extension", func() {
 		b                *botanist.Botanist
 		namespace        *corev1.Namespace
 		ctx              = context.TODO()
-		shootState       = &gardencorev1alpha1.ShootState{}
+		shootState       = &gardencorev1beta1.ShootState{}
 		log              logr.Logger
 
 		defaultExtension *extensionsv1alpha1.Extension
@@ -102,7 +101,7 @@ var _ = Describe("Extension", func() {
 	BeforeEach(func() {
 		fakeGardenClient = fakeclient.NewClientBuilder().WithScheme(kubernetes.GardenScheme).Build()
 		fakeSeedClient = fakeclient.NewClientBuilder().WithScheme(kubernetes.SeedScheme).Build()
-		fakeSeedClientSet := fakekubernetes.NewClientSetBuilder().WithClient(fakeSeedClient).Build()
+		fakeSeedClientSet := kubernetesfake.NewClientSetBuilder().WithClient(fakeSeedClient).Build()
 		namespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-namespace"}}
 
 		logf.SetLogger(logger.MustNewZapLogger(logger.DebugLevel, logger.FormatJSON, zap.WriteTo(GinkgoWriter)))
@@ -237,11 +236,11 @@ var _ = Describe("Extension", func() {
 
 		It("should return error if we haven't observed the latest timestamp annotation", func() {
 			now := time.Now()
-			By("deploy")
+			By("Deploy")
 			// Deploy should fill internal state with the added timestamp annotation
 			Expect(b.Shoot.Components.Extensions.Extension.DeployBeforeKubeAPIServer(ctx)).To(Succeed())
 
-			By("patch object")
+			By("Patch object")
 			Expect(b.SeedClientSet.Client().Get(ctx, client.ObjectKeyFromObject(beforeExtension), beforeExtension)).To(Succeed())
 			patch := client.MergeFrom(beforeExtension.DeepCopy())
 			// remove operation annotation, add old timestamp annotation
@@ -254,7 +253,7 @@ var _ = Describe("Extension", func() {
 			}
 			Expect(b.SeedClientSet.Client().Patch(ctx, beforeExtension, patch)).ToNot(HaveOccurred(), "patching extension succeeds")
 
-			By("wait")
+			By("Wait")
 			Expect(b.Shoot.Components.Extensions.Extension.WaitBeforeKubeAPIServer(ctx)).NotTo(Succeed())
 		})
 	})
@@ -287,11 +286,11 @@ var _ = Describe("Extension", func() {
 
 		It("should return error if we haven't observed the latest timestamp annotation", func() {
 			now := time.Now()
-			By("deploy")
+			By("Deploy")
 			// Deploy should fill internal state with the added timestamp annotation
 			Expect(b.Shoot.Components.Extensions.Extension.DeployAfterKubeAPIServer(ctx)).To(Succeed())
 
-			By("patch object")
+			By("Patch object")
 			Expect(b.SeedClientSet.Client().Get(ctx, client.ObjectKeyFromObject(defaultExtension), defaultExtension)).To(Succeed())
 			patch := client.MergeFrom(defaultExtension.DeepCopy())
 			// remove operation annotation, add old timestamp annotation
@@ -304,7 +303,7 @@ var _ = Describe("Extension", func() {
 			}
 			Expect(b.SeedClientSet.Client().Patch(ctx, defaultExtension, patch)).ToNot(HaveOccurred(), "patching extension succeeds")
 
-			By("wait")
+			By("Wait")
 			Expect(b.Shoot.Components.Extensions.Extension.WaitAfterKubeAPIServer(ctx)).NotTo(Succeed())
 		})
 	})
@@ -330,7 +329,7 @@ var _ = Describe("Extension", func() {
 			}
 			fakeError := errors.New("fake-err")
 			errClient := &errorClient{err: fakeError, Client: b.SeedClientSet.Client()}
-			errClientSet := fakekubernetes.NewClientSetBuilder().WithClient(errClient).Build()
+			errClientSet := kubernetesfake.NewClientSetBuilder().WithClient(errClient).Build()
 			b.SeedClientSet = errClientSet
 			b.Shoot.Components.Extensions.Extension = extension.New(
 				log,
@@ -370,7 +369,7 @@ var _ = Describe("Extension", func() {
 			}
 			fakeError := errors.New("fake-err")
 			errClient := &errorClient{err: fakeError, Client: b.SeedClientSet.Client()}
-			errClientSet := fakekubernetes.NewClientSetBuilder().WithClient(errClient).Build()
+			errClientSet := kubernetesfake.NewClientSetBuilder().WithClient(errClient).Build()
 			b.SeedClientSet = errClientSet
 			b.Shoot.Components.Extensions.Extension = extension.New(
 				log,
@@ -427,19 +426,19 @@ var _ = Describe("Extension", func() {
 	Describe("#RestoreBeforeKubeAPIServer", func() {
 		var (
 			state      = []byte(`{"dummy":"state"}`)
-			shootState *gardencorev1alpha1.ShootState
+			shootState *gardencorev1beta1.ShootState
 		)
 		BeforeEach(func() {
-			extensions := make([]gardencorev1alpha1.ExtensionResourceState, 0, len(requiredExtensions))
+			extensions := make([]gardencorev1beta1.ExtensionResourceState, 0, len(requiredExtensions))
 			for _, ext := range requiredExtensions {
-				extensions = append(extensions, gardencorev1alpha1.ExtensionResourceState{
+				extensions = append(extensions, gardencorev1beta1.ExtensionResourceState{
 					Name:  pointer.String(ext.Name),
 					Kind:  extensionsv1alpha1.ExtensionResource,
 					State: &runtime.RawExtension{Raw: state},
 				})
 			}
-			shootState = &gardencorev1alpha1.ShootState{
-				Spec: gardencorev1alpha1.ShootStateSpec{
+			shootState = &gardencorev1beta1.ShootState{
+				Spec: gardencorev1beta1.ShootStateSpec{
 					Extensions: extensions,
 				},
 			}

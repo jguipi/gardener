@@ -19,10 +19,10 @@ import (
 	"embed"
 	"path/filepath"
 
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
+
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
-
-	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
@@ -36,8 +36,8 @@ type crds struct {
 	client crclient.Client
 }
 
-// NewIstioCRD can be used to deploy istio CRDs.
-func NewIstioCRD(
+// NewCRD can be used to deploy istio CRDs.
+func NewCRD(
 	applier kubernetes.ChartApplier,
 	client crclient.Client,
 ) component.DeployWaiter {

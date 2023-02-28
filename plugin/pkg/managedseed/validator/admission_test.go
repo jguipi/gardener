@@ -17,20 +17,6 @@ package validator_test
 import (
 	"context"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	gardencorehelper "github.com/gardener/gardener/pkg/apis/core/helper"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/apis/seedmanagement"
-	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
-	corefake "github.com/gardener/gardener/pkg/client/core/clientset/internalversion/fake"
-	coreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
-	seedmanagementfake "github.com/gardener/gardener/pkg/client/seedmanagement/clientset/versioned/fake"
-	configv1alpha1 "github.com/gardener/gardener/pkg/gardenlet/apis/config/v1alpha1"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-	. "github.com/gardener/gardener/plugin/pkg/managedseed/validator"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
@@ -43,6 +29,20 @@ import (
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/testing"
 	"k8s.io/utils/pointer"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	gardencorehelper "github.com/gardener/gardener/pkg/apis/core/helper"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/apis/seedmanagement"
+	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
+	corefake "github.com/gardener/gardener/pkg/client/core/clientset/internalversion/fake"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	fakeseedmanagement "github.com/gardener/gardener/pkg/client/seedmanagement/clientset/versioned/fake"
+	gardenletv1alpha1 "github.com/gardener/gardener/pkg/gardenlet/apis/config/v1alpha1"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
+	. "github.com/gardener/gardener/plugin/pkg/managedseed/validator"
 )
 
 const (
@@ -63,9 +63,9 @@ var _ = Describe("ManagedSeed", func() {
 			shoot                *core.Shoot
 			secret               *corev1.Secret
 			seed                 func(bool) *core.Seed
-			coreInformerFactory  coreinformers.SharedInformerFactory
+			coreInformerFactory  gardencoreinformers.SharedInformerFactory
 			coreClient           *corefake.Clientset
-			seedManagementClient *seedmanagementfake.Clientset
+			seedManagementClient *fakeseedmanagement.Clientset
 			kubeInformerFactory  kubeinformers.SharedInformerFactory
 			admissionHandler     *ManagedSeed
 		)
@@ -120,8 +120,8 @@ var _ = Describe("ManagedSeed", func() {
 						v1beta1constants.GardenRole: v1beta1constants.GardenRoleDefaultDomain,
 					},
 					Annotations: map[string]string{
-						gutil.DNSProvider: dnsProvider,
-						gutil.DNSDomain:   domain,
+						gardenerutils.DNSProvider: dnsProvider,
+						gardenerutils.DNSDomain:   domain,
 					},
 				},
 			}
@@ -188,13 +188,13 @@ var _ = Describe("ManagedSeed", func() {
 			Expect(err).ToNot(HaveOccurred())
 			admissionHandler.AssignReadyFunc(func() bool { return true })
 
-			coreInformerFactory = coreinformers.NewSharedInformerFactory(nil, 0)
+			coreInformerFactory = gardencoreinformers.NewSharedInformerFactory(nil, 0)
 			admissionHandler.SetInternalCoreInformerFactory(coreInformerFactory)
 
 			coreClient = &corefake.Clientset{}
 			admissionHandler.SetInternalCoreClientset(coreClient)
 
-			seedManagementClient = &seedmanagementfake.Clientset{}
+			seedManagementClient = &fakeseedmanagement.Clientset{}
 			admissionHandler.SetSeedManagementClientset(seedManagementClient)
 
 			kubeInformerFactory = kubeinformers.NewSharedInformerFactory(nil, 0)
@@ -206,6 +206,19 @@ var _ = Describe("ManagedSeed", func() {
 
 			err := admissionHandler.Admit(context.TODO(), attrs, nil)
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should forbid the ManagedSeed creation with namespace different from garden", func() {
+			managedSeed.Namespace = "foo"
+
+			err := admissionHandler.Admit(context.TODO(), getManagedSeedAttributes(managedSeed), nil)
+			Expect(err).To(BeInvalidError())
+			Expect(getErrorList(err)).To(ConsistOf(
+				PointTo(MatchFields(IgnoreExtras, Fields{
+					"Type":  Equal(field.ErrorTypeInvalid),
+					"Field": Equal("metadata.namespace"),
+				})),
+			))
 		})
 
 		It("should forbid the ManagedSeed creation if a Shoot name is not specified", func() {
@@ -331,12 +344,12 @@ var _ = Describe("ManagedSeed", func() {
 
 			BeforeEach(func() {
 				managedSeed.Spec.Gardenlet = &seedmanagement.Gardenlet{
-					Config: &configv1alpha1.GardenletConfiguration{
+					Config: &gardenletv1alpha1.GardenletConfiguration{
 						TypeMeta: metav1.TypeMeta{
-							APIVersion: configv1alpha1.SchemeGroupVersion.String(),
+							APIVersion: gardenletv1alpha1.SchemeGroupVersion.String(),
 							Kind:       "GardenletConfiguration",
 						},
-						SeedConfig: &configv1alpha1.SeedConfig{
+						SeedConfig: &gardenletv1alpha1.SeedConfig{
 							SeedTemplate: gardencorev1beta1.SeedTemplate{
 								Spec: gardencorev1beta1.SeedSpec{
 									Backup: &gardencorev1beta1.SeedBackup{},
@@ -358,12 +371,12 @@ var _ = Describe("ManagedSeed", func() {
 				err := admissionHandler.Admit(context.TODO(), getManagedSeedAttributes(managedSeed), nil)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(managedSeed.Spec.Gardenlet).To(Equal(&seedmanagement.Gardenlet{
-					Config: &configv1alpha1.GardenletConfiguration{
+					Config: &gardenletv1alpha1.GardenletConfiguration{
 						TypeMeta: metav1.TypeMeta{
-							APIVersion: configv1alpha1.SchemeGroupVersion.String(),
+							APIVersion: gardenletv1alpha1.SchemeGroupVersion.String(),
 							Kind:       "GardenletConfiguration",
 						},
-						SeedConfig: &configv1alpha1.SeedConfig{
+						SeedConfig: &gardenletv1alpha1.SeedConfig{
 							SeedTemplate: gardencorev1beta1.SeedTemplate{
 								ObjectMeta: seedx.ObjectMeta,
 								Spec:       seedx.Spec,
@@ -413,12 +426,12 @@ var _ = Describe("ManagedSeed", func() {
 					},
 				}
 
-				managedSeed.Spec.Gardenlet.Config = &configv1alpha1.GardenletConfiguration{
+				managedSeed.Spec.Gardenlet.Config = &gardenletv1alpha1.GardenletConfiguration{
 					TypeMeta: metav1.TypeMeta{
-						APIVersion: configv1alpha1.SchemeGroupVersion.String(),
+						APIVersion: gardenletv1alpha1.SchemeGroupVersion.String(),
 						Kind:       "GardenletConfiguration",
 					},
-					SeedConfig: &configv1alpha1.SeedConfig{
+					SeedConfig: &gardenletv1alpha1.SeedConfig{
 						SeedTemplate: gardencorev1beta1.SeedTemplate{
 							Spec: seedSpec,
 						},
@@ -473,12 +486,12 @@ var _ = Describe("ManagedSeed", func() {
 					},
 				}
 
-				managedSeed.Spec.Gardenlet.Config = &configv1alpha1.GardenletConfiguration{
+				managedSeed.Spec.Gardenlet.Config = &gardenletv1alpha1.GardenletConfiguration{
 					TypeMeta: metav1.TypeMeta{
-						APIVersion: configv1alpha1.SchemeGroupVersion.String(),
+						APIVersion: gardenletv1alpha1.SchemeGroupVersion.String(),
 						Kind:       "GardenletConfiguration",
 					},
-					SeedConfig: &configv1alpha1.SeedConfig{
+					SeedConfig: &gardenletv1alpha1.SeedConfig{
 						SeedTemplate: gardencorev1beta1.SeedTemplate{
 							Spec: seedSpec,
 						},
@@ -534,9 +547,9 @@ var _ = Describe("ManagedSeed", func() {
 
 		It("should not fail if the required clients are set", func() {
 			admissionHandler, _ := New()
-			admissionHandler.SetInternalCoreInformerFactory(coreinformers.NewSharedInformerFactory(nil, 0))
+			admissionHandler.SetInternalCoreInformerFactory(gardencoreinformers.NewSharedInformerFactory(nil, 0))
 			admissionHandler.SetInternalCoreClientset(&corefake.Clientset{})
-			admissionHandler.SetSeedManagementClientset(&seedmanagementfake.Clientset{})
+			admissionHandler.SetSeedManagementClientset(&fakeseedmanagement.Clientset{})
 			admissionHandler.SetKubeInformerFactory(kubeinformers.NewSharedInformerFactory(nil, 0))
 
 			err := admissionHandler.ValidateInitialization()

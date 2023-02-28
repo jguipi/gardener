@@ -19,14 +19,14 @@ import (
 	"errors"
 	"sync"
 
-	utilerrors "github.com/gardener/gardener/pkg/utils/errors"
-	"github.com/gardener/gardener/pkg/utils/flow"
-	mockflow "github.com/gardener/gardener/pkg/utils/flow/mock"
-
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.uber.org/goleak"
+
+	errorsutils "github.com/gardener/gardener/pkg/utils/errors"
+	"github.com/gardener/gardener/pkg/utils/flow"
+	mockflow "github.com/gardener/gardener/pkg/utils/flow/mock"
 )
 
 type AtomicStringList struct {
@@ -140,7 +140,7 @@ var _ = Describe("Flow", func() {
 
 		It("should call cleanError callback when an error in the ErrorContext is resolved", func() {
 			var (
-				errorContext = utilerrors.NewErrorContext("foo", []string{"x"})
+				errorContext = errorsutils.NewErrorContext("foo", []string{"x"})
 				g            = flow.NewGraph("foo")
 				_            = g.Add(flow.Task{Name: "x", Fn: func(ctx context.Context) error {
 					return nil

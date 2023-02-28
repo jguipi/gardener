@@ -218,7 +218,7 @@ var _ = Describe("HVPA", func() {
 								"./manager",
 								"--logtostderr=true",
 								"--enable-detailed-metrics=true",
-								"--metrics-addr=:9569",
+								"--metrics-bind-address=:9569",
 								"--v=2",
 							},
 							Resources: corev1.ResourceRequirements{
@@ -272,7 +272,6 @@ var _ = Describe("HVPA", func() {
 						{
 							ContainerName: vpaautoscalingv1.DefaultContainerResourcePolicy,
 							MinAllowed: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("100m"),
 								corev1.ResourceMemory: resource.MustParse("128Mi"),
 							},
 						},

@@ -18,16 +18,6 @@ import (
 	"context"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
-	. "github.com/gardener/gardener/pkg/operation/botanist/component/etcd"
-	"github.com/gardener/gardener/pkg/utils/retry"
-	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
-	"github.com/gardener/gardener/pkg/utils/test"
-
 	druidv1alpha1 "github.com/gardener/etcd-druid/api/v1alpha1"
 	hvpav1alpha1 "github.com/gardener/hvpa-controller/api/v1alpha1"
 	"github.com/go-logr/logr"
@@ -42,6 +32,16 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
+	. "github.com/gardener/gardener/pkg/operation/botanist/component/etcd"
+	"github.com/gardener/gardener/pkg/utils/retry"
+	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
+	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
+	"github.com/gardener/gardener/pkg/utils/test"
 )
 
 var _ = Describe("#Wait", func() {
@@ -79,7 +79,7 @@ var _ = Describe("#Wait", func() {
 		sm = fakesecretsmanager.New(c, testNamespace)
 		log = logr.Discard()
 
-		By("creating secrets managed outside of this package for whose secretsmanager.Get() will be called")
+		By("Create secrets managed outside of this package for whose secretsmanager.Get() will be called")
 		Expect(c.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ca-etcd", Namespace: testNamespace}})).To(Succeed())
 
 		waiter = &retryfake.Ops{MaxAttempts: 1}
@@ -91,7 +91,6 @@ var _ = Describe("#Wait", func() {
 		etcd = New(log, c, testNamespace, sm, Values{
 			Role:            testRole,
 			Class:           ClassNormal,
-			K8sVersion:      "1.20.1",
 			StorageCapacity: "20Gi",
 		})
 		etcd.SetHVPAConfig(&HVPAConfig{
@@ -146,11 +145,11 @@ var _ = Describe("#Wait", func() {
 		)()
 		mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
-		By("deploy")
+		By("Deploy")
 		// Deploy should fill internal state with the added timestamp annotation
 		Expect(etcd.Deploy(ctx)).To(Succeed())
 
-		By("patch object")
+		By("Patch object")
 		patch := client.MergeFrom(expected.DeepCopy())
 		expected.Status.LastError = nil
 		// remove operation annotation, add old timestamp annotation
@@ -160,7 +159,7 @@ var _ = Describe("#Wait", func() {
 		expected.Status.Ready = pointer.Bool(true)
 		Expect(c.Patch(ctx, expected, patch)).To(Succeed(), "patching etcd succeeds")
 
-		By("wait")
+		By("Wait")
 		Expect(etcd.Wait(ctx)).NotTo(Succeed(), "etcd indicates error")
 	})
 
@@ -170,11 +169,11 @@ var _ = Describe("#Wait", func() {
 		)()
 		mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
-		By("deploy")
+		By("Deploy")
 		// Deploy should fill internal state with the added timestamp annotation
 		Expect(etcd.Deploy(ctx)).To(Succeed())
 
-		By("patch object")
+		By("Patch object")
 		delete(expected.Annotations, v1beta1constants.GardenerTimestamp)
 		patch := client.MergeFrom(expected.DeepCopy())
 		expected.Status.ObservedGeneration = pointer.Int64(0)
@@ -186,7 +185,7 @@ var _ = Describe("#Wait", func() {
 		expected.Status.Ready = pointer.Bool(true)
 		Expect(c.Patch(ctx, expected, patch)).To(Succeed(), "patching etcd succeeds")
 
-		By("wait")
+		By("Wait")
 		Expect(etcd.Wait(ctx)).To(Succeed(), "etcd is ready")
 	})
 })

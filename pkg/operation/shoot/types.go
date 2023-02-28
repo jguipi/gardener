@@ -20,9 +20,12 @@ import (
 	"sync"
 	"sync/atomic"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
+	"github.com/Masterminds/semver"
+	corev1 "k8s.io/api/core/v1"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/apiserverproxy"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/backupentry"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/clusterautoscaler"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/clusteridentity"
@@ -39,6 +42,7 @@ import (
 	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/kubecontrollermanager"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeproxy"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/kubernetesdashboard"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/kubescheduler"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/kubestatemetrics"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/nodelocaldns"
@@ -46,22 +50,17 @@ import (
 	"github.com/gardener/gardener/pkg/operation/botanist/component/vpa"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnshoot"
-	"github.com/gardener/gardener/pkg/operation/garden"
-
-	"github.com/Masterminds/semver"
-	corev1 "k8s.io/api/core/v1"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 )
 
 // Builder is an object that builds Shoot objects.
 type Builder struct {
-	shootObjectFunc   func(context.Context) (*gardencorev1beta1.Shoot, error)
-	cloudProfileFunc  func(context.Context, string) (*gardencorev1beta1.CloudProfile, error)
-	exposureClassFunc func(context.Context, string) (*gardencorev1alpha1.ExposureClass, error)
-	shootSecretFunc   func(context.Context, string, string) (*corev1.Secret, error)
-	projectName       string
-	internalDomain    *garden.Domain
-	defaultDomains    []*garden.Domain
-	disableDNS        bool
+	shootObjectFunc  func(context.Context) (*gardencorev1beta1.Shoot, error)
+	cloudProfileFunc func(context.Context, string) (*gardencorev1beta1.CloudProfile, error)
+	shootSecretFunc  func(context.Context, string, string) (*corev1.Secret, error)
+	projectName      string
+	internalDomain   *gardenerutils.Domain
+	defaultDomains   []*gardenerutils.Domain
 }
 
 // Shoot is an object containing information about a Shoot cluster.
@@ -76,10 +75,9 @@ type Shoot struct {
 	KubernetesVersion *semver.Version
 	GardenerVersion   *semver.Version
 
-	DisableDNS            bool
 	InternalClusterDomain string
 	ExternalClusterDomain *string
-	ExternalDomain        *garden.Domain
+	ExternalDomain        *gardenerutils.Domain
 
 	Purpose                                 gardencorev1beta1.ShootPurpose
 	WantsClusterAutoscaler                  bool
@@ -87,14 +85,12 @@ type Shoot struct {
 	WantsAlertmanager                       bool
 	IgnoreAlerts                            bool
 	HibernationEnabled                      bool
-	ReversedVPNEnabled                      bool
 	VPNHighAvailabilityEnabled              bool
 	VPNHighAvailabilityNumberOfSeedServers  int
 	VPNHighAvailabilityNumberOfShootClients int
 	NodeLocalDNSEnabled                     bool
 	PSPDisabled                             bool
 	Networks                                *Networks
-	ExposureClass                           *gardencorev1alpha1.ExposureClass
 	BackupEntryName                         string
 	CloudConfigExecutionMaxDelaySeconds     int
 
@@ -112,7 +108,7 @@ type Components struct {
 	Logging                  *Logging
 	GardenerAccess           component.Deployer
 	DependencyWatchdogAccess component.Deployer
-	HVPA                     component.MonitoringComponent
+	Addons                   *Addons
 }
 
 // ControlPlane contains references to K8S control plane components.
@@ -151,6 +147,7 @@ type Extensions struct {
 
 // SystemComponents contains references to system components.
 type SystemComponents struct {
+	APIServerProxy      apiserverproxy.Interface
 	ClusterIdentity     clusteridentity.Interface
 	CoreDNS             coredns.Interface
 	KubeProxy           kubeproxy.Interface
@@ -168,6 +165,12 @@ type Logging struct {
 	ShootEventLogger component.Deployer
 }
 
+// Addons contains references for the addons.
+type Addons struct {
+	KubernetesDashboard kubernetesdashboard.Interface
+	NginxIngress        component.Deployer
+}
+
 // Networks contains pre-calculated subnets and IP address for various components.
 type Networks struct {
 	// Pods subnet
@@ -178,18 +181,4 @@ type Networks struct {
 	APIServer net.IP
 	// CoreDNS is the ClusterIP of kube-system/coredns Service
 	CoreDNS net.IP
-}
-
-// IncompleteDNSConfigError is a custom error type.
-type IncompleteDNSConfigError struct{}
-
-// Error prints the error message of the IncompleteDNSConfigError error.
-func (e *IncompleteDNSConfigError) Error() string {
-	return "unable to figure out which secret should be used for dns"
-}
-
-// IsIncompleteDNSConfigError returns true if the error indicates that not the DNS config is incomplete.
-func IsIncompleteDNSConfigError(err error) bool {
-	_, ok := err.(*IncompleteDNSConfigError)
-	return ok
 }

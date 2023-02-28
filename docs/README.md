@@ -19,7 +19,7 @@
   * [Gardener Operator](concepts/operator.md)
   * [Gardenlet](concepts/gardenlet.md)
 * [Backup Restore](concepts/backup-restore.md)
-* [ETCD](concepts/etcd.md)
+* [etcd](concepts/etcd.md)
 * [Network Policies](concepts/network_policies.md)
 * [Relation between Gardener API and Cluster API](concepts/cluster-api.md)
 
@@ -36,15 +36,18 @@
 * [DNS Autoscaling](usage/dns-autoscaling.md)
 * [DNS Search Path Optimization](usage/dns-search-path-optimization.md)
 * [Dockershim removal](usage/docker-shim-removal.md)
+* [Endpoints and Ports of a Shoot Control-Plane](usage/control-plane-endpoints-and-ports.md)
 * [ExposureClasses](usage/exposureclasses.md)
 * [Gardener configuration and usage](usage/configuration.md)
 * [Hibernate a Cluster](usage/shoot_hibernate.md)
+* [IPv6 in Gardener Clusters](usage/ipv6.md)
 * [`ManagedIstio` feature](usage/istio.md)
 * [Network Policies in the Shoot Cluster](usage/shoot_network_policies.md)
 * [`NodeLocalDNS` feature](usage/node-local-dns.md)
 * [OpenIDConnect presets](usage/openidconnect-presets.md)
 * [Projects](usage/projects.md)
 * [Project Namespace Access](usage/project_namespace_access.md)
+* [Readiness of Shoot Worker Nodes](usage/node-readiness.md)
 * [Register Shoot as Seed](usage/managed_seed.md)
 * [Reversed Cluster VPN](usage/reversed-vpn-tunnel.md)
 * [Seed Bootstrapping](usage/seed_bootstrapping.md)
@@ -60,6 +63,7 @@
 * [Shoot Info `ConfigMap`](usage/shoot_info_configmap.md)
 * [Shoot Updates and Upgrades](usage/shoot_updates.md)
 * [Shoot HA Control Plane](usage/shoot_high_availability.md)
+* [Shoot Workers Settings](usage/shoot_workers_settings.md)
 * [Accessing Shoot Clusters](usage/shoot_access.md)
 * [Supported Kubernetes versions](usage/supported_k8s_versions.md)
 * [Tolerations](usage/tolerations.md)
@@ -104,6 +108,7 @@
 * [GEP-18: Automated Shoot CA Rotation](proposals/18-shoot-CA-rotation.md)
 * [GEP-19: Observability Stack - Migrating to the prometheus-operator and fluent-bit operator](proposals/19-migrating-observability-stack-to-operators.md)
 * [GEP-20: Highly Available Shoot Control Planes](proposals/20-ha-control-planes.md)
+* [GEP-21: IPv6 Single-Stack Support in Local Gardener](proposals/21-ipv6-singlestack-local.md)
 
 ## Development
 

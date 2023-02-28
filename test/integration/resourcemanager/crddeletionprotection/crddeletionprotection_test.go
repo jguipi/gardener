@@ -35,14 +35,14 @@ import (
 	"github.com/gardener/gardener/pkg/operation/botanist/component/etcd"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/crds"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/resourcemanager"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	"github.com/gardener/gardener/pkg/utils/test"
 )
 
 var _ = Describe("Extension CRDs Webhook Handler", func() {
 	var (
-		deletionConfirmedAnnotations = map[string]string{gutil.ConfirmationDeletion: "true"}
+		deletionConfirmedAnnotations = map[string]string{gardenerutils.ConfirmationDeletion: "true"}
 
 		crdObjects []client.Object
 		objects    []client.Object
@@ -79,7 +79,7 @@ var _ = Describe("Extension CRDs Webhook Handler", func() {
 		}
 		objects = append(objects, crdObjects...)
 
-		By("applying CRDs")
+		By("Apply CRDs")
 		applier, err := kubernetes.NewApplierForConfig(restConfig)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(crds.NewExtensionsCRD(applier).Deploy(ctx)).To(Succeed())
@@ -141,7 +141,7 @@ var _ = Describe("Extension CRDs Webhook Handler", func() {
 
 	Context("extension resources", func() {
 		BeforeEach(func() {
-			By("creating extension test objects")
+			By("Create extension test objects")
 			_, err := test.EnsureTestResources(ctx, testClient, testNamespace.Name, "testdata")
 			Expect(err).NotTo(HaveOccurred())
 		})
@@ -183,7 +183,7 @@ var _ = Describe("Extension CRDs Webhook Handler", func() {
 				})
 				Expect(err).NotTo(HaveOccurred(), objectID(obj))
 				crd := &apiextensionsv1.CustomResourceDefinition{}
-				Expect(testClient.Get(context.TODO(), kutil.Key(obj.GetName()), crd)).To(Succeed())
+				Expect(testClient.Get(context.TODO(), kubernetesutils.Key(obj.GetName()), crd)).To(Succeed())
 			}
 
 			testDeleteCollectionConfirmed(ctx, crdObjects[0])

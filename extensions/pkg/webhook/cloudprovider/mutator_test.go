@@ -18,22 +18,22 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gardener/gardener/extensions/pkg/webhook"
-	"github.com/gardener/gardener/extensions/pkg/webhook/cloudprovider"
-	mockcloudprovider "github.com/gardener/gardener/extensions/pkg/webhook/cloudprovider/mock"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/gardener/gardener/extensions/pkg/webhook"
+	"github.com/gardener/gardener/extensions/pkg/webhook/cloudprovider"
+	extensionsmockcloudprovider "github.com/gardener/gardener/extensions/pkg/webhook/cloudprovider/mock"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 )
 
-func TestCloudprovider(t *testing.T) {
+func TestCloudProvider(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Cloudprovider Suite")
+	RunSpecs(t, "Extensions Webhook CloudProvider Suite")
 }
 
 var _ = Describe("Mutator", func() {
@@ -52,13 +52,13 @@ var _ = Describe("Mutator", func() {
 
 	Describe("#Mutate", func() {
 		var (
-			ensurer  *mockcloudprovider.MockEnsurer
+			ensurer  *extensionsmockcloudprovider.MockEnsurer
 			new, old *corev1.Secret
 			mutator  webhook.Mutator
 		)
 
 		BeforeEach(func() {
-			ensurer = mockcloudprovider.NewMockEnsurer(ctrl)
+			ensurer = extensionsmockcloudprovider.NewMockEnsurer(ctrl)
 			mutator = cloudprovider.NewMutator(logger, ensurer)
 			new = nil
 			old = nil

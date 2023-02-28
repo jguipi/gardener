@@ -15,42 +15,134 @@
 package garden_test
 
 import (
+	"context"
+	"path/filepath"
 	"time"
 
 	druidv1alpha1 "github.com/gardener/etcd-druid/api/v1alpha1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
-	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/utils/pointer"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	"github.com/gardener/gardener/charts"
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	operatorv1alpha1 "github.com/gardener/gardener/pkg/apis/operator/v1alpha1"
 	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 	"github.com/gardener/gardener/pkg/controllerutils"
 	"github.com/gardener/gardener/pkg/features"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/etcd"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserverexposure"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/resourcemanager"
+	"github.com/gardener/gardener/pkg/operator/apis/config"
+	operatorclient "github.com/gardener/gardener/pkg/operator/client"
+	gardencontroller "github.com/gardener/gardener/pkg/operator/controller/garden"
 	operatorfeatures "github.com/gardener/gardener/pkg/operator/features"
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
+	"github.com/gardener/gardener/pkg/utils"
+	"github.com/gardener/gardener/pkg/utils/imagevector"
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
 	"github.com/gardener/gardener/pkg/utils/test"
 	. "github.com/gardener/gardener/pkg/utils/test/matchers"
+	"github.com/gardener/gardener/test/utils/operationannotation"
 )
 
 var _ = Describe("Garden controller tests", func() {
-	var garden *operatorv1alpha1.Garden
+	var (
+		loadBalancerServiceAnnotations = map[string]string{"foo": "bar"}
+		garden                         *operatorv1alpha1.Garden
+		testRunID                      string
+		testNamespace                  *corev1.Namespace
+	)
 
 	BeforeEach(func() {
-		DeferCleanup(test.WithVar(&secretutils.GenerateKey, secretutils.FakeGenerateKey))
+		DeferCleanup(test.WithVar(&secretsutils.GenerateKey, secretsutils.FakeGenerateKey))
 		DeferCleanup(test.WithFeatureGate(operatorfeatures.FeatureGate, features.HVPA, true))
 		DeferCleanup(test.WithVars(
 			&etcd.DefaultInterval, 100*time.Millisecond,
 			&etcd.DefaultTimeout, 500*time.Millisecond,
+			&kubeapiserverexposure.DefaultInterval, 100*time.Millisecond,
+			&kubeapiserverexposure.DefaultTimeout, 500*time.Millisecond,
+			&resourcemanager.SkipWebhookDeployment, true,
 		))
+
+		By("Create test Namespace")
+		testNamespace = &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				GenerateName: "garden-",
+			},
+		}
+		Expect(testClient.Create(ctx, testNamespace)).To(Succeed())
+		log.Info("Created Namespace for test", "namespaceName", testNamespace.Name)
+		testRunID = testNamespace.Name
+
+		DeferCleanup(func() {
+			By("Delete test Namespace")
+			Expect(testClient.Delete(ctx, testNamespace)).To(Or(Succeed(), BeNotFoundError()))
+		})
+
+		By("Setup manager")
+		mapper, err := apiutil.NewDynamicRESTMapper(restConfig)
+		Expect(err).NotTo(HaveOccurred())
+
+		mgr, err := manager.New(restConfig, manager.Options{
+			Scheme:             operatorclient.RuntimeScheme,
+			MetricsBindAddress: "0",
+			NewCache: cache.BuilderWithOptions(cache.Options{
+				Mapper: mapper,
+				SelectorsByObject: map[client.Object]cache.ObjectSelector{
+					&operatorv1alpha1.Garden{}: {
+						Label: labels.SelectorFromSet(labels.Set{testID: testRunID}),
+					},
+				},
+			}),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		mgrClient = mgr.GetClient()
+
+		// The controller waits for the operation annotation to be removed from Etcd resources, so we need to add a
+		// reconciler for it since envtest does not run the responsible controller (etcd-druid).
+		Expect((&operationannotation.Reconciler{ForObject: func() client.Object { return &druidv1alpha1.Etcd{} }}).AddToManager(mgr)).To(Succeed())
+
+		By("Register controller")
+		chartsPath := filepath.Join("..", "..", "..", "..", charts.Path)
+		imageVector, err := imagevector.ReadGlobalImageVectorWithEnvOverride(filepath.Join(chartsPath, "images.yaml"))
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect((&gardencontroller.Reconciler{
+			Config: config.OperatorConfiguration{
+				Controllers: config.ControllerConfiguration{
+					Garden: config.GardenControllerConfig{
+						ConcurrentSyncs: pointer.Int(5),
+						SyncPeriod:      &metav1.Duration{Duration: time.Minute},
+					},
+				},
+			},
+			ImageVector:     imageVector,
+			Identity:        &gardencorev1beta1.Gardener{Name: "test-gardener"},
+			GardenNamespace: testNamespace.Name,
+		}).AddToManager(mgr)).To(Succeed())
+
+		By("Start manager")
+		mgrContext, mgrCancel := context.WithCancel(ctx)
+
+		go func() {
+			defer GinkgoRecover()
+			Expect(mgr.Start(mgrContext)).To(Succeed())
+		}()
+
+		DeferCleanup(func() {
+			By("Stop manager")
+			mgrCancel()
+		})
 
 		garden = &operatorv1alpha1.Garden{
 			ObjectMeta: metav1.ObjectMeta{
@@ -63,6 +155,9 @@ var _ = Describe("Garden controller tests", func() {
 						Zones: []string{"a", "b", "c"},
 					},
 					Settings: &operatorv1alpha1.Settings{
+						LoadBalancerServices: &operatorv1alpha1.SettingLoadBalancerServices{
+							Annotations: loadBalancerServiceAnnotations,
+						},
 						VerticalPodAutoscaler: &operatorv1alpha1.SettingVerticalPodAutoscaler{
 							Enabled: pointer.Bool(true),
 						},
@@ -123,6 +218,7 @@ var _ = Describe("Garden controller tests", func() {
 			return crdList.Items
 		}).Should(ContainElements(
 			MatchFields(IgnoreExtras, Fields{"ObjectMeta": MatchFields(IgnoreExtras, Fields{"Name": Equal("hvpas.autoscaling.k8s.io")})}),
+			MatchFields(IgnoreExtras, Fields{"ObjectMeta": MatchFields(IgnoreExtras, Fields{"Name": Equal("verticalpodautoscalers.autoscaling.k8s.io")})}),
 		))
 
 		By("Verify that garden runtime CA secret was generated")
@@ -151,20 +247,6 @@ var _ = Describe("Garden controller tests", func() {
 			g.Expect(testClient.Status().Patch(ctx, deployment, patch)).To(Succeed())
 		}).Should(Succeed())
 
-		// The gardener-resource-manager is not really running in this test scenario, hence there is nothing to serve
-		// the webhook endpoints. However, the envtest kube-apiserver would try to reach them, so let's better delete
-		// them here for the sake of this test.
-		By("Delete gardener-resource-manager webhooks")
-		mutatingWebhookConfiguration := &admissionregistrationv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "gardener-resource-manager"}}
-		validatingWebhookConfiguration := &admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "gardener-resource-manager"}}
-		Eventually(func(g Gomega) {
-			g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(mutatingWebhookConfiguration), mutatingWebhookConfiguration)).To(Succeed())
-			g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(validatingWebhookConfiguration), validatingWebhookConfiguration)).To(Succeed())
-
-			g.Expect(testClient.Delete(ctx, mutatingWebhookConfiguration)).To(Succeed())
-			g.Expect(testClient.Delete(ctx, validatingWebhookConfiguration)).To(Succeed())
-		}).Should(Succeed())
-
 		By("Verify that the garden system components have been deployed")
 		Eventually(func(g Gomega) []resourcesv1alpha1.ManagedResource {
 			managedResourceList := &resourcesv1alpha1.ManagedResourceList{}
@@ -187,6 +269,16 @@ var _ = Describe("Garden controller tests", func() {
 			MatchFields(IgnoreExtras, Fields{"ObjectMeta": MatchFields(IgnoreExtras, Fields{"Name": Equal("virtual-garden-etcd-events")})}),
 		))
 
+		Eventually(func(g Gomega) map[string]string {
+			service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "virtual-garden-kube-apiserver", Namespace: testNamespace.Name}}
+			g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(service), service)).To(Succeed())
+			return service.Annotations
+		}).Should(Equal(utils.MergeStringMaps(loadBalancerServiceAnnotations, map[string]string{
+			"networking.resources.gardener.cloud/from-world-to-ports":            `[{"protocol":"TCP","port":443}]`,
+			"networking.resources.gardener.cloud/from-policy-allowed-ports":      `[{"protocol":"TCP","port":443}]`,
+			"networking.resources.gardener.cloud/from-policy-pod-label-selector": "all-scrape-targets",
+		})))
+
 		// The garden controller waits for the Etcd resources to be healthy, but etcd-druid is not really running in
 		// this test, so let's fake this here.
 		By("Patch Etcd resources to report healthiness")
@@ -196,14 +288,22 @@ var _ = Describe("Garden controller tests", func() {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(etcd), etcd)).To(Succeed(), "for "+etcd.Name)
 
 				patch := client.MergeFrom(etcd.DeepCopy())
-				delete(etcd.Annotations, "gardener.cloud/operation")
-				g.Expect(testClient.Patch(ctx, etcd, patch)).To(Succeed(), "for "+etcd.Name)
-
-				patch = client.MergeFrom(etcd.DeepCopy())
 				etcd.Status.ObservedGeneration = &etcd.Generation
 				etcd.Status.Ready = pointer.Bool(true)
 				g.Expect(testClient.Status().Patch(ctx, etcd, patch)).To(Succeed(), "for "+etcd.Name)
 			}
+		}).Should(Succeed())
+
+		// The garden controller waits for the virtual-garden-kube-apiserver Service resource to be ready, but there is
+		// no service controller running in this test which would make it ready, so let's fake this here.
+		By("Patch virtual-garden-kube-apiserver Service resource to report readiness")
+		Eventually(func(g Gomega) {
+			service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "virtual-garden-kube-apiserver", Namespace: testNamespace.Name}}
+			g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(service), service)).To(Succeed())
+
+			patch := client.MergeFrom(service.DeepCopy())
+			service.Status.LoadBalancer.Ingress = append(service.Status.LoadBalancer.Ingress, corev1.LoadBalancerIngress{Hostname: "localhost"})
+			g.Expect(testClient.Status().Patch(ctx, service, patch)).To(Succeed())
 		}).Should(Succeed())
 
 		By("Wait for Reconciled condition to be set to True")

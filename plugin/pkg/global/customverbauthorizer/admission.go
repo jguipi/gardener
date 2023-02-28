@@ -20,9 +20,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
-
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -31,6 +28,9 @@ import (
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
 )
 
 const (
@@ -183,8 +183,8 @@ func mustCheckProjectMembers(oldMembers, members []core.ProjectMember, owner *rb
 	return !oldHumanUsers.Equal(newHumanUsers)
 }
 
-func findHumanUsers(members []core.ProjectMember) sets.String {
-	result := sets.NewString()
+func findHumanUsers(members []core.ProjectMember) sets.Set[string] {
+	result := sets.New[string]()
 
 	for _, member := range members {
 		if isHumanUser(member.Subject) {
@@ -220,7 +220,7 @@ func userIsOwner(userInfo user.Info, owner *rbacv1.Subject) bool {
 		return owner.Name == userInfo.GetName()
 
 	case rbacv1.GroupKind:
-		return sets.NewString(userInfo.GetGroups()...).Has(owner.Name)
+		return sets.New[string](userInfo.GetGroups()...).Has(owner.Name)
 	}
 
 	return false

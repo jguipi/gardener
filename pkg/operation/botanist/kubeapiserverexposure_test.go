@@ -17,14 +17,6 @@ package botanist
 import (
 	"context"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	fakeclientset "github.com/gardener/gardener/pkg/client/kubernetes/fake"
-	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
-	"github.com/gardener/gardener/pkg/operation"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/operation/garden"
-	"github.com/gardener/gardener/pkg/operation/shoot"
-
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
@@ -35,6 +27,15 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	kubernetesfake "github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
+	"github.com/gardener/gardener/pkg/operation"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	"github.com/gardener/gardener/pkg/operation/garden"
+	"github.com/gardener/gardener/pkg/operation/shoot"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 )
 
 var _ = Describe("KubeAPIServerExposure", func() {
@@ -56,7 +57,7 @@ var _ = Describe("KubeAPIServerExposure", func() {
 		Expect(corev1.AddToScheme(scheme)).NotTo(HaveOccurred())
 		client = fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		fakeClientSet := fakeclientset.NewClientSetBuilder().
+		fakeClientSet := kubernetesfake.NewClientSetBuilder().
 			WithAPIReader(client).
 			Build()
 
@@ -94,10 +95,10 @@ var _ = Describe("KubeAPIServerExposure", func() {
 		Context("sni enabled", func() {
 			BeforeEach(func() {
 				Expect(gardenletfeatures.FeatureGate.Set("APIServerSNI=true")).ToNot(HaveOccurred())
-				botanist.Garden.InternalDomain = &garden.Domain{Provider: "some-provider"}
+				botanist.Garden.InternalDomain = &gardenerutils.Domain{Provider: "some-provider"}
 				botanist.Shoot.GetInfo().Spec.DNS = &gardencorev1beta1.DNS{Domain: pointer.String("foo")}
 				botanist.Shoot.ExternalClusterDomain = pointer.String("baz")
-				botanist.Shoot.ExternalDomain = &garden.Domain{Provider: "valid-provider"}
+				botanist.Shoot.ExternalDomain = &gardenerutils.Domain{Provider: "valid-provider"}
 			})
 
 			It("returns Enabled for not existing services", func() {
@@ -136,43 +137,6 @@ var _ = Describe("KubeAPIServerExposure", func() {
 				},
 
 				Entry("ExternalName", corev1.ServiceTypeExternalName),
-				Entry("NodePort", corev1.ServiceTypeNodePort),
-			)
-		})
-
-		Context("sni disabled", func() {
-			BeforeEach(func() {
-				Expect(gardenletfeatures.FeatureGate.Set("APIServerSNI=false")).ToNot(HaveOccurred())
-			})
-
-			It("returns Disabled for not existing services", func() {
-				phase, err := botanist.SNIPhase(ctx)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(phase).To(Equal(component.PhaseDisabled))
-			})
-
-			It("returns Disabling for service of type ClusterIP", func() {
-				svc.Spec.Type = corev1.ServiceTypeClusterIP
-				Expect(client.Create(ctx, svc)).NotTo(HaveOccurred())
-
-				phase, err := botanist.SNIPhase(ctx)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(phase).To(Equal(component.PhaseDisabling))
-			})
-
-			DescribeTable(
-				"return Disabled for service of type",
-				func(svcType corev1.ServiceType) {
-					svc.Spec.Type = svcType
-					Expect(client.Create(ctx, svc)).NotTo(HaveOccurred())
-
-					phase, err := botanist.SNIPhase(ctx)
-					Expect(err).NotTo(HaveOccurred())
-					Expect(phase).To(Equal(component.PhaseDisabled))
-				},
-
-				Entry("ExternalName", corev1.ServiceTypeExternalName),
-				Entry("LoadBalancer", corev1.ServiceTypeLoadBalancer),
 				Entry("NodePort", corev1.ServiceTypeNodePort),
 			)
 		})

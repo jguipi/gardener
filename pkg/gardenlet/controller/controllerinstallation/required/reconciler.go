@@ -21,15 +21,16 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/utils/clock"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
 	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 // Reconciler reconciles ControllerInstallations. It checks whether they are still required by using the
@@ -38,10 +39,11 @@ type Reconciler struct {
 	GardenClient client.Client
 	SeedClient   client.Client
 	Config       config.ControllerInstallationRequiredControllerConfiguration
+	Clock        clock.Clock
 	SeedName     string
 
 	Lock                *sync.RWMutex
-	KindToRequiredTypes map[string]sets.String
+	KindToRequiredTypes map[string]sets.Set[string]
 }
 
 // Reconcile performs the main reconciliation logic.
@@ -58,14 +60,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	controllerRegistration := &gardencorev1beta1.ControllerRegistration{}
-	if err := r.GardenClient.Get(ctx, kutil.Key(controllerInstallation.Spec.RegistrationRef.Name), controllerRegistration); err != nil {
+	if err := r.GardenClient.Get(ctx, kubernetesutils.Key(controllerInstallation.Spec.RegistrationRef.Name), controllerRegistration); err != nil {
 		return reconcile.Result{}, err
 	}
 
 	var (
 		allKindsCalculated = true
 		required           *bool
-		requiredKindTypes  = sets.NewString()
+		requiredKindTypes  = sets.New[string]()
 		message            string
 	)
 
@@ -98,16 +100,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		message = fmt.Sprintf("extension objects still exist in the seed: %+v", requiredKindTypes.UnsortedList())
 	}
 
-	if err := updateControllerInstallationRequiredCondition(ctx, r.GardenClient, controllerInstallation, *required, message); err != nil {
+	if err := updateControllerInstallationRequiredCondition(ctx, r.GardenClient, r.Clock, controllerInstallation, *required, message); err != nil {
 		return reconcile.Result{}, err
 	}
 
 	return reconcile.Result{}, nil
 }
 
-func updateControllerInstallationRequiredCondition(ctx context.Context, c client.StatusClient, controllerInstallation *gardencorev1beta1.ControllerInstallation, required bool, message string) error {
+func updateControllerInstallationRequiredCondition(ctx context.Context, c client.StatusClient, clock clock.Clock, controllerInstallation *gardencorev1beta1.ControllerInstallation, required bool, message string) error {
 	var (
-		conditionRequired = gardencorev1beta1helper.GetOrInitCondition(controllerInstallation.Status.Conditions, gardencorev1beta1.ControllerInstallationRequired)
+		conditionRequired = v1beta1helper.GetOrInitConditionWithClock(clock, controllerInstallation.Status.Conditions, gardencorev1beta1.ControllerInstallationRequired)
 
 		status = gardencorev1beta1.ConditionTrue
 		reason = "ExtensionObjectsExist"
@@ -119,9 +121,9 @@ func updateControllerInstallationRequiredCondition(ctx context.Context, c client
 	}
 
 	patch := client.StrategicMergeFrom(controllerInstallation.DeepCopy())
-	controllerInstallation.Status.Conditions = gardencorev1beta1helper.MergeConditions(
+	controllerInstallation.Status.Conditions = v1beta1helper.MergeConditions(
 		controllerInstallation.Status.Conditions,
-		gardencorev1beta1helper.UpdatedCondition(conditionRequired, status, reason, message),
+		v1beta1helper.UpdatedConditionWithClock(clock, conditionRequired, status, reason, message),
 	)
 
 	return c.Status().Patch(ctx, controllerInstallation, patch)

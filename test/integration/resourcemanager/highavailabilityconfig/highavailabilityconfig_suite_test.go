@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Masterminds/semver"
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -41,7 +42,7 @@ import (
 
 func TestHighAvailabilityConfig(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "HighAvailabilityConfig Integration Test Suite")
+	RunSpecs(t, "Test Integration ResourceManager HighAvailabilityConfig Suite")
 }
 
 const testIDPrefix = "high-availability-config-webhook-test"
@@ -59,7 +60,7 @@ var _ = BeforeSuite(func() {
 	logf.SetLogger(logger.MustNewZapLogger(logger.DebugLevel, logger.FormatJSON, zap.WriteTo(GinkgoWriter)))
 	log = logf.Log.WithName(testIDPrefix)
 
-	By("starting test environment")
+	By("Start test environment")
 	testEnv = &envtest.Environment{
 		CRDInstallOptions: envtest.CRDInstallOptions{
 			Paths: []string{filepath.Join("..", "..", "..", "..", "example", "seed-crds", "10-crd-autoscaling.k8s.io_hvpas.yaml")},
@@ -76,15 +77,15 @@ var _ = BeforeSuite(func() {
 	Expect(restConfig).NotTo(BeNil())
 
 	DeferCleanup(func() {
-		By("stopping test environment")
+		By("Stop test environment")
 		Expect(testEnv.Stop()).To(Succeed())
 	})
 
-	By("creating test client")
+	By("Create test client")
 	testClient, err = client.New(restConfig, client.Options{Scheme: resourcemanagerclient.CombinedScheme})
 	Expect(err).NotTo(HaveOccurred())
 
-	By("setting up manager")
+	By("Setup manager")
 	mgr, err := manager.New(restConfig, manager.Options{
 		Port:               testEnv.WebhookInstallOptions.LocalServingPort,
 		Host:               testEnv.WebhookInstallOptions.LocalServingHost,
@@ -97,14 +98,15 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	By("registering webhook")
+	By("Register webhook")
 	Expect((&highavailabilityconfig.Handler{
-		Logger:                       log,
-		TargetClient:                 testClient,
-		TargetVersionGreaterEqual123: true,
+		Logger:       log,
+		TargetClient: testClient,
+		// Use the same version as the envtest package
+		TargetVersion: semver.MustParse("1.26.0"),
 	}).AddToManager(mgr)).To(Succeed())
 
-	By("starting manager")
+	By("Start manager")
 	mgrContext, mgrCancel := context.WithCancel(ctx)
 
 	go func() {
@@ -119,7 +121,7 @@ var _ = BeforeSuite(func() {
 	}).Should(BeNil())
 
 	DeferCleanup(func() {
-		By("stopping manager")
+		By("Stop manager")
 		mgrCancel()
 	})
 })

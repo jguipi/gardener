@@ -18,16 +18,6 @@ import (
 	"context"
 	"regexp"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	. "github.com/gardener/gardener/pkg/operation/botanist/component/coredns"
-	"github.com/gardener/gardener/pkg/utils/retry"
-	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/Masterminds/semver"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -38,6 +28,16 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	. "github.com/gardener/gardener/pkg/operation/botanist/component/coredns"
+	"github.com/gardener/gardener/pkg/utils/retry"
+	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("CoreDNS", func() {
@@ -47,7 +47,6 @@ var _ = Describe("CoreDNS", func() {
 		managedResourceName = "shoot-core-coredns"
 		namespace           = "some-namespace"
 		clusterDomain       = "foo.bar"
-		quotedClusterDomain = regexp.QuoteMeta(clusterDomain)
 		clusterIP           = "1.2.3.4"
 		image               = "some-image:some-tag"
 		cpaImage            = "cpa-image:cpa-tag"
@@ -130,11 +129,16 @@ data:
       ready`
 			if rewritingEnabled {
 				out += `
-      rewrite stop name regex (.+)\.svc\.` + quotedClusterDomain + `\.(.+)\.svc\.` + quotedClusterDomain + ` {1}.svc.` + clusterDomain + `
-      rewrite stop name regex (.+)\.(.+)\.svc\.(.+)\.svc\.` + quotedClusterDomain + ` {1}.{2}.svc.` + clusterDomain
+      rewrite stop {
+        name regex ([^\.]+)\.([^\.]+)\.svc\.foo\.bar\.svc\.foo\.bar {1}.{2}.svc.foo.bar
+        answer name ([^\.]+)\.([^\.]+)\.svc\.foo\.bar {1}.{2}.svc.foo.bar.svc.foo.bar
+      }`
 				for _, suffix := range commonSuffixes {
 					out += `
-      rewrite stop name regex (.*)` + regexp.QuoteMeta(suffix) + `\.(.+)\.svc\.` + quotedClusterDomain + ` {1}` + suffix
+      rewrite stop {
+        name regex (.*)\.` + regexp.QuoteMeta(suffix) + `\.svc\.foo\.bar {1}.` + suffix + `
+        answer name (.*)\.` + regexp.QuoteMeta(suffix) + ` {1}.` + suffix + `.svc.foo.bar
+      }`
 				}
 			}
 			out += `
@@ -363,8 +367,6 @@ spec:
           name: custom-config-volume
           readOnly: true
       dnsPolicy: Default
-      nodeSelector:
-        worker.gardener.cloud/system-components: "true"
       priorityClassName: system-cluster-critical
       securityContext:
         fsGroup: 1
@@ -375,9 +377,6 @@ spec:
         supplementalGroups:
         - 1
       serviceAccountName: coredns
-      tolerations:
-      - key: CriticalAddonsOnly
-        operator: Exists
       volumes:
       - configMap:
           items:
@@ -445,6 +444,8 @@ status:
 kind: HorizontalPodAutoscaler
 metadata:
   creationTimestamp: null
+  labels:
+    high-availability-config.resources.gardener.cloud/type: server
   name: coredns
   namespace: kube-system
 spec:
@@ -578,9 +579,6 @@ spec:
         supplementalGroups:
         - 65534
       serviceAccountName: coredns-autoscaler
-      tolerations:
-      - key: CriticalAddonsOnly
-        operator: Exists
 status: {}
 `
 
@@ -596,7 +594,6 @@ spec:
     - containerName: '*'
       controlledValues: RequestsOnly
       minAllowed:
-        cpu: 20m
         memory: 10Mi
   targetRef:
     apiVersion: apps/v1
@@ -672,7 +669,7 @@ status: {}
 					SecretRefs: []corev1.LocalObjectReference{{
 						Name: managedResourceSecret.Name,
 					}},
-					KeepObjects: pointer.BoolPtr(false),
+					KeepObjects: pointer.Bool(false),
 				},
 			}))
 

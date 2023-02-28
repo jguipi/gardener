@@ -16,24 +16,13 @@ package validation
 
 import (
 	"fmt"
-	"math"
+	"math/big"
 	"net"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/gardener/gardener/pkg/apis/core"
-	"github.com/gardener/gardener/pkg/apis/core/helper"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	"github.com/gardener/gardener/pkg/utils/timewindow"
-	admissionpluginsvalidation "github.com/gardener/gardener/pkg/utils/validation/admissionplugins"
-	cidrvalidation "github.com/gardener/gardener/pkg/utils/validation/cidr"
-	featuresvalidation "github.com/gardener/gardener/pkg/utils/validation/features"
-	versionutils "github.com/gardener/gardener/pkg/utils/version"
 
 	"github.com/Masterminds/semver"
 	"github.com/robfig/cron"
@@ -47,70 +36,82 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/utils/pointer"
 	"k8s.io/utils/strings/slices"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	"github.com/gardener/gardener/pkg/apis/core/helper"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/features"
+	"github.com/gardener/gardener/pkg/utils"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/timewindow"
+	admissionpluginsvalidation "github.com/gardener/gardener/pkg/utils/validation/admissionplugins"
+	cidrvalidation "github.com/gardener/gardener/pkg/utils/validation/cidr"
+	featuresvalidation "github.com/gardener/gardener/pkg/utils/validation/features"
+	versionutils "github.com/gardener/gardener/pkg/utils/version"
 )
 
 var (
-	availableProxyModes = sets.NewString(
+	availableProxyModes = sets.New[string](
 		string(core.ProxyModeIPTables),
 		string(core.ProxyModeIPVS),
 	)
-	availableKubernetesDashboardAuthenticationModes = sets.NewString(
-		core.KubernetesDashboardAuthModeBasic,
+	availableKubernetesDashboardAuthenticationModes = sets.New[string](
 		core.KubernetesDashboardAuthModeToken,
 	)
-	availableNginxIngressExternalTrafficPolicies = sets.NewString(
+	availableNginxIngressExternalTrafficPolicies = sets.New[string](
 		string(corev1.ServiceExternalTrafficPolicyTypeCluster),
 		string(corev1.ServiceExternalTrafficPolicyTypeLocal),
 	)
-	availableShootOperations = sets.NewString(
+	availableShootOperations = sets.New[string](
 		v1beta1constants.ShootOperationMaintain,
 		v1beta1constants.ShootOperationRetry,
 	).Union(availableShootMaintenanceOperations)
-	availableShootMaintenanceOperations = sets.NewString(
+	availableShootMaintenanceOperations = sets.New[string](
 		v1beta1constants.GardenerOperationReconcile,
-		v1beta1constants.ShootOperationRotateCAStart,
-		v1beta1constants.ShootOperationRotateCAComplete,
+		v1beta1constants.OperationRotateCAStart,
+		v1beta1constants.OperationRotateCAComplete,
 		v1beta1constants.ShootOperationRotateKubeconfigCredentials,
 		v1beta1constants.ShootOperationRotateObservabilityCredentials,
 		v1beta1constants.ShootOperationRotateSSHKeypair,
 	).Union(forbiddenShootOperationsWhenHibernated)
-	forbiddenShootOperationsWhenHibernated = sets.NewString(
-		v1beta1constants.ShootOperationRotateCredentialsStart,
-		v1beta1constants.ShootOperationRotateCredentialsComplete,
-		v1beta1constants.ShootOperationRotateETCDEncryptionKeyStart,
-		v1beta1constants.ShootOperationRotateETCDEncryptionKeyComplete,
-		v1beta1constants.ShootOperationRotateServiceAccountKeyStart,
-		v1beta1constants.ShootOperationRotateServiceAccountKeyComplete,
+	forbiddenShootOperationsWhenHibernated = sets.New[string](
+		v1beta1constants.OperationRotateCredentialsStart,
+		v1beta1constants.OperationRotateCredentialsComplete,
+		v1beta1constants.OperationRotateETCDEncryptionKeyStart,
+		v1beta1constants.OperationRotateETCDEncryptionKeyComplete,
+		v1beta1constants.OperationRotateServiceAccountKeyStart,
+		v1beta1constants.OperationRotateServiceAccountKeyComplete,
 	)
-	availableShootPurposes = sets.NewString(
+	availableShootPurposes = sets.New[string](
 		string(core.ShootPurposeEvaluation),
 		string(core.ShootPurposeTesting),
 		string(core.ShootPurposeDevelopment),
 		string(core.ShootPurposeProduction),
 	)
-	availableWorkerCRINames = sets.NewString(
+	availableWorkerCRINames = sets.New[string](
 		string(core.CRINameContainerD),
 		string(core.CRINameDocker),
 	)
-	availableClusterAutoscalerExpanderModes = sets.NewString(
+	availableClusterAutoscalerExpanderModes = sets.New[string](
 		string(core.ClusterAutoscalerExpanderLeastWaste),
 		string(core.ClusterAutoscalerExpanderMostPods),
 		string(core.ClusterAutoscalerExpanderPriority),
 		string(core.ClusterAutoscalerExpanderRandom),
 	)
-	availableCoreDNSAutoscalingModes = sets.NewString(
+	availableCoreDNSAutoscalingModes = sets.New[string](
 		string(core.CoreDNSAutoscalingModeClusterProportional),
 		string(core.CoreDNSAutoscalingModeHorizontal),
 	)
-	availableSchedulingProfiles = sets.NewString(
+	availableSchedulingProfiles = sets.New[string](
 		string(core.SchedulingProfileBalanced),
 		string(core.SchedulingProfileBinPacking),
 	)
 
 	// asymmetric algorithms from https://datatracker.ietf.org/doc/html/rfc7518#section-3.1
-	availableOIDCSigningAlgs = sets.NewString(
+	availableOIDCSigningAlgs = sets.New[string](
 		"RS256",
 		"RS384",
 		"RS512",
@@ -169,6 +170,10 @@ func ValidateShootTemplateUpdate(newShootTemplate, oldShootTemplate *core.ShootT
 
 	allErrs = append(allErrs, ValidateShootSpecUpdate(&newShootTemplate.Spec, &oldShootTemplate.Spec, newShootTemplate.ObjectMeta, fldPath.Child("spec"))...)
 
+	if oldShootTemplate.Spec.Networking.Nodes != nil {
+		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newShootTemplate.Spec.Networking.Nodes, oldShootTemplate.Spec.Networking.Nodes, fldPath.Child("spec", "networking", "nodes"))...)
+	}
+
 	return allErrs
 }
 
@@ -208,12 +213,12 @@ func ValidateShootSpec(meta metav1.ObjectMeta, spec *core.ShootSpec, fldPath *fi
 	allErrs = append(allErrs, validateDNS(spec.DNS, fldPath.Child("dns"))...)
 	allErrs = append(allErrs, validateExtensions(spec.Extensions, fldPath.Child("extensions"))...)
 	allErrs = append(allErrs, validateResources(spec.Resources, fldPath.Child("resources"))...)
-	allErrs = append(allErrs, validateKubernetes(spec.Kubernetes, isDockerConfigured(spec.Provider.Workers), meta.DeletionTimestamp != nil, fldPath.Child("kubernetes"))...)
+	allErrs = append(allErrs, validateKubernetes(spec.Kubernetes, spec.Networking, isDockerConfigured(spec.Provider.Workers), meta.DeletionTimestamp != nil, fldPath.Child("kubernetes"))...)
 	allErrs = append(allErrs, validateNetworking(spec.Networking, fldPath.Child("networking"))...)
 	allErrs = append(allErrs, validateMaintenance(spec.Maintenance, fldPath.Child("maintenance"))...)
 	allErrs = append(allErrs, validateMonitoring(spec.Monitoring, fldPath.Child("monitoring"))...)
 	allErrs = append(allErrs, ValidateHibernation(meta.Annotations, spec.Hibernation, fldPath.Child("hibernation"))...)
-	allErrs = append(allErrs, validateProvider(spec.Provider, spec.Kubernetes, fldPath.Child("provider"), inTemplate)...)
+	allErrs = append(allErrs, validateProvider(spec.Provider, spec.Kubernetes, spec.Networking, fldPath.Child("provider"), inTemplate)...)
 
 	if len(spec.Region) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("region"), "must specify a region"))
@@ -228,16 +233,16 @@ func ValidateShootSpec(meta metav1.ObjectMeta, spec *core.ShootSpec, fldPath *fi
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("seedName"), spec.SeedName, "seed name must not be empty when providing the key"))
 	}
 	if spec.SeedSelector != nil {
-		allErrs = append(allErrs, metav1validation.ValidateLabelSelector(&spec.SeedSelector.LabelSelector, fldPath.Child("seedSelector"))...)
+		allErrs = append(allErrs, metav1validation.ValidateLabelSelector(&spec.SeedSelector.LabelSelector, metav1validation.LabelSelectorValidationOptions{AllowInvalidLabelValueInSelector: true}, fldPath.Child("seedSelector"))...)
 	}
 	if purpose := spec.Purpose; purpose != nil {
 		allowedShootPurposes := availableShootPurposes
 		if meta.Namespace == v1beta1constants.GardenNamespace || inTemplate {
-			allowedShootPurposes = sets.NewString(append(availableShootPurposes.List(), string(core.ShootPurposeInfrastructure))...)
+			allowedShootPurposes = sets.New[string](append(sets.List(availableShootPurposes), string(core.ShootPurposeInfrastructure))...)
 		}
 
 		if !allowedShootPurposes.Has(string(*purpose)) {
-			allErrs = append(allErrs, field.NotSupported(fldPath.Child("purpose"), *purpose, allowedShootPurposes.List()))
+			allErrs = append(allErrs, field.NotSupported(fldPath.Child("purpose"), *purpose, sets.List(allowedShootPurposes)))
 		}
 	}
 	allErrs = append(allErrs, ValidateTolerations(spec.Tolerations, fldPath.Child("tolerations"))...)
@@ -298,16 +303,8 @@ func ValidateShootSpecUpdate(newSpec, oldSpec *core.ShootSpec, newObjectMeta met
 		allErrs = append(allErrs, validateKubernetesVersionUpdate(newKubernetesVersion, oldKubernetesVersion, idxPath.Child("kubernetes", "version"))...)
 	}
 
-	allErrs = append(allErrs, apivalidation.ValidateImmutableField(newSpec.Networking.Type, oldSpec.Networking.Type, fldPath.Child("networking", "type"))...)
-	if oldSpec.Networking.Pods != nil {
-		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newSpec.Networking.Pods, oldSpec.Networking.Pods, fldPath.Child("networking", "pods"))...)
-	}
-	if oldSpec.Networking.Services != nil {
-		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newSpec.Networking.Services, oldSpec.Networking.Services, fldPath.Child("networking", "services"))...)
-	}
-	if oldSpec.Networking.Nodes != nil {
-		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newSpec.Networking.Nodes, oldSpec.Networking.Nodes, fldPath.Child("networking", "nodes"))...)
-	}
+	allErrs = append(allErrs, validateNetworkingUpdate(newSpec.Networking, oldSpec.Networking, fldPath.Child("networking"))...)
+
 	return allErrs
 }
 
@@ -343,7 +340,7 @@ func ValidateShootStatusUpdate(newStatus, oldStatus core.ShootStatus) field.Erro
 // validateAdvertiseAddresses validates kube-apiserver addresses.
 func validateAdvertiseAddresses(addresses []core.ShootAdvertisedAddress, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	names := sets.NewString()
+	names := sets.New[string]()
 	for i, address := range addresses {
 		if address.Name == "" {
 			allErrs = append(allErrs, field.Required(fldPath.Index(i).Child("name"), "field must not be empty"))
@@ -397,7 +394,7 @@ func validateAddons(addons *core.Addons, kubernetes core.Kubernetes, purpose *co
 	if helper.NginxIngressEnabled(addons) {
 		if policy := addons.NginxIngress.ExternalTrafficPolicy; policy != nil {
 			if !availableNginxIngressExternalTrafficPolicies.Has(string(*policy)) {
-				allErrs = append(allErrs, field.NotSupported(fldPath.Child("nginxIngress", "externalTrafficPolicy"), *policy, availableNginxIngressExternalTrafficPolicies.List()))
+				allErrs = append(allErrs, field.NotSupported(fldPath.Child("nginxIngress", "externalTrafficPolicy"), *policy, sets.List(availableNginxIngressExternalTrafficPolicies)))
 			}
 		}
 	}
@@ -405,11 +402,7 @@ func validateAddons(addons *core.Addons, kubernetes core.Kubernetes, purpose *co
 	if helper.KubernetesDashboardEnabled(addons) {
 		if authMode := addons.KubernetesDashboard.AuthenticationMode; authMode != nil {
 			if !availableKubernetesDashboardAuthenticationModes.Has(*authMode) {
-				allErrs = append(allErrs, field.NotSupported(fldPath.Child("kubernetesDashboard", "authenticationMode"), *authMode, availableKubernetesDashboardAuthenticationModes.List()))
-			}
-
-			if *authMode == core.KubernetesDashboardAuthModeBasic && !helper.ShootWantsBasicAuthentication(kubernetes.KubeAPIServer) {
-				allErrs = append(allErrs, field.Invalid(fldPath.Child("kubernetesDashboard", "authenticationMode"), *authMode, "cannot use basic auth mode when basic auth is not enabled in kube-apiserver configuration"))
+				allErrs = append(allErrs, field.NotSupported(fldPath.Child("kubernetesDashboard", "authenticationMode"), *authMode, sets.List(availableKubernetesDashboardAuthenticationModes)))
 			}
 		}
 	}
@@ -417,17 +410,38 @@ func validateAddons(addons *core.Addons, kubernetes core.Kubernetes, purpose *co
 	return allErrs
 }
 
+const (
+	// kube-controller-manager's default value for --node-cidr-mask-size for IPv4
+	defaultNodeCIDRMaskSizeV4 = 24
+	// kube-controller-manager's default value for --node-cidr-mask-size for IPv6
+	defaultNodeCIDRMaskSizeV6 = 64
+)
+
 // ValidateNodeCIDRMaskWithMaxPod validates if the Pod Network has enough ip addresses (configured via the NodeCIDRMask on the kube controller manager) to support the highest max pod setting on the shoot
-func ValidateNodeCIDRMaskWithMaxPod(maxPod int32, nodeCIDRMaskSize int32) field.ErrorList {
+func ValidateNodeCIDRMaskWithMaxPod(maxPod int32, nodeCIDRMaskSize int32, networking core.Networking) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	free := float64(32 - nodeCIDRMaskSize)
-	// first and last ips are reserved
-	// 2**32 will overflow int32 so use an unsigned
-	ipAdressesAvailable := uint32(math.Pow(2, free) - 2)
+	totalBitLen := int32(net.IPv4len * 8) // entire IPv4 bit length
+	defaultNodeCIDRMaskSize := defaultNodeCIDRMaskSizeV4
 
-	if ipAdressesAvailable < uint32(maxPod) {
-		allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("kubernetes").Child("kubeControllerManager").Child("nodeCIDRMaskSize"), nodeCIDRMaskSize, fmt.Sprintf("kubelet or kube-controller configuration incorrect. Please adjust the NodeCIDRMaskSize of the kube-controller to support the highest maxPod on any worker pool. The NodeCIDRMaskSize of '%d (default: 24)' of the kube-controller only supports '%d' ip adresses. Highest maxPod setting on kubelet is '%d (default: 110)'. Please choose a NodeCIDRMaskSize that at least supports %d ip adresses", nodeCIDRMaskSize, ipAdressesAvailable, maxPod, maxPod)))
+	if core.IsIPv6SingleStack(networking.IPFamilies) {
+		totalBitLen = net.IPv6len * 8 // entire IPv6 bit length
+		defaultNodeCIDRMaskSize = defaultNodeCIDRMaskSizeV6
+	}
+
+	// Each Node gets assigned a subnet of the entire pod network with a mask size of nodeCIDRMaskSize,
+	// calculate bit length of a single podCIDR subnet (Node.status.podCIDR).
+	subnetBitLen := totalBitLen - nodeCIDRMaskSize
+
+	// Calculate how many addresses a single podCIDR subnet contains.
+	// This will overflow uint64 if nodeCIDRMaskSize <= 64 (subnetBitLen >= 64, default in IPv6), so use big.Int
+	ipAdressesAvailable := &big.Int{}
+	ipAdressesAvailable.Exp(big.NewInt(2), big.NewInt(int64(subnetBitLen)), nil)
+	// first and last ips are reserved, subtract 2
+	ipAdressesAvailable.Sub(ipAdressesAvailable, big.NewInt(2))
+
+	if ipAdressesAvailable.Cmp(big.NewInt(int64(maxPod))) < 0 {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("kubernetes").Child("kubeControllerManager").Child("nodeCIDRMaskSize"), nodeCIDRMaskSize, fmt.Sprintf("kubelet or kube-controller-manager configuration incorrect. Please adjust the nodeCIDRMaskSize to support the highest maxPod on any worker pool. The nodeCIDRMaskSize of %d (default: %d) only supports %d IP addresses. The highest maxPod setting is %d (default: 110). Please choose a nodeCIDRMaskSize that at least supports %d IP addresses", nodeCIDRMaskSize, defaultNodeCIDRMaskSize, ipAdressesAvailable, maxPod, maxPod)))
 	}
 
 	return allErrs
@@ -437,17 +451,23 @@ func ValidateNodeCIDRMaskWithMaxPod(maxPod int32, nodeCIDRMaskSize int32) field.
 func ValidateTotalNodeCountWithPodCIDR(shoot *core.Shoot) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	var (
-		totalNodes       int32
-		nodeCIDRMaskSize int32 = 24
-		podNetworkCIDR         = core.DefaultPodNetworkCIDR
-	)
-
-	if shoot.Spec.Networking.Pods != nil {
-		podNetworkCIDR = *shoot.Spec.Networking.Pods
+	nodeCIDRMaskSize := int64(defaultNodeCIDRMaskSizeV4)
+	if core.IsIPv6SingleStack(shoot.Spec.Networking.IPFamilies) {
+		nodeCIDRMaskSize = defaultNodeCIDRMaskSizeV6
 	}
 	if shoot.Spec.Kubernetes.KubeControllerManager != nil && shoot.Spec.Kubernetes.KubeControllerManager.NodeCIDRMaskSize != nil {
-		nodeCIDRMaskSize = *shoot.Spec.Kubernetes.KubeControllerManager.NodeCIDRMaskSize
+		nodeCIDRMaskSize = int64(*shoot.Spec.Kubernetes.KubeControllerManager.NodeCIDRMaskSize)
+	}
+
+	// calculate maximum number of total nodes
+	totalNodes := int64(0)
+	for _, worker := range shoot.Spec.Provider.Workers {
+		totalNodes += int64(worker.Maximum)
+	}
+
+	podNetworkCIDR := core.DefaultPodNetworkCIDR
+	if shoot.Spec.Networking.Pods != nil {
+		podNetworkCIDR = *shoot.Spec.Networking.Pods
 	}
 
 	_, podNetwork, err := net.ParseCIDR(podNetworkCIDR)
@@ -456,21 +476,22 @@ func ValidateTotalNodeCountWithPodCIDR(shoot *core.Shoot) field.ErrorList {
 		return allErrs
 	}
 
-	cidrMask, _ := podNetwork.Mask.Size()
-	if cidrMask == 0 {
+	podCIDRMaskSize, _ := podNetwork.Mask.Size()
+	if podCIDRMaskSize == 0 {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("networking").Child("pods"), podNetwork.String(), fmt.Sprintf("incorrect pod network mask : %s. Please ensure the mask is in proper form", podNetwork.String())))
 		return allErrs
 	}
 
-	maxNodeCount := uint32(math.Pow(2, float64(nodeCIDRMaskSize-int32(cidrMask))))
+	// Calculate how many subnets with nodeCIDRMaskSize can be allocated out of the pod network (with podCIDRMaskSize).
+	// This indicates how many Nodes we can host at max from a networking perspective.
+	var bitLen, maxNodeCount = &big.Int{}, &big.Int{}
+	bitLen.Sub(big.NewInt(nodeCIDRMaskSize), big.NewInt(int64(podCIDRMaskSize)))
+	maxNodeCount.Exp(big.NewInt(2), bitLen, nil)
 
-	for _, worker := range shoot.Spec.Provider.Workers {
-		totalNodes += worker.Maximum
-	}
-
-	if uint32(totalNodes) > maxNodeCount {
+	if maxNodeCount.Cmp(big.NewInt(totalNodes)) < 0 {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("provider").Child("workers"), totalNodes, fmt.Sprintf("worker configuration incorrect. The podCIDRs in `spec.networking.pod` can only support a maximum of %d nodes. The total number of worker pool nodes should be less than %d ", maxNodeCount, maxNodeCount)))
 	}
+
 	return allErrs
 }
 
@@ -567,6 +588,24 @@ func validateKubernetesVersionUpdate(new, old string, fldPath *field.Path) field
 	return allErrs
 }
 
+func validateNetworkingUpdate(newNetworking, oldNetworking core.Networking, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(newNetworking.Type, oldNetworking.Type, fldPath.Child("type"))...)
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(newNetworking.IPFamilies, oldNetworking.IPFamilies, fldPath.Child("ipFamilies"))...)
+	if oldNetworking.Pods != nil {
+		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newNetworking.Pods, oldNetworking.Pods, fldPath.Child("pods"))...)
+	}
+	if oldNetworking.Services != nil {
+		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newNetworking.Services, oldNetworking.Services, fldPath.Child("services"))...)
+	}
+	if !utilfeature.DefaultFeatureGate.Enabled(features.MutableShootSpecNetworkingNodes) && oldNetworking.Nodes != nil {
+		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newNetworking.Nodes, oldNetworking.Nodes, fldPath.Child("nodes"))...)
+	}
+
+	return allErrs
+}
+
 // validateWorkerGroupAndControlPlaneKubernetesVersion ensures that new version is newer than old version and does not skip two minor
 func validateWorkerGroupAndControlPlaneKubernetesVersion(controlPlaneVersion, workerGroupVersion string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
@@ -617,14 +656,14 @@ func validateDNS(dns *core.DNS, fldPath *field.Path) field.ErrorList {
 	}
 
 	var (
-		names        = sets.NewString()
+		names        = sets.New[string]()
 		primaryFound bool
 	)
 	for i, provider := range dns.Providers {
 		idxPath := fldPath.Child("providers").Index(i)
 
 		if provider.SecretName != nil && provider.Type != nil {
-			providerName := gutil.GenerateDNSProviderName(*provider.SecretName, *provider.Type)
+			providerName := gardenerutils.GenerateDNSProviderName(*provider.SecretName, *provider.Type)
 			if names.Has(providerName) {
 				allErrs = append(allErrs, field.Invalid(idxPath, providerName, "combination of .secretName and .type must be unique across dns providers"))
 				continue
@@ -684,7 +723,7 @@ func validateResources(resources []core.NamedResourceReference, fldPath *field.P
 	return allErrs
 }
 
-func validateKubernetes(kubernetes core.Kubernetes, dockerConfigured, shootHasDeletionTimestamp bool, fldPath *field.Path) field.ErrorList {
+func validateKubernetes(kubernetes core.Kubernetes, networking core.Networking, dockerConfigured, shootHasDeletionTimestamp bool, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if len(kubernetes.Version) == 0 {
@@ -693,10 +732,6 @@ func validateKubernetes(kubernetes core.Kubernetes, dockerConfigured, shootHasDe
 	}
 
 	if kubeAPIServer := kubernetes.KubeAPIServer; kubeAPIServer != nil {
-		if helper.ShootWantsBasicAuthentication(kubeAPIServer) {
-			allErrs = append(allErrs, field.Forbidden(fldPath.Child("kubeAPIServer", "enableBasicAuthentication"), "basic authentication has been removed in Kubernetes v1.19+"))
-		}
-
 		if oidc := kubeAPIServer.OIDCConfig; oidc != nil {
 			oidcPath := fldPath.Child("kubeAPIServer", "oidcConfig")
 
@@ -739,7 +774,7 @@ func validateKubernetes(kubernetes core.Kubernetes, dockerConfigured, shootHasDe
 			}
 			for i, alg := range oidc.SigningAlgs {
 				if !availableOIDCSigningAlgs.Has(alg) {
-					allErrs = append(allErrs, field.NotSupported(oidcPath.Child("signingAlgs").Index(i), alg, availableOIDCSigningAlgs.List()))
+					allErrs = append(allErrs, field.NotSupported(oidcPath.Child("signingAlgs").Index(i), alg, sets.List(availableOIDCSigningAlgs)))
 				}
 			}
 			if oidc.UsernameClaim != nil && len(*oidc.UsernameClaim) == 0 {
@@ -762,6 +797,13 @@ func validateKubernetes(kubernetes core.Kubernetes, dockerConfigured, shootHasDe
 		allErrs = append(allErrs, ValidateWatchCacheSizes(kubeAPIServer.WatchCacheSizes, fldPath.Child("kubeAPIServer", "watchCacheSizes"))...)
 
 		allErrs = append(allErrs, ValidateKubeAPIServerLogging(kubeAPIServer.Logging, fldPath.Child("kubeAPIServer", "logging"))...)
+
+		if defaultNotReadyTolerationSeconds := kubeAPIServer.DefaultNotReadyTolerationSeconds; defaultNotReadyTolerationSeconds != nil {
+			allErrs = append(allErrs, apivalidation.ValidateNonnegativeField(int64(*defaultNotReadyTolerationSeconds), fldPath.Child("kubeAPIServer", "defaultNotReadyTolerationSeconds"))...)
+		}
+		if defaultUnreachableTolerationSeconds := kubeAPIServer.DefaultUnreachableTolerationSeconds; defaultUnreachableTolerationSeconds != nil {
+			allErrs = append(allErrs, apivalidation.ValidateNonnegativeField(int64(*defaultUnreachableTolerationSeconds), fldPath.Child("kubeAPIServer", "defaultUnreachableTolerationSeconds"))...)
+		}
 
 		if kubeAPIServer.Requests != nil {
 			const maxMaxNonMutatingRequestsInflight = 800
@@ -820,7 +862,7 @@ func validateKubernetes(kubernetes core.Kubernetes, dockerConfigured, shootHasDe
 		allErrs = append(allErrs, featuresvalidation.ValidateFeatureGates(kubeAPIServer.FeatureGates, kubernetes.Version, fldPath.Child("kubeAPIServer", "featureGates"))...)
 	}
 
-	allErrs = append(allErrs, validateKubeControllerManager(kubernetes.KubeControllerManager, kubernetes.Version, fldPath.Child("kubeControllerManager"))...)
+	allErrs = append(allErrs, validateKubeControllerManager(kubernetes.KubeControllerManager, networking, kubernetes.Version, fldPath.Child("kubeControllerManager"))...)
 	allErrs = append(allErrs, validateKubeScheduler(kubernetes.KubeScheduler, kubernetes.Version, fldPath.Child("kubeScheduler"))...)
 	allErrs = append(allErrs, validateKubeProxy(kubernetes.KubeProxy, kubernetes.Version, fldPath.Child("kubeProxy"))...)
 	if kubernetes.Kubelet != nil {
@@ -853,11 +895,19 @@ func validateNetworking(networking core.Networking, fldPath *field.Path) field.E
 		allErrs = append(allErrs, field.Required(fldPath.Child("type"), "networking type must be provided"))
 	}
 
+	if errs := ValidateIPFamilies(networking.IPFamilies, fldPath.Child("ipFamilies")); len(errs) > 0 {
+		// further validation doesn't make any sense, because we don't know which IP family to check for in the CIDR fields
+		return append(allErrs, errs...)
+	}
+
+	primaryIPFamily := helper.DeterminePrimaryIPFamily(networking.IPFamilies)
+
 	if networking.Nodes != nil {
 		path := fldPath.Child("nodes")
 		cidr := cidrvalidation.NewCIDR(*networking.Nodes, path)
 
 		allErrs = append(allErrs, cidr.ValidateParse()...)
+		allErrs = append(allErrs, cidr.ValidateIPFamily(string(primaryIPFamily))...)
 		allErrs = append(allErrs, cidrvalidation.ValidateCIDRIsCanonical(path, cidr.GetCIDR())...)
 	}
 
@@ -866,6 +916,7 @@ func validateNetworking(networking core.Networking, fldPath *field.Path) field.E
 		cidr := cidrvalidation.NewCIDR(*networking.Pods, path)
 
 		allErrs = append(allErrs, cidr.ValidateParse()...)
+		allErrs = append(allErrs, cidr.ValidateIPFamily(string(primaryIPFamily))...)
 		allErrs = append(allErrs, cidrvalidation.ValidateCIDRIsCanonical(path, cidr.GetCIDR())...)
 	}
 
@@ -874,6 +925,7 @@ func validateNetworking(networking core.Networking, fldPath *field.Path) field.E
 		cidr := cidrvalidation.NewCIDR(*networking.Services, path)
 
 		allErrs = append(allErrs, cidr.ValidateParse()...)
+		allErrs = append(allErrs, cidr.ValidateIPFamily(string(primaryIPFamily))...)
 		allErrs = append(allErrs, cidrvalidation.ValidateCIDRIsCanonical(path, cidr.GetCIDR())...)
 	}
 
@@ -932,7 +984,7 @@ func ValidateClusterAutoscaler(autoScaler core.ClusterAutoscaler, k8sVersion str
 	}
 
 	if expander := autoScaler.Expander; expander != nil && !availableClusterAutoscalerExpanderModes.Has(string(*expander)) {
-		allErrs = append(allErrs, field.NotSupported(fldPath.Child("expander"), *expander, availableClusterAutoscalerExpanderModes.List()))
+		allErrs = append(allErrs, field.NotSupported(fldPath.Child("expander"), *expander, sets.List(availableClusterAutoscalerExpanderModes)))
 	}
 
 	if ignoreTaints := autoScaler.IgnoreTaints; ignoreTaints != nil {
@@ -994,13 +1046,15 @@ func isPSPDisabled(kubeAPIServerConfig *core.KubeAPIServerConfig) bool {
 	return false
 }
 
-func validateKubeControllerManager(kcm *core.KubeControllerManagerConfig, version string, fldPath *field.Path) field.ErrorList {
+func validateKubeControllerManager(kcm *core.KubeControllerManagerConfig, networking core.Networking, version string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if kcm != nil {
 		if maskSize := kcm.NodeCIDRMaskSize; maskSize != nil {
-			if *maskSize < 16 || *maskSize > 28 {
-				allErrs = append(allErrs, field.Invalid(fldPath.Child("nodeCIDRMaskSize"), *maskSize, "nodeCIDRMaskSize must be between 16 and 28"))
+			if core.IsIPv4SingleStack(networking.IPFamilies) {
+				if *maskSize < 16 || *maskSize > 28 {
+					allErrs = append(allErrs, field.Invalid(fldPath.Child("nodeCIDRMaskSize"), *maskSize, "nodeCIDRMaskSize must be between 16 and 28"))
+				}
 			}
 		}
 
@@ -1044,7 +1098,7 @@ func validateKubeScheduler(ks *core.KubeSchedulerConfig, version string, fldPath
 		profile := ks.Profile
 		if profile != nil {
 			if !availableSchedulingProfiles.Has(string(*profile)) {
-				allErrs = append(allErrs, field.NotSupported(fldPath.Child("profile"), *profile, availableSchedulingProfiles.List()))
+				allErrs = append(allErrs, field.NotSupported(fldPath.Child("profile"), *profile, sets.List(availableSchedulingProfiles)))
 			}
 		}
 
@@ -1060,7 +1114,7 @@ func validateKubeProxy(kp *core.KubeProxyConfig, version string, fldPath *field.
 		if kp.Mode == nil {
 			allErrs = append(allErrs, field.Required(fldPath.Child("mode"), "must be set when .spec.kubernetes.kubeProxy is set"))
 		} else if mode := *kp.Mode; !availableProxyModes.Has(string(mode)) {
-			allErrs = append(allErrs, field.NotSupported(fldPath.Child("mode"), mode, availableProxyModes.List()))
+			allErrs = append(allErrs, field.NotSupported(fldPath.Child("mode"), mode, sets.List(availableProxyModes)))
 		}
 		allErrs = append(allErrs, featuresvalidation.ValidateFeatureGates(kp.FeatureGates, version, fldPath.Child("featureGates"))...)
 	}
@@ -1119,7 +1173,7 @@ func validateMaintenance(maintenance *core.Maintenance, fldPath *field.Path) fie
 	return allErrs
 }
 
-func validateProvider(provider core.Provider, kubernetes core.Kubernetes, fldPath *field.Path, inTemplate bool) field.ErrorList {
+func validateProvider(provider core.Provider, kubernetes core.Kubernetes, networking core.Networking, fldPath *field.Path, inTemplate bool) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if len(provider.Type) == 0 {
@@ -1146,7 +1200,7 @@ func validateProvider(provider core.Provider, kubernetes core.Kubernetes, fldPat
 			// default maxPod setting on kubelet
 			maxPod = 110
 		}
-		allErrs = append(allErrs, ValidateNodeCIDRMaskWithMaxPod(maxPod, *kubernetes.KubeControllerManager.NodeCIDRMaskSize)...)
+		allErrs = append(allErrs, ValidateNodeCIDRMaskWithMaxPod(maxPod, *kubernetes.KubeControllerManager.NodeCIDRMaskSize, networking)...)
 	}
 
 	return allErrs
@@ -1427,17 +1481,26 @@ func validateKubeletConfigReserved(reserved *core.KubeletConfigReserved, fldPath
 	return allErrs
 }
 
+var reservedTaintKeys = sets.NewString(v1beta1constants.TaintNodeCriticalComponentsNotReady)
+
 func validateClusterAutoscalerIgnoreTaints(ignoredTaints []string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	taintKeySet := make(map[string]struct{})
 
-	for index, taint := range ignoredTaints {
+	for i, taint := range ignoredTaints {
+		idxPath := fldPath.Index(i)
+
 		// validate the taint key
-		allErrs = append(allErrs, metav1validation.ValidateLabelName(taint, fldPath.Index(index))...)
+		allErrs = append(allErrs, metav1validation.ValidateLabelName(taint, idxPath)...)
+
+		// deny reserved taint keys
+		if reservedTaintKeys.Has(taint) {
+			allErrs = append(allErrs, field.Forbidden(idxPath, "taint key is reserved by gardener"))
+		}
 
 		// validate if taint key is duplicate
 		if _, ok := taintKeySet[taint]; ok {
-			allErrs = append(allErrs, field.Duplicate(fldPath.Index(index), taint))
+			allErrs = append(allErrs, field.Duplicate(idxPath, taint))
 			continue
 		}
 		taintKeySet[taint] = struct{}{}
@@ -1447,36 +1510,42 @@ func validateClusterAutoscalerIgnoreTaints(ignoredTaints []string, fldPath *fiel
 
 // https://github.com/kubernetes/kubernetes/blob/ee9079f8ec39914ff8975b5390749771b9303ea4/pkg/apis/core/validation/validation.go#L4057-L4089
 func validateTaints(taints []corev1.Taint, fldPath *field.Path) field.ErrorList {
-	allErrors := field.ErrorList{}
+	allErrs := field.ErrorList{}
 
-	uniqueTaints := map[corev1.TaintEffect]sets.String{}
+	uniqueTaints := map[corev1.TaintEffect]sets.Set[string]{}
 
 	for i, taint := range taints {
 		idxPath := fldPath.Index(i)
 		// validate the taint key
-		allErrors = append(allErrors, metav1validation.ValidateLabelName(taint.Key, idxPath.Child("key"))...)
+		allErrs = append(allErrs, metav1validation.ValidateLabelName(taint.Key, idxPath.Child("key"))...)
+
+		// deny reserved taint keys
+		if reservedTaintKeys.Has(taint.Key) {
+			allErrs = append(allErrs, field.Forbidden(idxPath.Child("key"), "taint key is reserved by gardener"))
+		}
+
 		// validate the taint value
 		if errs := validation.IsValidLabelValue(taint.Value); len(errs) != 0 {
-			allErrors = append(allErrors, field.Invalid(idxPath.Child("value"), taint.Value, strings.Join(errs, ";")))
+			allErrs = append(allErrs, field.Invalid(idxPath.Child("value"), taint.Value, strings.Join(errs, ";")))
 		}
 		// validate the taint effect
-		allErrors = append(allErrors, validateTaintEffect(&taint.Effect, false, idxPath.Child("effect"))...)
+		allErrs = append(allErrs, validateTaintEffect(&taint.Effect, false, idxPath.Child("effect"))...)
 
 		// validate if taint is unique by <key, effect>
 		if len(uniqueTaints[taint.Effect]) > 0 && uniqueTaints[taint.Effect].Has(taint.Key) {
 			duplicatedError := field.Duplicate(idxPath, taint)
 			duplicatedError.Detail = "taints must be unique by key and effect pair"
-			allErrors = append(allErrors, duplicatedError)
+			allErrs = append(allErrs, duplicatedError)
 			continue
 		}
 
 		// add taint to existingTaints for uniqueness check
 		if len(uniqueTaints[taint.Effect]) == 0 {
-			uniqueTaints[taint.Effect] = sets.String{}
+			uniqueTaints[taint.Effect] = sets.Set[string]{}
 		}
 		uniqueTaints[taint.Effect].Insert(taint.Key)
 	}
-	return allErrors
+	return allErrs
 }
 
 // https://github.com/kubernetes/kubernetes/blob/ee9079f8ec39914ff8975b5390749771b9303ea4/pkg/apis/core/validation/validation.go#L2774-L2795
@@ -1590,7 +1659,7 @@ func ValidateHibernation(annotations map[string]string, hibernation *core.Hibern
 func ValidateHibernationSchedules(schedules []core.HibernationSchedule, fldPath *field.Path) field.ErrorList {
 	var (
 		allErrs = field.ErrorList{}
-		seen    = sets.NewString()
+		seen    = sets.New[string]()
 	)
 
 	for i, schedule := range schedules {
@@ -1601,7 +1670,7 @@ func ValidateHibernationSchedules(schedules []core.HibernationSchedule, fldPath 
 }
 
 // ValidateHibernationCronSpec validates a cron specification of a hibernation schedule.
-func ValidateHibernationCronSpec(seenSpecs sets.String, spec string, fldPath *field.Path) field.ErrorList {
+func ValidateHibernationCronSpec(seenSpecs sets.Set[string], spec string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	_, err := cron.ParseStandard(spec)
@@ -1630,7 +1699,7 @@ func ValidateHibernationScheduleLocation(location string, fldPath *field.Path) f
 
 // ValidateHibernationSchedule validates the correctness of a HibernationSchedule.
 // It checks whether the set start and end time are valid cron specs.
-func ValidateHibernationSchedule(seenSpecs sets.String, schedule *core.HibernationSchedule, fldPath *field.Path) field.ErrorList {
+func ValidateHibernationSchedule(seenSpecs sets.Set[string], schedule *core.HibernationSchedule, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	if schedule.Start == nil && schedule.End == nil {
@@ -1735,7 +1804,7 @@ func ValidateCRI(CRI *core.CRI, kubernetesVersion string, fldPath *field.Path) f
 	}
 
 	if !availableWorkerCRINames.Has(string(CRI.Name)) {
-		allErrs = append(allErrs, field.NotSupported(fldPath.Child("name"), CRI.Name, availableWorkerCRINames.List()))
+		allErrs = append(allErrs, field.NotSupported(fldPath.Child("name"), CRI.Name, sets.List(availableWorkerCRINames)))
 	}
 
 	if CRI.ContainerRuntimes != nil {
@@ -1795,7 +1864,7 @@ func validateCoreDNS(coreDNS *core.CoreDNS, fldPath *field.Path) field.ErrorList
 	}
 
 	if coreDNS.Autoscaling != nil && !availableCoreDNSAutoscalingModes.Has(string(coreDNS.Autoscaling.Mode)) {
-		allErrs = append(allErrs, field.NotSupported(fldPath.Child("autoscaling").Child("mode"), coreDNS.Autoscaling.Mode, availableCoreDNSAutoscalingModes.List()))
+		allErrs = append(allErrs, field.NotSupported(fldPath.Child("autoscaling").Child("mode"), coreDNS.Autoscaling.Mode, sets.List(availableCoreDNSAutoscalingModes)))
 	}
 	if coreDNS.Rewriting != nil {
 		allErrs = append(allErrs, ValidateCoreDNSRewritingCommonSuffixes(coreDNS.Rewriting.CommonSuffixes, fldPath.Child("rewriting"))...)
@@ -1814,9 +1883,10 @@ func ValidateCoreDNSRewritingCommonSuffixes(commonSuffixes []string, fldPath *fi
 
 	suffixes := map[string]struct{}{}
 	for i, s := range commonSuffixes {
-		if strings.Count(s, ".") < 2 {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("commonSuffixes").Index(i), s, "not enough dots ('.'), at least two dots required"))
+		if strings.Count(s, ".") < 1 || (s[0] == '.' && strings.Count(s, ".") < 2) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("commonSuffixes").Index(i), s, "must contain at least one non-leading dot ('.')"))
 		}
+		s = strings.TrimPrefix(s, ".")
 		if _, found := suffixes[s]; found {
 			allErrs = append(allErrs, field.Duplicate(fldPath.Child("commonSuffixes").Index(i), s))
 		} else {
@@ -1843,7 +1913,7 @@ func validateShootOperation(operation, maintenanceOperation string, shoot *core.
 
 	if operation != "" {
 		if !availableShootOperations.Has(operation) {
-			allErrs = append(allErrs, field.NotSupported(fldPathOp, operation, availableShootOperations.List()))
+			allErrs = append(allErrs, field.NotSupported(fldPathOp, operation, sets.List(availableShootOperations)))
 		}
 		if helper.HibernationIsEnabled(shoot) && forbiddenShootOperationsWhenHibernated.Has(operation) {
 			allErrs = append(allErrs, field.Forbidden(fldPathOp, "operation is not permitted when shoot is hibernated"))
@@ -1852,7 +1922,7 @@ func validateShootOperation(operation, maintenanceOperation string, shoot *core.
 
 	if maintenanceOperation != "" {
 		if !availableShootMaintenanceOperations.Has(maintenanceOperation) {
-			allErrs = append(allErrs, field.NotSupported(fldPathMaintOp, maintenanceOperation, availableShootMaintenanceOperations.List()))
+			allErrs = append(allErrs, field.NotSupported(fldPathMaintOp, maintenanceOperation, sets.List(availableShootMaintenanceOperations)))
 		}
 		if helper.HibernationIsEnabled(shoot) && forbiddenShootOperationsWhenHibernated.Has(maintenanceOperation) {
 			allErrs = append(allErrs, field.Forbidden(fldPathMaintOp, "operation is not permitted when shoot is hibernated"))
@@ -1869,7 +1939,7 @@ func validateShootOperationContext(operation string, shoot *core.Shoot, fldPath 
 	allErrs := field.ErrorList{}
 
 	switch operation {
-	case v1beta1constants.ShootOperationRotateCredentialsStart:
+	case v1beta1constants.OperationRotateCredentialsStart:
 		if !isShootReadyForRotationStart(shoot.Status.LastOperation) {
 			allErrs = append(allErrs, field.Forbidden(fldPath, "cannot start rotation of all credentials if shoot was not yet created successfully or is not ready for reconciliation"))
 		}
@@ -1882,7 +1952,7 @@ func validateShootOperationContext(operation string, shoot *core.Shoot, fldPath 
 		if phase := helper.GetShootETCDEncryptionKeyRotationPhase(shoot.Status.Credentials); len(phase) > 0 && phase != core.RotationCompleted {
 			allErrs = append(allErrs, field.Forbidden(fldPath, "cannot start rotation of all credentials if .status.credentials.rotation.etcdEncryptionKey.phase is not 'Completed'"))
 		}
-	case v1beta1constants.ShootOperationRotateCredentialsComplete:
+	case v1beta1constants.OperationRotateCredentialsComplete:
 		if helper.GetShootCARotationPhase(shoot.Status.Credentials) != core.RotationPrepared {
 			allErrs = append(allErrs, field.Forbidden(fldPath, "cannot complete rotation of all credentials if .status.credentials.rotation.certificateAuthorities.phase is not 'Prepared'"))
 		}
@@ -1893,38 +1963,38 @@ func validateShootOperationContext(operation string, shoot *core.Shoot, fldPath 
 			allErrs = append(allErrs, field.Forbidden(fldPath, "cannot complete rotation of all credentials if .status.credentials.rotation.etcdEncryptionKey.phase is not 'Prepared'"))
 		}
 
-	case v1beta1constants.ShootOperationRotateCAStart:
+	case v1beta1constants.OperationRotateCAStart:
 		if !isShootReadyForRotationStart(shoot.Status.LastOperation) {
 			allErrs = append(allErrs, field.Forbidden(fldPath, "cannot start CA rotation if shoot was not yet created successfully or is not ready for reconciliation"))
 		}
 		if phase := helper.GetShootCARotationPhase(shoot.Status.Credentials); len(phase) > 0 && phase != core.RotationCompleted {
 			allErrs = append(allErrs, field.Forbidden(fldPath, "cannot start CA rotation if .status.credentials.rotation.certificateAuthorities.phase is not 'Completed'"))
 		}
-	case v1beta1constants.ShootOperationRotateCAComplete:
+	case v1beta1constants.OperationRotateCAComplete:
 		if helper.GetShootCARotationPhase(shoot.Status.Credentials) != core.RotationPrepared {
 			allErrs = append(allErrs, field.Forbidden(fldPath, "cannot complete CA rotation if .status.credentials.rotation.certificateAuthorities.phase is not 'Prepared'"))
 		}
 
-	case v1beta1constants.ShootOperationRotateServiceAccountKeyStart:
+	case v1beta1constants.OperationRotateServiceAccountKeyStart:
 		if !isShootReadyForRotationStart(shoot.Status.LastOperation) {
 			allErrs = append(allErrs, field.Forbidden(fldPath, "cannot start service account key rotation if shoot was not yet created successfully or is not ready for reconciliation"))
 		}
 		if phase := helper.GetShootServiceAccountKeyRotationPhase(shoot.Status.Credentials); len(phase) > 0 && phase != core.RotationCompleted {
 			allErrs = append(allErrs, field.Forbidden(fldPath, "cannot start service account key rotation if .status.credentials.rotation.serviceAccountKey.phase is not 'Completed'"))
 		}
-	case v1beta1constants.ShootOperationRotateServiceAccountKeyComplete:
+	case v1beta1constants.OperationRotateServiceAccountKeyComplete:
 		if helper.GetShootServiceAccountKeyRotationPhase(shoot.Status.Credentials) != core.RotationPrepared {
 			allErrs = append(allErrs, field.Forbidden(fldPath, "cannot complete service account key rotation if .status.credentials.rotation.serviceAccountKey.phase is not 'Prepared'"))
 		}
 
-	case v1beta1constants.ShootOperationRotateETCDEncryptionKeyStart:
+	case v1beta1constants.OperationRotateETCDEncryptionKeyStart:
 		if !isShootReadyForRotationStart(shoot.Status.LastOperation) {
 			allErrs = append(allErrs, field.Forbidden(fldPath, "cannot start ETCD encryption key rotation if shoot was not yet created successfully or is not ready for reconciliation"))
 		}
 		if phase := helper.GetShootETCDEncryptionKeyRotationPhase(shoot.Status.Credentials); len(phase) > 0 && phase != core.RotationCompleted {
 			allErrs = append(allErrs, field.Forbidden(fldPath, "cannot start ETCD encryption key rotation if .status.credentials.rotation.etcdEncryptionKey.phase is not 'Completed'"))
 		}
-	case v1beta1constants.ShootOperationRotateETCDEncryptionKeyComplete:
+	case v1beta1constants.OperationRotateETCDEncryptionKeyComplete:
 		if helper.GetShootETCDEncryptionKeyRotationPhase(shoot.Status.Credentials) != core.RotationPrepared {
 			allErrs = append(allErrs, field.Forbidden(fldPath, "cannot complete ETCD encryption key rotation if .status.credentials.rotation.etcdEncryptionKey.phase is not 'Prepared'"))
 		}
@@ -1956,10 +2026,12 @@ func validateHAShootControlPlaneConfigurationValue(shoot *core.Shoot) field.Erro
 
 func validateShootHAControlPlaneSpecUpdate(newSpec, oldSpec *core.ShootSpec, fldPath *field.Path) field.ErrorList {
 	var (
+		allErrs          = field.ErrorList{}
+		shootIsScheduled = newSpec.SeedName != nil
+
 		oldVal, newVal core.FailureToleranceType
 		oldValExists   bool
 	)
-	allErrs := field.ErrorList{}
 
 	if oldSpec.ControlPlane != nil && oldSpec.ControlPlane.HighAvailability != nil {
 		oldVal = oldSpec.ControlPlane.HighAvailability.FailureTolerance.Type
@@ -1970,7 +2042,7 @@ func validateShootHAControlPlaneSpecUpdate(newSpec, oldSpec *core.ShootSpec, fld
 		newVal = newSpec.ControlPlane.HighAvailability.FailureTolerance.Type
 	}
 
-	if oldValExists {
+	if oldValExists && shootIsScheduled {
 		// If the HighAvailability field is already set for the shoot then enforce that it cannot be changed.
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newVal, oldVal, fldPath.Child("highAvailability", "failureTolerance", "type"))...)
 	}

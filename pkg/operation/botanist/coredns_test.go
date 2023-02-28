@@ -20,9 +20,18 @@ import (
 	"net"
 	"time"
 
+	"github.com/golang/mock/gomock"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
-	mockkubernetes "github.com/gardener/gardener/pkg/client/kubernetes/mock"
+	kubernetesmock "github.com/gardener/gardener/pkg/client/kubernetes/mock"
 	"github.com/gardener/gardener/pkg/features"
 	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
 	"github.com/gardener/gardener/pkg/operation"
@@ -32,15 +41,6 @@ import (
 	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
 	"github.com/gardener/gardener/pkg/utils/imagevector"
 	"github.com/gardener/gardener/pkg/utils/test"
-
-	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 var _ = Describe("CoreDNS", func() {
@@ -67,20 +67,21 @@ var _ = Describe("CoreDNS", func() {
 	})
 
 	Describe("#DefaultCoreDNS", func() {
-		var kubernetesClient *mockkubernetes.MockInterface
+		var kubernetesClient *kubernetesmock.MockInterface
 
 		BeforeEach(func() {
-			kubernetesClient = mockkubernetes.NewMockInterface(ctrl)
+			kubernetesClient = kubernetesmock.NewMockInterface(ctrl)
 
 			botanist.SeedClientSet = kubernetesClient
 			botanist.Shoot.Networks = &shootpkg.Networks{
 				CoreDNS: net.ParseIP("18.19.20.21"),
 				Pods:    &net.IPNet{IP: net.ParseIP("22.23.24.25")},
 			}
+			botanist.Garden = &garden.Garden{}
 		})
 
 		It("should successfully create a coredns interface", func() {
-			defer test.WithFeatureGate(gardenletfeatures.FeatureGate, features.APIServerSNI, false)()
+			defer test.WithFeatureGate(gardenletfeatures.FeatureGate, features.APIServerSNI, true)()
 
 			kubernetesClient.EXPECT().Client()
 			botanist.ImageVector = imagevector.ImageVector{{Name: "coredns"}}
@@ -117,7 +118,7 @@ var _ = Describe("CoreDNS", func() {
 			})
 
 			It("should successfully create a coredns interface with cluster-proportional autoscaling enabled", func() {
-				defer test.WithFeatureGate(gardenletfeatures.FeatureGate, features.APIServerSNI, false)()
+				defer test.WithFeatureGate(gardenletfeatures.FeatureGate, features.APIServerSNI, true)()
 
 				kubernetesClient.EXPECT().Client()
 				botanist.ImageVector = imagevector.ImageVector{{Name: "coredns"}, {Name: "cluster-proportional-autoscaler"}}
@@ -130,7 +131,6 @@ var _ = Describe("CoreDNS", func() {
 			It("should return an error because the cluster-proportional autoscaler image cannot be found", func() {
 				botanist.ImageVector = imagevector.ImageVector{{Name: "coredns"}}
 				botanist.APIServerAddress = "coredns-test"
-				botanist.Garden = &garden.Garden{}
 
 				coreDNS, err := botanist.DefaultCoreDNS()
 				Expect(coreDNS).To(BeNil())
@@ -142,7 +142,7 @@ var _ = Describe("CoreDNS", func() {
 	Describe("#DeployCoreDNS", func() {
 		var (
 			coreDNS          *mockcoredns.MockInterface
-			kubernetesClient *mockkubernetes.MockInterface
+			kubernetesClient *kubernetesmock.MockInterface
 			c                client.Client
 
 			ctx     = context.TODO()
@@ -151,7 +151,7 @@ var _ = Describe("CoreDNS", func() {
 
 		BeforeEach(func() {
 			coreDNS = mockcoredns.NewMockInterface(ctrl)
-			kubernetesClient = mockkubernetes.NewMockInterface(ctrl)
+			kubernetesClient = kubernetesmock.NewMockInterface(ctrl)
 			c = fakeclient.NewClientBuilder().WithScheme(kubernetes.SeedScheme).Build()
 
 			botanist.ShootClientSet = kubernetesClient

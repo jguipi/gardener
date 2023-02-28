@@ -20,10 +20,6 @@ import (
 	"sync"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	gardenoperationsv1alpha1 "github.com/gardener/gardener/pkg/apis/operations/v1alpha1"
-	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
-
 	"github.com/go-logr/logr"
 	gonumgraph "gonum.org/v1/gonum/graph"
 	"gonum.org/v1/gonum/graph/simple"
@@ -32,6 +28,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	operationsv1alpha1 "github.com/gardener/gardener/pkg/apis/operations/v1alpha1"
+	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
 )
 
 // Interface is used to track resources dependencies.
@@ -67,11 +67,11 @@ func New(logger logr.Logger, client client.Client) *graph {
 func (g *graph) Setup(ctx context.Context, c cache.Cache) error {
 	for _, resource := range []struct {
 		obj     client.Object
-		setupFn func(context.Context, cache.Informer)
+		setupFn func(context.Context, cache.Informer) error
 	}{
 		{&gardencorev1beta1.BackupBucket{}, g.setupBackupBucketWatch},
 		{&gardencorev1beta1.BackupEntry{}, g.setupBackupEntryWatch},
-		{&gardenoperationsv1alpha1.Bastion{}, g.setupBastionWatch},
+		{&operationsv1alpha1.Bastion{}, g.setupBastionWatch},
 		{&certificatesv1.CertificateSigningRequest{}, g.setupCertificateSigningRequestWatch},
 		{&gardencorev1beta1.ControllerInstallation{}, g.setupControllerInstallationWatch},
 		{&seedmanagementv1alpha1.ManagedSeed{}, g.setupManagedSeedWatch},
@@ -85,7 +85,9 @@ func (g *graph) Setup(ctx context.Context, c cache.Cache) error {
 		if err != nil {
 			return err
 		}
-		resource.setupFn(ctx, informer)
+		if err := resource.setupFn(ctx, informer); err != nil {
+			return err
+		}
 	}
 
 	return nil

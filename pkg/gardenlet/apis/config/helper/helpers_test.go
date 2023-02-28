@@ -17,15 +17,15 @@ package helper_test
 import (
 	"time"
 
-	gardencore "github.com/gardener/gardener/pkg/apis/core"
-	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	. "github.com/gardener/gardener/pkg/gardenlet/apis/config/helper"
-	configv1alpha1 "github.com/gardener/gardener/pkg/gardenlet/apis/config/v1alpha1"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/pointer"
+
+	gardencore "github.com/gardener/gardener/pkg/apis/core"
+	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
+	. "github.com/gardener/gardener/pkg/gardenlet/apis/config/helper"
+	gardenletv1alpha1 "github.com/gardener/gardener/pkg/gardenlet/apis/config/v1alpha1"
 )
 
 var _ = Describe("helper", func() {
@@ -95,9 +95,9 @@ var _ = Describe("helper", func() {
 
 	Describe("#ConvertGardenletConfiguration", func() {
 		It("should convert the external GardenletConfiguration version to an internal one", func() {
-			result, err := ConvertGardenletConfiguration(&configv1alpha1.GardenletConfiguration{
+			result, err := ConvertGardenletConfiguration(&gardenletv1alpha1.GardenletConfiguration{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: configv1alpha1.SchemeGroupVersion.String(),
+					APIVersion: gardenletv1alpha1.SchemeGroupVersion.String(),
 					Kind:       "GardenletConfiguration",
 				},
 			})
@@ -112,9 +112,9 @@ var _ = Describe("helper", func() {
 			result, err := ConvertGardenletConfigurationExternal(&config.GardenletConfiguration{})
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal(&configv1alpha1.GardenletConfiguration{
+			Expect(result).To(Equal(&gardenletv1alpha1.GardenletConfiguration{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: configv1alpha1.SchemeGroupVersion.String(),
+					APIVersion: gardenletv1alpha1.SchemeGroupVersion.String(),
 					Kind:       "GardenletConfiguration",
 				},
 			}))
@@ -294,6 +294,49 @@ var _ = Describe("helper", func() {
 			}
 
 			Expect(IsEventLoggingEnabled(gardenletConfig)).To(BeTrue())
+		})
+	})
+
+	Describe("#GetManagedResourceProgressingThreshold", func() {
+		It("should return nil the GardenletConfiguration is nil", func() {
+			Expect(GetManagedResourceProgressingThreshold(nil)).To(BeNil())
+		})
+
+		It("should return nil when GardenletConfiguration is empty", func() {
+			gardenletConfig := &config.GardenletConfiguration{}
+
+			Expect(GetManagedResourceProgressingThreshold(gardenletConfig)).To(BeNil())
+		})
+
+		It("should return nil when Controller configuration is empty", func() {
+			gardenletConfig := &config.GardenletConfiguration{
+				Controllers: &config.GardenletControllerConfiguration{},
+			}
+
+			Expect(GetManagedResourceProgressingThreshold(gardenletConfig)).To(BeNil())
+		})
+
+		It("should return nil when Shoot Care configuration is empty", func() {
+			gardenletConfig := &config.GardenletConfiguration{
+				Controllers: &config.GardenletControllerConfiguration{
+					ShootCare: &config.ShootCareControllerConfiguration{},
+				},
+			}
+
+			Expect(GetManagedResourceProgressingThreshold(gardenletConfig)).To(BeNil())
+		})
+
+		It("should return non nil value when ManagedResourceProgressingThreshold value is set", func() {
+			threshold := &metav1.Duration{Duration: time.Minute}
+			gardenletConfig := &config.GardenletConfiguration{
+				Controllers: &config.GardenletControllerConfiguration{
+					ShootCare: &config.ShootCareControllerConfiguration{
+						ManagedResourceProgressingThreshold: threshold,
+					},
+				},
+			}
+
+			Expect(GetManagedResourceProgressingThreshold(gardenletConfig)).To(Equal(threshold))
 		})
 	})
 })

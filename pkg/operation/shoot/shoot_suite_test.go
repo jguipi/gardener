@@ -15,13 +15,13 @@
 package shoot_test
 
 import (
+	"testing"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"testing"
 )
 
-func TestCommon(t *testing.T) {
+func TestShoot(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Shoot Suite")
+	RunSpecs(t, "Operation Shoot Suite")
 }

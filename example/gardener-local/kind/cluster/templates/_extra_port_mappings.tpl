@@ -7,8 +7,9 @@
 
 {{- define "extraPortMappings.gardener.seed.istio" -}}
 {{- if .Values.gardener.seed.deployed -}}
-- containerPort: 30443
-{{- if or (eq .Values.environment "local") .Values.gardener.controlPlane.deployed }}
+{{- range $i, $listenAddress := (required ".Values.gardener.seed.istio.listenAddresses is required" .Values.gardener.seed.istio.listenAddresses) }}
+- containerPort: {{ add 30443 $i }}
+{{- if or (eq $.Values.environment "local") $.Values.gardener.controlPlane.deployed }}
   hostPort: 443
 {{- else }}
   # TODO (plkokanov): when using skaffold to deploy, 127.0.0.2 is not used as listenAddress (unlike the local
@@ -16,9 +17,15 @@
   #  way currently to swap the dns record of the shoot's `kube-apiserver` once it is migrated to this seed.
   hostPort: 9443
 {{- end }}
-{{- if eq .Values.environment "local" }}
-  listenAddress: {{ .Values.gardener.seed.istio.listenAddress }}
+  listenAddress: {{ $listenAddress }}
 {{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "extraPortMappings.gardener.operator.virtualGarden" -}}
+{{- if .Values.gardener.garden.deployed -}}
+- containerPort: 31443
+  hostPort: 443
 {{- end -}}
 {{- end -}}
 
@@ -33,5 +40,13 @@
 {{- if .Values.registry.deployed -}}
 - containerPort: 5001
   hostPort: 5001
+{{- end -}}
+{{- end -}}
+
+{{- define "extraPortMappings.gardener.seed.dns" -}}
+{{- if .Values.gardener.controlPlane.deployed -}}
+- containerPort: 30053
+  hostPort: 5353
+  protocol: TCP
 {{- end -}}
 {{- end -}}

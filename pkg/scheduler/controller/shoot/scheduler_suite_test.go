@@ -17,14 +17,14 @@ package shoot
 import (
 	"testing"
 
-	gardenerschedulerfeatures "github.com/gardener/gardener/pkg/scheduler/features"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	schedulerfeatures "github.com/gardener/gardener/pkg/scheduler/features"
 )
 
-func TestScheduler(t *testing.T) {
-	gardenerschedulerfeatures.RegisterFeatureGates()
+func TestShoot(t *testing.T) {
+	schedulerfeatures.RegisterFeatureGates()
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Shoot Scheduler Test Suite")
+	RunSpecs(t, "Scheduler Controller Shoot Suite")
 }

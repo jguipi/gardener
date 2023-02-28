@@ -17,6 +17,7 @@ package controller
 import (
 	"fmt"
 
+	"github.com/Masterminds/semver"
 	"k8s.io/apimachinery/pkg/util/wait"
 	kubernetesclientset "k8s.io/client-go/kubernetes"
 	"k8s.io/utils/clock"
@@ -29,11 +30,12 @@ import (
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/health"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/managedresource"
-	"github.com/gardener/gardener/pkg/resourcemanager/controller/rootcapublisher"
+	"github.com/gardener/gardener/pkg/resourcemanager/controller/networkpolicy"
+	"github.com/gardener/gardener/pkg/resourcemanager/controller/node"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/secret"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/tokeninvalidator"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/tokenrequestor"
-	managerpredicate "github.com/gardener/gardener/pkg/resourcemanager/predicate"
+	resourcemanagerpredicate "github.com/gardener/gardener/pkg/resourcemanager/predicate"
 )
 
 // AddToManager adds all controllers to the given manager.
@@ -44,6 +46,11 @@ func AddToManager(mgr manager.Manager, sourceCluster, targetCluster cluster.Clus
 	}
 
 	targetServerVersion, err := targetClientSet.Discovery().ServerVersion()
+	if err != nil {
+		return err
+	}
+
+	targetKubernetesVersion, err := semver.NewVersion(targetServerVersion.GitVersion)
 	if err != nil {
 		return err
 	}
@@ -67,7 +74,7 @@ func AddToManager(mgr manager.Manager, sourceCluster, targetCluster cluster.Clus
 		if err := (&garbagecollector.Reconciler{
 			Config:                  cfg.Controllers.GarbageCollector,
 			Clock:                   clock.RealClock{},
-			TargetKubernetesVersion: targetServerVersion.GitVersion,
+			TargetKubernetesVersion: targetKubernetesVersion,
 		}).AddToManager(mgr, targetCluster); err != nil {
 			return fmt.Errorf("failed adding garbage collector controller: %w", err)
 		}
@@ -79,24 +86,24 @@ func AddToManager(mgr manager.Manager, sourceCluster, targetCluster cluster.Clus
 
 	if err := (&managedresource.Reconciler{
 		Config:                    cfg.Controllers.ManagedResource,
-		ClassFilter:               managerpredicate.NewClassFilter(*cfg.Controllers.ResourceClass),
+		ClassFilter:               resourcemanagerpredicate.NewClassFilter(*cfg.Controllers.ResourceClass),
 		ClusterID:                 *cfg.Controllers.ClusterID,
 		GarbageCollectorActivated: cfg.Controllers.GarbageCollector.Enabled,
 	}).AddToManager(mgr, sourceCluster, targetCluster); err != nil {
 		return fmt.Errorf("failed adding managed resource controller: %w", err)
 	}
 
-	if cfg.Controllers.RootCAPublisher.Enabled {
-		if err := (&rootcapublisher.Reconciler{
-			Config: cfg.Controllers.RootCAPublisher,
+	if cfg.Controllers.NetworkPolicy.Enabled {
+		if err := (&networkpolicy.Reconciler{
+			Config: cfg.Controllers.NetworkPolicy,
 		}).AddToManager(mgr, targetCluster); err != nil {
-			return fmt.Errorf("failed adding root CA publisher controller: %w", err)
+			return fmt.Errorf("failed adding networkpolicy controller: %w", err)
 		}
 	}
 
 	if err := (&secret.Reconciler{
 		Config:      cfg.Controllers.Secret,
-		ClassFilter: managerpredicate.NewClassFilter(*cfg.Controllers.ResourceClass),
+		ClassFilter: resourcemanagerpredicate.NewClassFilter(*cfg.Controllers.ResourceClass),
 	}).AddToManager(mgr, sourceCluster); err != nil {
 		return fmt.Errorf("failed adding secret controller: %w", err)
 	}
@@ -116,6 +123,14 @@ func AddToManager(mgr manager.Manager, sourceCluster, targetCluster cluster.Clus
 			JitterFunc: wait.Jitter,
 		}).AddToManager(mgr, sourceCluster, targetCluster); err != nil {
 			return fmt.Errorf("failed adding token requestor controller: %w", err)
+		}
+	}
+
+	if cfg.Controllers.Node.Enabled {
+		if err := (&node.Reconciler{
+			Config: cfg.Controllers.Node,
+		}).AddToManager(mgr, targetCluster); err != nil {
+			return fmt.Errorf("failed adding node controller: %w", err)
 		}
 	}
 

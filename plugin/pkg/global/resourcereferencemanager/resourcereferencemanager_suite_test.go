@@ -15,13 +15,13 @@
 package resourcereferencemanager_test
 
 import (
+	"testing"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"testing"
 )
 
-func TestResourcereferencemanager(t *testing.T) {
+func TestResourceReferenceManager(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Admission ResourceReferenceManager Suite")
+	RunSpecs(t, "AdmissionPlugin Global ResourceReferenceManager Suite")
 }

@@ -15,15 +15,15 @@
 package validation_test
 
 import (
-	"github.com/gardener/gardener/pkg/apis/core"
-	. "github.com/gardener/gardener/pkg/apis/core/validation"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/pointer"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	. "github.com/gardener/gardener/pkg/apis/core/validation"
 )
 
 var _ = Describe("ExposureClass Validation Tests ", func() {
@@ -64,14 +64,20 @@ var _ = Describe("ExposureClass Validation Tests ", func() {
 			}))))
 		})
 
-		It("should fail as exposure class handler contains more than 41 characters", func() {
-			exposureClass.Handler = "izqissuczonxfeq346ce5exr9rhkcmb398tlloo2tb"
+		It("should fail as exposure class handler contains more than 34 characters", func() {
+			exposureClass.Handler = "izqissuczonxfeq346ce5exr9rhkcmb398t"
 			errorList := ValidateExposureClass(exposureClass)
 
 			Expect(errorList).To(ConsistOf(PointTo(MatchFields(IgnoreExtras, Fields{
 				"Type":  Equal(field.ErrorTypeInvalid),
 				"Field": Equal("handler"),
 			}))))
+		})
+
+		It("should pass as exposure class handler contains less than 34 characters", func() {
+			exposureClass.Handler = "izqissuczonxfeq346ce5exr9rhkcmb398"
+			errorList := ValidateExposureClass(exposureClass)
+			Expect(errorList).To(HaveLen(0))
 		})
 
 		It("should fail as exposure class has an invalid seed selector", func() {

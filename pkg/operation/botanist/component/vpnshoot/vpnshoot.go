@@ -21,25 +21,12 @@ import (
 	"strings"
 	"time"
 
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
-	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/pkg/utils/managedresources"
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-	"github.com/gardener/gardener/pkg/utils/version"
-	policyv1 "k8s.io/api/policy/v1"
-
 	"github.com/Masterminds/semver"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	policyv1beta1 "k8s.io/api/policy/v1beta1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -49,14 +36,23 @@ import (
 	vpaautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
+	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/managedresources"
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
+	"github.com/gardener/gardener/pkg/utils/version"
 )
 
 const (
 	// LabelValue is used as value for LabeApp.
 	LabelValue = "vpn-shoot"
-
-	servicePort   int32 = 4314
-	containerPort int32 = 1194
 
 	managedResourceName = "shoot-core-vpn-shoot"
 	deploymentName      = "vpn-shoot"
@@ -64,48 +60,29 @@ const (
 	initContainerName   = "vpn-shoot-init"
 	serviceName         = "vpn-shoot"
 
-	secretNameDH = "vpn-shoot-dh"
-
 	volumeName          = "vpn-shoot"
 	volumeNameTLSAuth   = "vpn-shoot-tlsauth"
-	volumeNameDH        = "vpn-shoot-dh"
 	volumeNameDevNetTun = "dev-net-tun"
 
-	volumeMountPathSecretShoot = "/srv/secrets/vpn-shoot"
-	volumeMountPathSecret      = "/srv/secrets/vpn-client"
-	volumeMountPathSecretTLS   = "/srv/secrets/tlsauth"
-	volumeMountPathSecretDH    = "/srv/secrets/dh"
-	volumeMountPathDevNetTun   = "/dev/net/tun"
+	volumeMountPathSecret    = "/srv/secrets/vpn-client"
+	volumeMountPathSecretTLS = "/srv/secrets/tlsauth"
+	volumeMountPathDevNetTun = "/dev/net/tun"
 )
 
 // Interface contains functions for a VPNShoot Deployer
 type Interface interface {
 	component.DeployWaiter
 	component.MonitoringComponent
-	// SetSecrets sets the secrets.
-	SetSecrets(Secrets)
 }
 
 // ReversedVPNValues contains the configuration values for the ReversedVPN.
 type ReversedVPNValues struct {
-	// Enabled marks whether ReversedVPN is enabled for the shoot
-	Enabled bool
 	// Header is the header for the ReversedVPN.
 	Header string
 	// Endpoint is the endpoint for the ReversedVPN.
 	Endpoint string
 	// OpenVPNPort is the port for the ReversedVPN.
 	OpenVPNPort int32
-}
-
-// NetworkValues contains the configuration values for the network.
-type NetworkValues struct {
-	// PodCIDR is the CIDR of the pod network.
-	PodCIDR string
-	// ServiceCIDR is the CIDR of the service network.
-	ServiceCIDR string
-	// NodeCIDR is the CIDR of the node network.
-	NodeCIDR string
 }
 
 // Values is a set of configuration values for the VPNShoot component.
@@ -118,8 +95,6 @@ type Values struct {
 	VPAEnabled bool
 	// ReversedVPN contains the configuration values for the ReversedVPN.
 	ReversedVPN ReversedVPNValues
-	// Network contains the configuration values for the network.
-	Network NetworkValues
 	// HighAvailabilityEnabled marks whether HA is enabled for VPN.
 	HighAvailabilityEnabled bool
 	// HighAvailabilityNumberOfSeedServers is the number of VPN seed servers used for HA
@@ -164,24 +139,14 @@ type vpnSecret struct {
 
 func (v *vpnShoot) Deploy(ctx context.Context) error {
 	var (
-		config = &secretutils.CertificateSecretConfig{
+		config = &secretsutils.CertificateSecretConfig{
 			Name:                        "vpn-shoot-client",
 			CommonName:                  "vpn-shoot-client",
-			CertType:                    secretutils.ClientCert,
+			CertType:                    secretsutils.ClientCert,
 			SkipPublishingCACertificate: true,
 		}
 		signingCA = v1beta1constants.SecretNameCAVPN
 	)
-
-	if !v.values.ReversedVPN.Enabled {
-		config = &secretutils.CertificateSecretConfig{
-			Name:                        "vpn-shoot-server",
-			CommonName:                  "vpn-shoot-server",
-			CertType:                    secretutils.ServerCert,
-			SkipPublishingCACertificate: true,
-		}
-		signingCA = v1beta1constants.SecretNameCAClient
-	}
 
 	secretCA, found := v.secretsManager.Get(signingCA)
 	if !found {
@@ -194,14 +159,11 @@ func (v *vpnShoot) Deploy(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		mountPath := volumeMountPathSecret
-		if !v.values.ReversedVPN.Enabled {
-			mountPath = volumeMountPathSecretShoot
-		}
+
 		secrets = append(secrets, vpnSecret{
 			name:       config.Name,
 			volumeName: volumeName,
-			mountPath:  mountPath,
+			mountPath:  volumeMountPathSecret,
 			secret:     secret,
 		})
 	} else {
@@ -253,21 +215,13 @@ func (v *vpnShoot) WaitCleanup(ctx context.Context) error {
 
 func (v *vpnShoot) computeResourcesData(secretCAVPN *corev1.Secret, secretsVPNShoot []vpnSecret) (map[string][]byte, error) {
 	var (
-		secretNameTLSAuth string
-
 		secretVPNSeedServerTLSAuth *corev1.Secret
 		found                      bool
 	)
 
-	if v.values.ReversedVPN.Enabled {
-		secretNameTLSAuth = vpnseedserver.SecretNameTLSAuth
-	} else {
-		secretNameTLSAuth = kubeapiserver.SecretNameVPNSeedTLSAuth
-	}
-
-	secretVPNSeedServerTLSAuth, found = v.secretsManager.Get(secretNameTLSAuth)
+	secretVPNSeedServerTLSAuth, found = v.secretsManager.Get(vpnseedserver.SecretNameTLSAuth)
 	if !found {
-		return nil, fmt.Errorf("secret %q not found", secretNameTLSAuth)
+		return nil, fmt.Errorf("secret %q not found", vpnseedserver.SecretNameTLSAuth)
 	}
 
 	var (
@@ -295,8 +249,8 @@ func (v *vpnShoot) computeResourcesData(secretCAVPN *corev1.Secret, secretsVPNSh
 		clusterRoleBinding *rbacv1.ClusterRoleBinding
 	)
 
-	utilruntime.Must(kutil.MakeUnique(secretCA))
-	utilruntime.Must(kutil.MakeUnique(secretTLSAuth))
+	utilruntime.Must(kubernetesutils.MakeUnique(secretCA))
+	utilruntime.Must(kubernetesutils.MakeUnique(secretTLSAuth))
 
 	for i, item := range secretsVPNShoot {
 		secret := &corev1.Secret{
@@ -307,70 +261,8 @@ func (v *vpnShoot) computeResourcesData(secretCAVPN *corev1.Secret, secretsVPNSh
 			Type: corev1.SecretTypeOpaque,
 			Data: item.secret.Data,
 		}
-		utilruntime.Must(kutil.MakeUnique(secret))
+		utilruntime.Must(kubernetesutils.MakeUnique(secret))
 		secretsVPNShoot[i].secret = secret
-	}
-
-	if !v.values.ReversedVPN.Enabled {
-		secretDH = &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      secretNameDH,
-				Namespace: metav1.NamespaceSystem,
-			},
-			Type: corev1.SecretTypeOpaque,
-			Data: v.secrets.DH.Data,
-		}
-		utilruntime.Must(kutil.MakeUnique(secretDH))
-
-		service = &corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      serviceName,
-				Namespace: metav1.NamespaceSystem,
-				Labels:    getLabels(),
-			},
-			Spec: corev1.ServiceSpec{
-				Selector: getLabels(),
-				Type:     corev1.ServiceTypeLoadBalancer,
-				Ports: []corev1.ServicePort{
-					{
-						Name:       "openvpn",
-						Port:       servicePort,
-						TargetPort: intstr.FromInt(int(containerPort)),
-						Protocol:   corev1.ProtocolTCP,
-					},
-				},
-			},
-		}
-		clusterRole = &rbacv1.ClusterRole{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "system:gardener.cloud:vpn-seed",
-			},
-			Rules: []rbacv1.PolicyRule{
-				{
-					APIGroups:     []string{""},
-					Resources:     []string{"services"},
-					ResourceNames: []string{service.Name},
-					Verbs:         []string{"get"},
-				},
-			},
-		}
-		clusterRoleBinding = &rbacv1.ClusterRoleBinding{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:        "system:gardener.cloud:vpn-seed",
-				Annotations: map[string]string{resourcesv1alpha1.DeleteOnInvalidUpdate: "true"},
-			},
-			RoleRef: rbacv1.RoleRef{
-				APIGroup: rbacv1.GroupName,
-				Kind:     "ClusterRole",
-				Name:     clusterRole.Name,
-			},
-			Subjects: []rbacv1.Subject{
-				{
-					Kind: rbacv1.UserKind,
-					Name: kubeapiserver.UserNameVPNSeed,
-				},
-			},
-		}
 	}
 
 	var (
@@ -390,7 +282,8 @@ func (v *vpnShoot) computeResourcesData(secretCAVPN *corev1.Secret, secretsVPNSh
 				Name:      "gardener.cloud--allow-vpn",
 				Namespace: metav1.NamespaceSystem,
 				Annotations: map[string]string{
-					v1beta1constants.GardenerDescription: "Allows the VPN to communicate with shoot components and makes the VPN reachable from the seed.",
+					v1beta1constants.GardenerDescription: "Allows the VPN to communicate with shoot components and makes " +
+						"the VPN reachable from the seed.",
 				},
 			},
 			Spec: networkingv1.NetworkPolicySpec{
@@ -405,15 +298,38 @@ func (v *vpnShoot) computeResourcesData(secretCAVPN *corev1.Secret, secretsVPNSh
 		podSecurityPolicy *policyv1beta1.PodSecurityPolicy
 		clusterRolePSP    *rbacv1.ClusterRole
 		roleBindingPSP    *rbacv1.RoleBinding
+
+		labels = map[string]string{
+			v1beta1constants.GardenRole:     v1beta1constants.GardenRoleSystemComponent,
+			v1beta1constants.LabelApp:       LabelValue,
+			managedresources.LabelKeyOrigin: managedresources.LabelValueGardener,
+		}
+		template = v.podTemplate(serviceAccount, secretsVPNShoot, secretCA, secretTLSAuth, secretDH)
+
+		networkPolicyFromSeed = &networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "gardener.cloud--allow-from-seed",
+				Namespace: metav1.NamespaceSystem,
+				Annotations: map[string]string{
+					v1beta1constants.GardenerDescription: fmt.Sprintf("Allows Ingress from the control plane to "+
+						"pods labeled with '%s=%s'.", v1beta1constants.LabelNetworkPolicyShootFromSeed, v1beta1constants.LabelNetworkPolicyAllowed),
+				},
+			},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{v1beta1constants.LabelNetworkPolicyShootFromSeed: v1beta1constants.LabelNetworkPolicyAllowed}},
+				Ingress: []networkingv1.NetworkPolicyIngressRule{{
+					From: []networkingv1.NetworkPolicyPeer{{
+						PodSelector: &metav1.LabelSelector{
+							MatchLabels: template.Labels,
+						},
+					}},
+				}},
+				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			},
+		}
+		deploymentOrStatefulSet client.Object
 	)
 
-	labels := map[string]string{
-		v1beta1constants.GardenRole:     v1beta1constants.GardenRoleSystemComponent,
-		v1beta1constants.LabelApp:       LabelValue,
-		managedresources.LabelKeyOrigin: managedresources.LabelValueGardener,
-	}
-	template := v.podTemplate(serviceAccount, secretsVPNShoot, secretCA, secretTLSAuth, secretDH)
-	var deploymentOrStatefulSet client.Object
 	if !v.values.HighAvailabilityEnabled {
 		deploymentOrStatefulSet = v.deployment(labels, template)
 	} else {
@@ -505,7 +421,7 @@ func (v *vpnShoot) computeResourcesData(secretCAVPN *corev1.Secret, secretsVPNSh
 			kind = "StatefulSet"
 		}
 		containerNames := []string{containerName}
-		if v.values.ReversedVPN.Enabled && v.values.HighAvailabilityEnabled {
+		if v.values.HighAvailabilityEnabled {
 			containerNames = nil
 			for i := 0; i < v.values.HighAvailabilityNumberOfSeedServers; i++ {
 				containerNames = append(containerNames, fmt.Sprintf("%s-s%d", containerName, i))
@@ -516,7 +432,6 @@ func (v *vpnShoot) computeResourcesData(secretCAVPN *corev1.Secret, secretsVPNSh
 			containerPolicies = append(containerPolicies, vpaautoscalingv1.ContainerResourcePolicy{
 				ContainerName: name,
 				MinAllowed: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("100m"),
 					corev1.ResourceMemory: resource.MustParse("10Mi"),
 				},
 				ControlledValues: &controlledValues,
@@ -543,10 +458,11 @@ func (v *vpnShoot) computeResourcesData(secretCAVPN *corev1.Secret, secretsVPNSh
 		}
 	}
 
-	objects := []client.Object{}
+	var objects []client.Object
 	for _, item := range secretsVPNShoot {
 		objects = append(objects, item.secret)
 	}
+
 	if v.values.HighAvailabilityEnabled {
 		pdb, err := v.podDisruptionBudget()
 		if err != nil {
@@ -554,12 +470,14 @@ func (v *vpnShoot) computeResourcesData(secretCAVPN *corev1.Secret, secretsVPNSh
 		}
 		objects = append(objects, pdb)
 	}
+
 	objects = append(objects,
 		secretCA,
 		secretTLSAuth,
 		secretDH,
 		serviceAccount,
 		networkPolicy,
+		networkPolicyFromSeed,
 		deploymentOrStatefulSet,
 		clusterRole,
 		clusterRoleBinding,
@@ -569,6 +487,7 @@ func (v *vpnShoot) computeResourcesData(secretCAVPN *corev1.Secret, secretsVPNSh
 		clusterRolePSP,
 		roleBindingPSP,
 	)
+
 	return registry.AddAllAndSerialize(objects...)
 }
 
@@ -616,16 +535,11 @@ func (v *vpnShoot) podTemplate(serviceAccount *corev1.ServiceAccount, secrets []
 			ServiceAccountName:           serviceAccount.Name,
 			PriorityClassName:            "system-cluster-critical",
 			DNSPolicy:                    corev1.DNSDefault,
-			NodeSelector:                 map[string]string{v1beta1constants.LabelWorkerPoolSystemComponents: "true"},
 			SecurityContext: &corev1.PodSecurityContext{
 				SeccompProfile: &corev1.SeccompProfile{
 					Type: corev1.SeccompProfileTypeRuntimeDefault,
 				},
 			},
-			Tolerations: []corev1.Toleration{{
-				Key:      "CriticalAddonsOnly",
-				Operator: corev1.TolerationOpExists,
-			}},
 			InitContainers: v.getInitContainers(),
 			Volumes:        v.getVolumes(secrets, secretCA, secretTLSAuth, secretDH),
 		},
@@ -653,7 +567,7 @@ func (v *vpnShoot) container(secrets []vpnSecret, index *int) *corev1.Container 
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Env:             v.getEnvVars(index),
 		SecurityContext: &corev1.SecurityContext{
-			Privileged: pointer.Bool(!v.values.ReversedVPN.Enabled),
+			Privileged: pointer.Bool(false),
 			Capabilities: &corev1.Capabilities{
 				Add: []corev1.Capability{"NET_ADMIN"},
 			},
@@ -746,45 +660,28 @@ func (v *vpnShoot) indexedReversedHeader(index *int) string {
 
 func (v *vpnShoot) getEnvVars(index *int) []corev1.EnvVar {
 	var envVariables []corev1.EnvVar
-	if v.values.ReversedVPN.Enabled {
-		envVariables = append(envVariables,
-			corev1.EnvVar{
-				Name:  "ENDPOINT",
-				Value: v.values.ReversedVPN.Endpoint,
-			},
-			corev1.EnvVar{
-				Name:  "OPENVPN_PORT",
-				Value: strconv.Itoa(int(v.values.ReversedVPN.OpenVPNPort)),
-			},
-			corev1.EnvVar{
-				Name:  "REVERSED_VPN_HEADER",
-				Value: v.indexedReversedHeader(index),
-			},
-			corev1.EnvVar{
-				Name:  "DO_NOT_CONFIGURE_KERNEL_SETTINGS",
-				Value: "true",
-			},
-			corev1.EnvVar{
-				Name:  "IS_SHOOT_CLIENT",
-				Value: "true",
-			},
-		)
-	} else {
-		envVariables = append(envVariables, []corev1.EnvVar{
-			{
-				Name:  "SERVICE_NETWORK",
-				Value: v.values.Network.ServiceCIDR,
-			},
-			{
-				Name:  "POD_NETWORK",
-				Value: v.values.Network.PodCIDR,
-			},
-			{
-				Name:  "NODE_NETWORK",
-				Value: v.values.Network.NodeCIDR,
-			},
-		}...)
-	}
+	envVariables = append(envVariables,
+		corev1.EnvVar{
+			Name:  "ENDPOINT",
+			Value: v.values.ReversedVPN.Endpoint,
+		},
+		corev1.EnvVar{
+			Name:  "OPENVPN_PORT",
+			Value: strconv.Itoa(int(v.values.ReversedVPN.OpenVPNPort)),
+		},
+		corev1.EnvVar{
+			Name:  "REVERSED_VPN_HEADER",
+			Value: v.indexedReversedHeader(index),
+		},
+		corev1.EnvVar{
+			Name:  "DO_NOT_CONFIGURE_KERNEL_SETTINGS",
+			Value: "true",
+		},
+		corev1.EnvVar{
+			Name:  "IS_SHOOT_CLIENT",
+			Value: "true",
+		},
+	)
 
 	if index != nil {
 		envVariables = append(envVariables,
@@ -830,17 +727,12 @@ func (v *vpnShoot) getVolumeMounts(secrets []vpnSecret) []corev1.VolumeMount {
 		Name:      volumeNameTLSAuth,
 		MountPath: volumeMountPathSecretTLS,
 	})
-	if !v.values.ReversedVPN.Enabled {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      volumeNameDH,
-			MountPath: volumeMountPathSecretDH,
-		})
-	} else {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      volumeNameDevNetTun,
-			MountPath: volumeMountPathDevNetTun,
-		})
-	}
+
+	volumeMounts = append(volumeMounts, corev1.VolumeMount{
+		Name:      volumeNameDevNetTun,
+		MountPath: volumeMountPathDevNetTun,
+	})
+
 	return volumeMounts
 }
 
@@ -859,7 +751,7 @@ func (v *vpnShoot) getVolumes(secret []vpnSecret, secretCA, secretTLSAuth, secre
 									Name: secretCA.Name,
 								},
 								Items: []corev1.KeyToPath{{
-									Key:  secretutils.DataKeyCertificateBundle,
+									Key:  secretsutils.DataKeyCertificateBundle,
 									Path: "ca.crt",
 								}},
 							},
@@ -871,12 +763,12 @@ func (v *vpnShoot) getVolumes(secret []vpnSecret, secretCA, secretTLSAuth, secre
 								},
 								Items: []corev1.KeyToPath{
 									{
-										Key:  secretutils.DataKeyCertificate,
-										Path: secretutils.DataKeyCertificate,
+										Key:  secretsutils.DataKeyCertificate,
+										Path: secretsutils.DataKeyCertificate,
 									},
 									{
-										Key:  secretutils.DataKeyPrivateKey,
-										Path: secretutils.DataKeyPrivateKey,
+										Key:  secretsutils.DataKeyPrivateKey,
+										Path: secretsutils.DataKeyPrivateKey,
 									},
 								},
 							},
@@ -895,35 +787,20 @@ func (v *vpnShoot) getVolumes(secret []vpnSecret, secretCA, secretTLSAuth, secre
 			},
 		},
 	})
-	if !v.values.ReversedVPN.Enabled {
-		volumes = append(volumes, corev1.Volume{
-			Name: volumeNameDH,
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName:  secretDH.Name,
-					DefaultMode: pointer.Int32(0400),
-				},
+	hostPathCharDev := corev1.HostPathCharDev
+	volumes = append(volumes, corev1.Volume{
+		Name: volumeNameDevNetTun,
+		VolumeSource: corev1.VolumeSource{
+			HostPath: &corev1.HostPathVolumeSource{
+				Path: volumeMountPathDevNetTun,
+				Type: &hostPathCharDev,
 			},
-		})
-	} else {
-		hostPathCharDev := corev1.HostPathCharDev
-		volumes = append(volumes, corev1.Volume{
-			Name: volumeNameDevNetTun,
-			VolumeSource: corev1.VolumeSource{
-				HostPath: &corev1.HostPathVolumeSource{
-					Path: volumeMountPathDevNetTun,
-					Type: &hostPathCharDev,
-				},
-			},
-		})
-	}
+		},
+	})
 	return volumes
 }
 
 func (v *vpnShoot) getInitContainers() []corev1.Container {
-	if !v.values.ReversedVPN.Enabled {
-		return []corev1.Container{}
-	}
 	container := corev1.Container{
 		Name:            initContainerName,
 		Image:           v.values.Image,

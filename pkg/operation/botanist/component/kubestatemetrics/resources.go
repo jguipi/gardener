@@ -17,16 +17,10 @@ package kubestatemetrics
 import (
 	"fmt"
 
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,9 +28,17 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	vpaautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	"k8s.io/utils/pointer"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	kubeapiserverconstants "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/constants"
+	"github.com/gardener/gardener/pkg/utils"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
-func (k *kubeStateMetrics) getResourceConfigs(genericTokenKubeconfigSecretName string, shootAccessSecret *gutil.ShootAccessSecret) component.ResourceConfigs {
+func (k *kubeStateMetrics) getResourceConfigs(genericTokenKubeconfigSecretName string, shootAccessSecret *gardenerutils.ShootAccessSecret) component.ResourceConfigs {
 	var (
 		clusterRole        = k.emptyClusterRole()
 		clusterRoleBinding = k.emptyClusterRoleBinding()
@@ -82,8 +84,8 @@ func (k *kubeStateMetrics) reconcileServiceAccount(serviceAccount *corev1.Servic
 	serviceAccount.AutomountServiceAccountToken = pointer.Bool(false)
 }
 
-func (k *kubeStateMetrics) newShootAccessSecret() *gutil.ShootAccessSecret {
-	return gutil.NewShootAccessSecret(v1beta1constants.DeploymentNameKubeStateMetrics, k.namespace)
+func (k *kubeStateMetrics) newShootAccessSecret() *gardenerutils.ShootAccessSecret {
+	return gardenerutils.NewShootAccessSecret(v1beta1constants.DeploymentNameKubeStateMetrics, k.namespace)
 }
 
 func (k *kubeStateMetrics) emptyClusterRole() *rbacv1.ClusterRole {
@@ -158,9 +160,17 @@ func (k *kubeStateMetrics) emptyService() *corev1.Service {
 
 func (k *kubeStateMetrics) reconcileService(service *corev1.Service) {
 	service.Labels = k.getLabels()
+
+	if k.values.ClusterType == component.ClusterTypeShoot {
+		utilruntime.Must(gardenerutils.InjectNetworkPolicyAnnotationsForScrapeTargets(service, networkingv1.NetworkPolicyPort{
+			Port:     utils.IntStrPtrFromInt(port),
+			Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+		}))
+	}
+
 	service.Spec.Type = corev1.ServiceTypeClusterIP
 	service.Spec.Selector = k.getLabels()
-	service.Spec.Ports = kutil.ReconcileServicePorts(service.Spec.Ports, []corev1.ServicePort{
+	service.Spec.Ports = kubernetesutils.ReconcileServicePorts(service.Spec.Ports, []corev1.ServicePort{
 		{
 			Name:       "metrics",
 			Port:       80,
@@ -178,15 +188,14 @@ func (k *kubeStateMetrics) reconcileDeployment(
 	deployment *appsv1.Deployment,
 	serviceAccount *corev1.ServiceAccount,
 	genericTokenKubeconfigSecretName string,
-	shootAccessSecret *gutil.ShootAccessSecret,
+	shootAccessSecret *gardenerutils.ShootAccessSecret,
 ) {
 	var (
 		maxUnavailable = intstr.FromInt(1)
 
 		deploymentLabels = k.getLabels()
 		podLabels        = map[string]string{
-			v1beta1constants.LabelNetworkPolicyToDNS:          v1beta1constants.LabelNetworkPolicyAllowed,
-			v1beta1constants.LabelNetworkPolicyFromPrometheus: v1beta1constants.LabelNetworkPolicyAllowed,
+			v1beta1constants.LabelNetworkPolicyToDNS: v1beta1constants.LabelNetworkPolicyAllowed,
 		}
 		args = []string{
 			fmt.Sprintf("--port=%d", port),
@@ -197,7 +206,7 @@ func (k *kubeStateMetrics) reconcileDeployment(
 	if k.values.ClusterType == component.ClusterTypeSeed {
 		deploymentLabels[v1beta1constants.LabelRole] = v1beta1constants.LabelMonitoring
 		podLabels = utils.MergeStringMaps(podLabels, deploymentLabels, map[string]string{
-			v1beta1constants.LabelNetworkPolicyToSeedAPIServer: v1beta1constants.LabelNetworkPolicyAllowed,
+			v1beta1constants.LabelNetworkPolicyToRuntimeAPIServer: v1beta1constants.LabelNetworkPolicyAllowed,
 		})
 		args = append(args,
 			"--resources=deployments,pods,statefulsets,nodes,verticalpodautoscalers,horizontalpodautoscalers,persistentvolumeclaims,replicasets,namespaces",
@@ -211,12 +220,12 @@ func (k *kubeStateMetrics) reconcileDeployment(
 		priorityClassName = v1beta1constants.PriorityClassNameShootControlPlane100
 		deploymentLabels[v1beta1constants.GardenRole] = v1beta1constants.LabelMonitoring
 		podLabels = utils.MergeStringMaps(podLabels, deploymentLabels, map[string]string{
-			v1beta1constants.LabelNetworkPolicyToShootAPIServer: v1beta1constants.LabelNetworkPolicyAllowed,
+			gardenerutils.NetworkPolicyLabel(v1beta1constants.DeploymentNameKubeAPIServer, kubeapiserverconstants.Port): v1beta1constants.LabelNetworkPolicyAllowed,
 		})
 		args = append(args,
 			"--resources=daemonsets,deployments,nodes,pods,statefulsets,verticalpodautoscalers,replicasets",
 			"--namespaces="+metav1.NamespaceSystem,
-			"--kubeconfig="+gutil.PathGenericKubeconfig,
+			"--kubeconfig="+gardenerutils.PathGenericKubeconfig,
 			"--metric-labels-allowlist=nodes=[*]",
 		)
 	}
@@ -285,7 +294,7 @@ func (k *kubeStateMetrics) reconcileDeployment(
 	}
 	if k.values.ClusterType == component.ClusterTypeShoot {
 		deployment.Spec.Template.Spec.AutomountServiceAccountToken = pointer.Bool(false)
-		utilruntime.Must(gutil.InjectGenericKubeconfig(deployment, genericTokenKubeconfigSecretName, shootAccessSecret.Secret.Name))
+		utilruntime.Must(gardenerutils.InjectGenericKubeconfig(deployment, genericTokenKubeconfigSecretName, shootAccessSecret.Secret.Name))
 	}
 }
 
@@ -312,7 +321,6 @@ func (k *kubeStateMetrics) reconcileVerticalPodAutoscaler(vpa *vpaautoscalingv1.
 					ContainerName:    "*",
 					ControlledValues: &controlledValues,
 					MinAllowed: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("10m"),
 						corev1.ResourceMemory: resource.MustParse("32Mi"),
 					},
 				},

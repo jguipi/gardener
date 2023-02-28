@@ -42,7 +42,7 @@ import (
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
 	"github.com/gardener/gardener/pkg/utils"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	"github.com/gardener/gardener/pkg/utils/managedresources"
 	"github.com/gardener/gardener/pkg/utils/version"
 )
@@ -136,7 +136,7 @@ func (b *bootstrapper) Deploy(ctx context.Context) error {
 		},
 		Data: map[string]string{configFileName: config},
 	}
-	utilruntime.Must(kutil.MakeUnique(configMap))
+	utilruntime.Must(kubernetesutils.MakeUnique(configMap))
 
 	var (
 		registry = managedresources.NewRegistry(kubernetes.SeedScheme, kubernetes.SeedCodec, kubernetes.SeedSerializer)
@@ -282,7 +282,6 @@ func (b *bootstrapper) Deploy(ctx context.Context) error {
 					ContainerPolicies: []vpaautoscalingv1.ContainerResourcePolicy{{
 						ContainerName: vpaautoscalingv1.DefaultContainerResourcePolicy,
 						MinAllowed: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("25m"),
 							corev1.ResourceMemory: resource.MustParse(vpaMinAllowedMemory),
 						},
 					}},
@@ -435,14 +434,14 @@ func (b *bootstrapper) podLabels() map[string]string {
 	switch b.values.Role {
 	case RoleEndpoint:
 		return utils.MergeStringMaps(b.getLabels(), map[string]string{
-			v1beta1constants.LabelNetworkPolicyToDNS:           v1beta1constants.LabelNetworkPolicyAllowed,
-			v1beta1constants.LabelNetworkPolicyToSeedAPIServer: v1beta1constants.LabelNetworkPolicyAllowed,
+			v1beta1constants.LabelNetworkPolicyToDNS:              v1beta1constants.LabelNetworkPolicyAllowed,
+			v1beta1constants.LabelNetworkPolicyToRuntimeAPIServer: v1beta1constants.LabelNetworkPolicyAllowed,
 		})
 
 	case RoleProbe:
 		return utils.MergeStringMaps(b.getLabels(), map[string]string{
 			v1beta1constants.LabelNetworkPolicyToDNS:                v1beta1constants.LabelNetworkPolicyAllowed,
-			v1beta1constants.LabelNetworkPolicyToSeedAPIServer:      v1beta1constants.LabelNetworkPolicyAllowed,
+			v1beta1constants.LabelNetworkPolicyToRuntimeAPIServer:   v1beta1constants.LabelNetworkPolicyAllowed,
 			v1beta1constants.LabelNetworkPolicyToAllShootAPIServers: v1beta1constants.LabelNetworkPolicyAllowed,
 			v1beta1constants.LabelNetworkPolicyToPublicNetworks:     v1beta1constants.LabelNetworkPolicyAllowed,
 			v1beta1constants.LabelNetworkPolicyToPrivateNetworks:    v1beta1constants.LabelNetworkPolicyAllowed,

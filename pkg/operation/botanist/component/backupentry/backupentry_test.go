@@ -18,16 +18,6 @@ import (
 	"context"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/features"
-	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
-	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
-	. "github.com/gardener/gardener/pkg/operation/botanist/component/backupentry"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
@@ -37,6 +27,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/features"
+	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
+	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
+	. "github.com/gardener/gardener/pkg/operation/botanist/component/backupentry"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("BackupEntry", func() {
@@ -274,7 +274,7 @@ var _ = Describe("BackupEntry", func() {
 
 			Expect(c.Create(ctx, expected)).To(Succeed(), "migrating BackupEntry succeeds")
 			Expect(defaultDepWaiter.WaitMigrate(ctx)).To(HaveOccurred())
-			Expect(c.Get(ctx, kutil.Key(expected.Namespace, expected.Name), migrated)).To(Succeed())
+			Expect(c.Get(ctx, kubernetesutils.Key(expected.Namespace, expected.Name), migrated)).To(Succeed())
 			Expect(migrated.Status.LastOperation).To(Equal(expected.Status.LastOperation))
 		})
 
@@ -332,7 +332,7 @@ var _ = Describe("BackupEntry", func() {
 
 			Expect(c.Create(ctx, expected)).To(Succeed())
 			Expect(defaultDepWaiter.SetForceDeletionAnnotation(ctx)).To(Succeed())
-			Expect(c.Get(ctx, kutil.Key(modified.Namespace, modified.Name), modified)).To(Succeed())
+			Expect(c.Get(ctx, kubernetesutils.Key(modified.Namespace, modified.Name), modified)).To(Succeed())
 			Expect(modified.Annotations["backupentry.core.gardener.cloud/force-deletion"]).To(Equal("true"))
 		})
 	})

@@ -20,11 +20,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	// imported test specs
 	_ "github.com/gardener/gardener/test/e2e/operator/garden"
 )
 
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "E2E Operator Test Suite")
+	RunSpecs(t, "Test E2E Operator Suite")
 }

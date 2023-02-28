@@ -17,11 +17,11 @@ package vpnshoot_test
 import (
 	"testing"
 
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
-	"github.com/gardener/gardener/pkg/utils/test"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
+	"github.com/gardener/gardener/pkg/utils/test"
 )
 
 func TestVPNShoot(t *testing.T) {
@@ -30,5 +30,5 @@ func TestVPNShoot(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	DeferCleanup(test.WithVar(&secretutils.GenerateKey, secretutils.FakeGenerateKey))
+	DeferCleanup(test.WithVar(&secretsutils.GenerateKey, secretsutils.FakeGenerateKey))
 })

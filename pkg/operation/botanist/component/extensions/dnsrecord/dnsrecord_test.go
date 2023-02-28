@@ -19,20 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/extensions"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/dnsrecord"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	"github.com/gardener/gardener/pkg/utils/retry"
-	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
@@ -45,6 +31,19 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/extensions"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/dnsrecord"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/retry"
+	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 const (
@@ -149,7 +148,7 @@ var _ = Describe("DNSRecord", func() {
 			&retry.UntilTimeout, fakeOps.UntilTimeout,
 			&dnsrecord.TimeNow, mockNow.Do,
 			&extensions.TimeNow, mockNow.Do,
-			&gutil.TimeNow, mockNow.Do,
+			&gardenerutils.TimeNow, mockNow.Do,
 		)
 	})
 
@@ -201,18 +200,18 @@ var _ = Describe("DNSRecord", func() {
 		})
 
 		It("should deploy the DNSRecord with operation annotation if it exists with desired spec and AnnotateOperation==true", func() {
-			By("create existing DNSRecord")
+			By("Create existing DNSRecord")
 			existingDNS := dns.DeepCopy()
 			delete(existingDNS.Annotations, v1beta1constants.GardenerOperation)
 			metav1.SetMetaDataAnnotation(&existingDNS.ObjectMeta, v1beta1constants.GardenerTimestamp, now.UTC().Add(-time.Second).String())
 			Expect(c.Create(ctx, existingDNS)).To(Succeed())
 
-			By("deploy DNSRecord again")
+			By("Deploy DNSRecord again")
 			values.AnnotateOperation = true
 			dnsRecord = dnsrecord.New(log, c, values, dnsrecord.DefaultInterval, dnsrecord.DefaultSevereThreshold, dnsrecord.DefaultTimeout)
 			Expect(dnsRecord.Deploy(ctx)).To(Succeed())
 
-			By("verifying DNSRecord")
+			By("Verify DNSRecord")
 			deployedDNS := &extensionsv1alpha1.DNSRecord{}
 			err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, deployedDNS)
 			Expect(err).NotTo(HaveOccurred())
@@ -235,12 +234,12 @@ var _ = Describe("DNSRecord", func() {
 		})
 
 		It("should deploy the DNSRecord with operation annotation if it doesn't exist yet", func() {
-			By("deploy DNSRecord")
+			By("Deploy DNSRecord")
 			values.AnnotateOperation = false
 			dnsRecord = dnsrecord.New(log, c, values, dnsrecord.DefaultInterval, dnsrecord.DefaultSevereThreshold, dnsrecord.DefaultTimeout)
 			Expect(dnsRecord.Deploy(ctx)).To(Succeed())
 
-			By("verifying DNSRecord")
+			By("Verify DNSRecord")
 			deployedDNS := &extensionsv1alpha1.DNSRecord{}
 			err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, deployedDNS)
 			Expect(err).NotTo(HaveOccurred())
@@ -280,18 +279,18 @@ var _ = Describe("DNSRecord", func() {
 		})
 
 		It("should deploy the DNSRecord without operation annotation if it exists with desired spec", func() {
-			By("create existing DNSRecord")
+			By("Create existing DNSRecord")
 			existingDNS := dns.DeepCopy()
 			delete(existingDNS.Annotations, v1beta1constants.GardenerOperation)
 			metav1.SetMetaDataAnnotation(&existingDNS.ObjectMeta, v1beta1constants.GardenerTimestamp, now.UTC().Add(-time.Second).String())
 			Expect(c.Create(ctx, existingDNS)).To(Succeed())
 
-			By("deploy DNSRecord again")
+			By("Deploy DNSRecord again")
 			values.AnnotateOperation = false
 			dnsRecord = dnsrecord.New(log, c, values, dnsrecord.DefaultInterval, dnsrecord.DefaultSevereThreshold, dnsrecord.DefaultTimeout)
 			Expect(dnsRecord.Deploy(ctx)).To(Succeed())
 
-			By("verifying DNSRecord")
+			By("Verify DNSRecord")
 			deployedDNS := &extensionsv1alpha1.DNSRecord{}
 			err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, deployedDNS)
 			Expect(err).NotTo(HaveOccurred())
@@ -314,18 +313,18 @@ var _ = Describe("DNSRecord", func() {
 		})
 
 		It("should deploy the DNSRecord with operation annotation if spec changed", func() {
-			By("create existing DNSRecord")
+			By("Create existing DNSRecord")
 			existingDNS := dns.DeepCopy()
 			delete(existingDNS.Annotations, v1beta1constants.GardenerOperation)
 			metav1.SetMetaDataAnnotation(&existingDNS.ObjectMeta, v1beta1constants.GardenerTimestamp, now.UTC().Add(-time.Second).String())
 			Expect(c.Create(ctx, existingDNS)).To(Succeed())
 
-			By("deploy DNSRecord again with changed values")
+			By("Deploy DNSRecord again with changed values")
 			values.AnnotateOperation = false
 			values.Values = []string{address, "8.8.8.8", "1.1.1.1"}
 			Expect(dnsRecord.Deploy(ctx)).To(Succeed())
 
-			By("verifying DNSRecord")
+			By("Verify DNSRecord")
 			deployedDNS := &extensionsv1alpha1.DNSRecord{}
 			err := c.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, deployedDNS)
 			Expect(err).NotTo(HaveOccurred())
@@ -611,13 +610,13 @@ var _ = Describe("DNSRecord", func() {
 	Describe("#Restore", func() {
 		var (
 			state      = &runtime.RawExtension{Raw: []byte(`{"dummy":"state"}`)}
-			shootState *gardencorev1alpha1.ShootState
+			shootState *gardencorev1beta1.ShootState
 		)
 
 		BeforeEach(func() {
-			shootState = &gardencorev1alpha1.ShootState{
-				Spec: gardencorev1alpha1.ShootStateSpec{
-					Extensions: []gardencorev1alpha1.ExtensionResourceState{
+			shootState = &gardencorev1beta1.ShootState{
+				Spec: gardencorev1beta1.ShootStateSpec{
+					Extensions: []gardencorev1beta1.ExtensionResourceState{
 						{
 							Kind:  extensionsv1alpha1.DNSRecordResource,
 							Name:  pointer.String(name),
@@ -630,7 +629,9 @@ var _ = Describe("DNSRecord", func() {
 
 		It("should properly restore the DNSRecord resource state", func() {
 			mc := mockclient.NewMockClient(ctrl)
-			mc.EXPECT().Status().Return(mc)
+			mockStatusWriter := mockclient.NewMockStatusWriter(ctrl)
+
+			mc.EXPECT().Status().Return(mockStatusWriter)
 
 			mc.EXPECT().Get(ctx, client.ObjectKeyFromObject(secret), gomock.AssignableToTypeOf(&corev1.Secret{})).
 				Return(apierrors.NewNotFound(corev1.Resource("secrets"), name))
@@ -652,7 +653,7 @@ var _ = Describe("DNSRecord", func() {
 			// Restore state
 			dnsWithState := dns.DeepCopy()
 			dnsWithState.Status.State = state
-			test.EXPECTPatch(ctx, mc, dnsWithState, dns, types.MergePatchType)
+			test.EXPECTStatusPatch(ctx, mockStatusWriter, dnsWithState, dns, types.MergePatchType)
 
 			// Annotate with restore annotation
 			dnsWithRestore := dnsWithState.DeepCopy()

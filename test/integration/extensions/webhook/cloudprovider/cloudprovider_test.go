@@ -15,15 +15,14 @@
 package cloudprovider_test
 
 import (
-	"k8s.io/apimachinery/pkg/types"
-
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 )
 
 var _ = Describe("CloudProvider tests", func() {
@@ -45,13 +44,13 @@ var _ = Describe("CloudProvider tests", func() {
 		}
 
 		DeferCleanup(func() {
-			By("deleting Secret")
+			By("Delete Secret")
 			Expect(client.IgnoreNotFound(testClient.Delete(ctx, secret))).To(Succeed())
 		})
 	})
 
 	JustBeforeEach(func() {
-		By("create Secret")
+		By("Create Secret")
 		Expect(testClient.Create(ctx, secret)).To(Succeed())
 	})
 
@@ -61,7 +60,7 @@ var _ = Describe("CloudProvider tests", func() {
 		})
 
 		It("should not mutate the secret", func() {
-			By("patch Secret to invoke webhook")
+			By("Patch Secret to invoke webhook")
 			Consistently(func(g Gomega) map[string][]byte {
 				g.Expect(testClient.Patch(ctx, secret, client.RawPatch(types.MergePatchType, []byte("{}")))).To(Succeed())
 				return secret.Data
@@ -71,7 +70,7 @@ var _ = Describe("CloudProvider tests", func() {
 
 	Context("secret name is cloudprovider", func() {
 		It("should not mutate the secret because matching labels are not present", func() {
-			By("patch Secret to invoke webhook")
+			By("Patch Secret to invoke webhook")
 			Consistently(func(g Gomega) map[string][]byte {
 				g.Expect(testClient.Patch(ctx, secret, client.RawPatch(types.MergePatchType, []byte("{}")))).To(Succeed())
 				return secret.Data
@@ -86,7 +85,7 @@ var _ = Describe("CloudProvider tests", func() {
 			})
 
 			It("should mutate the secret because matching labels are present", func() {
-				By("patch Secret to invoke webhook")
+				By("Patch Secret to invoke webhook")
 				Consistently(func(g Gomega) map[string][]byte {
 					g.Expect(testClient.Patch(ctx, secret, client.RawPatch(types.MergePatchType, []byte("{}")))).To(Succeed())
 					return secret.Data

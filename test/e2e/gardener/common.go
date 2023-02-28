@@ -17,13 +17,13 @@ package gardener
 import (
 	"os"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/test/framework"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/pointer"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/test/framework"
 )
 
 // DefaultGardenConfig returns a GardenerConfig framework object with default values for the e2e tests.
@@ -74,7 +74,7 @@ func DefaultShoot(name string) *gardencorev1beta1.Shoot {
 			SecretBindingName: "local",
 			CloudProfileName:  "local",
 			Kubernetes: gardencorev1beta1.Kubernetes{
-				Version:                     "1.25.4",
+				Version:                     "1.26.0",
 				EnableStaticTokenKubeconfig: pointer.Bool(true),
 				Kubelet: &gardencorev1beta1.KubeletConfig{
 					SerializeImagePulls: pointer.Bool(false),
@@ -96,6 +96,9 @@ func DefaultShoot(name string) *gardencorev1beta1.Shoot {
 					},
 					CRI: &gardencorev1beta1.CRI{
 						Name: gardencorev1beta1.CRINameContainerD,
+					},
+					Labels: map[string]string{
+						"foo": "bar",
 					},
 					Minimum: 1,
 					Maximum: 1,

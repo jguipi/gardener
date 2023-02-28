@@ -18,15 +18,15 @@ import (
 	"context"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 )
 
-func (g *graph) setupSecretBindingWatch(_ context.Context, informer cache.Informer) {
-	informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+func (g *graph) setupSecretBindingWatch(_ context.Context, informer cache.Informer) error {
+	_, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			secretBinding, ok := obj.(*gardencorev1beta1.SecretBinding)
 			if !ok {
@@ -62,6 +62,7 @@ func (g *graph) setupSecretBindingWatch(_ context.Context, informer cache.Inform
 			g.handleSecretBindingDelete(secretBinding)
 		},
 	})
+	return err
 }
 
 func (g *graph) handleSecretBindingCreateOrUpdate(secretBinding *gardencorev1beta1.SecretBinding) {

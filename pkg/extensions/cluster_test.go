@@ -17,19 +17,18 @@ package extensions_test
 import (
 	"context"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	. "github.com/gardener/gardener/pkg/extensions"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	. "github.com/gardener/gardener/pkg/extensions"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("Cluster", func() {
@@ -66,7 +65,7 @@ var _ = Describe("Cluster", func() {
 	Describe("#GetShootStateForCluster", func() {
 		var (
 			expectedShoot      *gardencorev1beta1.Shoot
-			expectedShootState *gardencorev1alpha1.ShootState
+			expectedShootState *gardencorev1beta1.ShootState
 
 			clusterName string
 			cluster     *extensionsv1alpha1.Cluster
@@ -83,9 +82,9 @@ var _ = Describe("Cluster", func() {
 					Namespace: "garden-bar",
 				},
 			}
-			expectedShootState = &gardencorev1alpha1.ShootState{
+			expectedShootState = &gardencorev1beta1.ShootState{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: "core.gardener.cloud/v1alpha1",
+					APIVersion: "core.gardener.cloud/v1beta1",
 					Kind:       "ShootState",
 				},
 				ObjectMeta: metav1.ObjectMeta{

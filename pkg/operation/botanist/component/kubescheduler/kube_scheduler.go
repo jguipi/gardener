@@ -24,6 +24,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	policyv1beta1 "k8s.io/api/policy/v1beta1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -41,10 +42,11 @@ import (
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/controllerutils"
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	kubeapiserverconstants "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/constants"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
 	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	"github.com/gardener/gardener/pkg/utils/managedresources"
 	"github.com/gardener/gardener/pkg/utils/secrets"
 	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
@@ -80,7 +82,7 @@ const (
 	componentConfigTmpl = `apiVersion: {{ .apiVersion }}
 kind: KubeSchedulerConfiguration
 clientConnection:
-  kubeconfig: ` + gutil.PathGenericKubeconfig + `
+  kubeconfig: ` + gardenerutils.PathGenericKubeconfig + `
 leaderElection:
   leaderElect: true
 {{- if eq .profile "bin-packing" }}
@@ -95,7 +97,7 @@ profiles:
       - name: NodeResourcesBalancedAllocation
       enabled:
       - name: NodeResourcesMostAllocated
-{{- else if or (eq .apiVersion "kubescheduler.config.k8s.io/v1beta2") (eq .apiVersion "kubescheduler.config.k8s.io/v1beta3") }}
+{{- else if or (eq .apiVersion "kubescheduler.config.k8s.io/v1beta2") (eq .apiVersion "kubescheduler.config.k8s.io/v1beta3") (eq .apiVersion "kubescheduler.config.k8s.io/v1") }}
 - schedulerName: ` + BinPackingSchedulerName + `
   pluginConfig:
   - name: NodeResourcesFit
@@ -155,7 +157,7 @@ func (k *kubeScheduler) Deploy(ctx context.Context) error {
 	serverSecret, err := k.secretsManager.Generate(ctx, &secrets.CertificateSecretConfig{
 		Name:                        secretNameServer,
 		CommonName:                  v1beta1constants.DeploymentNameKubeScheduler,
-		DNSNames:                    kutil.DNSNamesForService(serviceName, k.namespace),
+		DNSNames:                    kubernetesutils.DNSNamesForService(serviceName, k.namespace),
 		CertType:                    secrets.ServerCert,
 		SkipPublishingCACertificate: true,
 	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCACluster), secretsmanager.Rotate(secretsmanager.InPlace))
@@ -185,7 +187,7 @@ func (k *kubeScheduler) Deploy(ctx context.Context) error {
 		},
 		Data: map[string]string{dataKeyComponentConfig: componentConfigYAML},
 	}
-	utilruntime.Must(kutil.MakeUnique(configMap))
+	utilruntime.Must(kubernetesutils.MakeUnique(configMap))
 
 	var (
 		vpa                 = k.emptyVPA()
@@ -209,16 +211,21 @@ func (k *kubeScheduler) Deploy(ctx context.Context) error {
 
 	if _, err := controllerutils.GetAndCreateOrMergePatch(ctx, k.client, service, func() error {
 		service.Labels = getLabels()
+
+		utilruntime.Must(gardenerutils.InjectNetworkPolicyAnnotationsForScrapeTargets(service, networkingv1.NetworkPolicyPort{
+			Port:     utils.IntStrPtrFromInt(int(port)),
+			Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+		}))
+
 		service.Spec.Selector = getLabels()
 		service.Spec.Type = corev1.ServiceTypeClusterIP
-		desiredPorts := []corev1.ServicePort{
-			{
-				Name:     portNameMetrics,
-				Protocol: corev1.ProtocolTCP,
-				Port:     port,
-			},
-		}
-		service.Spec.Ports = kutil.ReconcileServicePorts(service.Spec.Ports, desiredPorts, corev1.ServiceTypeClusterIP)
+		desiredPorts := []corev1.ServicePort{{
+			Name:     portNameMetrics,
+			Protocol: corev1.ProtocolTCP,
+			Port:     port,
+		}}
+		service.Spec.Ports = kubernetesutils.ReconcileServicePorts(service.Spec.Ports, desiredPorts, corev1.ServiceTypeClusterIP)
+
 		return nil
 	}); err != nil {
 		return err
@@ -239,11 +246,10 @@ func (k *kubeScheduler) Deploy(ctx context.Context) error {
 		deployment.Spec.Template = corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{
 				Labels: utils.MergeStringMaps(getLabels(), map[string]string{
-					v1beta1constants.GardenRole:                         v1beta1constants.GardenRoleControlPlane,
-					v1beta1constants.LabelPodMaintenanceRestart:         "true",
-					v1beta1constants.LabelNetworkPolicyToDNS:            v1beta1constants.LabelNetworkPolicyAllowed,
-					v1beta1constants.LabelNetworkPolicyToShootAPIServer: v1beta1constants.LabelNetworkPolicyAllowed,
-					v1beta1constants.LabelNetworkPolicyFromPrometheus:   v1beta1constants.LabelNetworkPolicyAllowed,
+					v1beta1constants.GardenRole:                 v1beta1constants.GardenRoleControlPlane,
+					v1beta1constants.LabelPodMaintenanceRestart: "true",
+					v1beta1constants.LabelNetworkPolicyToDNS:    v1beta1constants.LabelNetworkPolicyAllowed,
+					gardenerutils.NetworkPolicyLabel(v1beta1constants.DeploymentNameKubeAPIServer, kubeapiserverconstants.Port): v1beta1constants.LabelNetworkPolicyAllowed,
 				}),
 			},
 			Spec: corev1.PodSpec{
@@ -343,7 +349,7 @@ func (k *kubeScheduler) Deploy(ctx context.Context) error {
 			},
 		}
 
-		utilruntime.Must(gutil.InjectGenericKubeconfig(deployment, genericTokenKubeconfigSecret.Name, shootAccessSecret.Secret.Name))
+		utilruntime.Must(gardenerutils.InjectGenericKubeconfig(deployment, genericTokenKubeconfigSecret.Name, shootAccessSecret.Secret.Name))
 		utilruntime.Must(references.InjectAnnotations(deployment))
 		return nil
 	}); err != nil {
@@ -384,7 +390,6 @@ func (k *kubeScheduler) Deploy(ctx context.Context) error {
 				{
 					ContainerName: vpaautoscalingv1.DefaultContainerResourcePolicy,
 					MinAllowed: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("20m"),
 						corev1.ResourceMemory: resource.MustParse("50Mi"),
 					},
 					MaxAllowed: corev1.ResourceList{
@@ -435,8 +440,8 @@ func (k *kubeScheduler) emptyDeployment() *appsv1.Deployment {
 	return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: v1beta1constants.DeploymentNameKubeScheduler, Namespace: k.namespace}}
 }
 
-func (k *kubeScheduler) newShootAccessSecret() *gutil.ShootAccessSecret {
-	return gutil.NewShootAccessSecret(v1beta1constants.DeploymentNameKubeScheduler, k.namespace)
+func (k *kubeScheduler) newShootAccessSecret() *gardenerutils.ShootAccessSecret {
+	return gardenerutils.NewShootAccessSecret(v1beta1constants.DeploymentNameKubeScheduler, k.namespace)
 }
 
 func (k *kubeScheduler) reconcileShootResources(ctx context.Context, serviceAccountName string) error {
@@ -530,8 +535,8 @@ func (k *kubeScheduler) computeCommand(port int32) []string {
 	command = append(command,
 		"/usr/local/bin/kube-scheduler",
 		fmt.Sprintf("--config=%s/%s", volumeMountPathConfig, dataKeyComponentConfig),
-		"--authentication-kubeconfig="+gutil.PathGenericKubeconfig,
-		"--authorization-kubeconfig="+gutil.PathGenericKubeconfig,
+		"--authentication-kubeconfig="+gardenerutils.PathGenericKubeconfig,
+		"--authorization-kubeconfig="+gardenerutils.PathGenericKubeconfig,
 		fmt.Sprintf("--client-ca-file=%s/%s", volumeMountPathClientCA, fileNameClientCA),
 		fmt.Sprintf("--tls-cert-file=%s/%s", volumeMountPathServer, secrets.DataKeyCertificate),
 		fmt.Sprintf("--tls-private-key-file=%s/%s", volumeMountPathServer, secrets.DataKeyPrivateKey),
@@ -543,7 +548,7 @@ func (k *kubeScheduler) computeCommand(port int32) []string {
 	}
 
 	if k.config != nil {
-		command = append(command, kutil.FeatureGatesToCommandLineParameter(k.config.FeatureGates))
+		command = append(command, kubernetesutils.FeatureGatesToCommandLineParameter(k.config.FeatureGates))
 	}
 
 	command = append(command, "--v=2")

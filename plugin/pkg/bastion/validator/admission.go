@@ -20,18 +20,18 @@ import (
 	"fmt"
 	"io"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/apis/operations"
-	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
-	coreclientset "github.com/gardener/gardener/pkg/client/core/clientset/internalversion"
-	"github.com/gardener/gardener/pkg/utils/kubernetes"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/admission"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/apis/operations"
+	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
+	gardencoreclientset "github.com/gardener/gardener/pkg/client/core/clientset/internalversion"
+	"github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 const (
@@ -49,7 +49,7 @@ func Register(plugins *admission.Plugins) {
 // Bastion contains listers and and admission handler.
 type Bastion struct {
 	*admission.Handler
-	coreClient coreclientset.Interface
+	coreClient gardencoreclientset.Interface
 	readyFunc  admission.ReadyFunc
 }
 
@@ -73,7 +73,7 @@ func (v *Bastion) AssignReadyFunc(f admission.ReadyFunc) {
 }
 
 // SetInternalCoreClientset sets the garden core clientset.
-func (v *Bastion) SetInternalCoreClientset(c coreclientset.Interface) {
+func (v *Bastion) SetInternalCoreClientset(c gardencoreclientset.Interface) {
 	v.coreClient = c
 }
 
@@ -150,6 +150,12 @@ func (v *Bastion) Admit(ctx context.Context, a admission.Attributes, o admission
 	// ensure shoot is already assigned to a seed
 	if shoot.Spec.SeedName == nil || len(*shoot.Spec.SeedName) == 0 {
 		fieldErr := field.Invalid(shootPath, shootName, "shoot is not yet assigned to a seed")
+		return apierrors.NewInvalid(gk, bastion.Name, field.ErrorList{fieldErr})
+	}
+
+	// ensure shoot SSH access is not disabled
+	if shoot.Spec.Provider.WorkersSettings != nil && shoot.Spec.Provider.WorkersSettings.SSHAccess != nil && !shoot.Spec.Provider.WorkersSettings.SSHAccess.Enabled {
+		fieldErr := field.Invalid(shootPath, shootName, "ssh access is disabled for worker nodes")
 		return apierrors.NewInvalid(gk, bastion.Name, field.ErrorList{fieldErr})
 	}
 

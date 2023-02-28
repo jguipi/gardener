@@ -17,17 +17,6 @@ package eventlogger_test
 import (
 	"context"
 
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	. "github.com/gardener/gardener/pkg/operation/botanist/component/logging/eventlogger"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/test"
-	"github.com/gardener/gardener/pkg/utils/secrets/manager"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-	fakemanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/types"
@@ -41,6 +30,16 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	. "github.com/gardener/gardener/pkg/operation/botanist/component/logging/eventlogger"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/test"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
+	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("EventLogger", func() {
@@ -147,7 +146,7 @@ var _ = Describe("EventLogger", func() {
 	type newEventLoggerArgs struct {
 		client         client.Client
 		namespace      string
-		secretsManager manager.Interface
+		secretsManager secretsmanager.Interface
 		image          string
 	}
 
@@ -196,7 +195,7 @@ var _ = Describe("EventLogger", func() {
 		Entry("pass valid options", newEventLoggerArgs{
 			client:         client.NewDryRunClient(nil),
 			namespace:      namespace,
-			secretsManager: fakemanager.New(client.NewDryRunClient(nil), namespace),
+			secretsManager: fakesecretsmanager.New(client.NewDryRunClient(nil), namespace),
 			image:          image,
 		},
 			BeNil(),
@@ -206,7 +205,7 @@ var _ = Describe("EventLogger", func() {
 	BeforeEach(func() {
 		var err error
 		c = fakeclient.NewClientBuilder().WithScheme(kubernetes.SeedScheme).Build()
-		fakeSecretManager = fakemanager.New(c, namespace)
+		fakeSecretManager = fakesecretsmanager.New(c, namespace)
 
 		eventLoggerDeployer, err = New(
 			c,
@@ -219,7 +218,7 @@ var _ = Describe("EventLogger", func() {
 		)
 		Expect(err).ToNot(HaveOccurred())
 
-		By("creating secrets managed outside of this package for which secretsmanager.Get() will be called")
+		By("Create secrets managed outside of this package for which secretsmanager.Get() will be called")
 		Expect(c.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "generic-token-kubeconfig", Namespace: namespace}})).To(Succeed())
 	})
 
@@ -398,13 +397,12 @@ var _ = Describe("EventLogger", func() {
 					Template: corev1.PodTemplateSpec{
 						ObjectMeta: metav1.ObjectMeta{
 							Labels: map[string]string{
-								"app":                 name,
-								"role":                "logging",
-								"gardener.cloud/role": "logging",
-								"networking.gardener.cloud/from-prometheus":    "allowed",
-								"networking.gardener.cloud/to-dns":             "allowed",
-								"networking.gardener.cloud/to-shoot-apiserver": "allowed",
-								"networking.gardener.cloud/to-seed-apiserver":  "allowed",
+								"app":                              name,
+								"role":                             "logging",
+								"gardener.cloud/role":              "logging",
+								"networking.gardener.cloud/to-dns": "allowed",
+								"networking.gardener.cloud/to-runtime-apiserver":                "allowed",
+								"networking.resources.gardener.cloud/to-kube-apiserver-tcp-443": "allowed",
 							},
 						},
 						Spec: corev1.PodSpec{
@@ -454,7 +452,7 @@ var _ = Describe("EventLogger", func() {
 														LocalObjectReference: corev1.LocalObjectReference{
 															Name: "generic-token-kubeconfig",
 														},
-														Optional: pointer.BoolPtr(false),
+														Optional: pointer.Bool(false),
 													},
 												},
 												{
@@ -468,7 +466,7 @@ var _ = Describe("EventLogger", func() {
 														LocalObjectReference: corev1.LocalObjectReference{
 															Name: "shoot-access-" + name,
 														},
-														Optional: pointer.BoolPtr(false),
+														Optional: pointer.Bool(false),
 													},
 												},
 											},
@@ -506,7 +504,6 @@ var _ = Describe("EventLogger", func() {
 							{
 								ContainerName: vpaautoscalingv1.DefaultContainerResourcePolicy,
 								MinAllowed: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("3m"),
 									corev1.ResourceMemory: resource.MustParse("20Mi"),
 								},
 								ControlledValues: &controlledValues,

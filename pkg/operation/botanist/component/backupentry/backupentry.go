@@ -18,7 +18,11 @@ import (
 	"context"
 	"time"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
+	"github.com/go-logr/logr"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	"github.com/gardener/gardener/pkg/controllerutils"
@@ -26,13 +30,8 @@ import (
 	"github.com/gardener/gardener/pkg/features"
 	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	"github.com/gardener/gardener/pkg/utils/kubernetes/health"
-
-	"github.com/go-logr/logr"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -161,10 +160,10 @@ func (b *backupEntry) WaitMigrate(ctx context.Context) error {
 
 // Restore uses the garden client to update the BackupEntry and set the name of the new seed to which it shall be scheduled.
 // If the BackupEntry was deleted it will be recreated.
-func (b *backupEntry) Restore(ctx context.Context, _ *gardencorev1alpha1.ShootState) error {
+func (b *backupEntry) Restore(ctx context.Context, _ *gardencorev1beta1.ShootState) error {
 	bucketName := b.values.BucketName
 	if !gardenletfeatures.FeatureGate.Enabled(features.CopyEtcdBackupsDuringControlPlaneMigration) {
-		if err := b.client.Get(ctx, kutil.Key(b.values.Namespace, b.values.Name), b.backupEntry); err == nil {
+		if err := b.client.Get(ctx, kubernetesutils.Key(b.values.Namespace, b.values.Name), b.backupEntry); err == nil {
 			bucketName = b.backupEntry.Spec.BucketName
 		} else if client.IgnoreNotFound(err) != nil {
 			return err
@@ -197,7 +196,7 @@ func (b *backupEntry) reconcile(ctx context.Context, backupEntry *gardencorev1be
 
 // Destroy deletes the BackupEntry resource
 func (b *backupEntry) Destroy(ctx context.Context) error {
-	return kutil.DeleteObject(
+	return kubernetesutils.DeleteObject(
 		ctx,
 		b.client,
 		b.backupEntry,

@@ -38,11 +38,9 @@ import (
 	"k8s.io/utils/pointer"
 
 	"github.com/gardener/gardener/pkg/apis/core"
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	internalclientset "github.com/gardener/gardener/pkg/client/core/clientset/internalversion/fake"
-	externalcoreinformers "github.com/gardener/gardener/pkg/client/core/informers/externalversions"
-	coreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
 	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 	. "github.com/gardener/gardener/plugin/pkg/global/resourcereferencemanager"
 )
@@ -62,15 +60,14 @@ func (fakeAuthorizerType) Authorize(_ context.Context, a authorizer.Attributes) 
 var _ = Describe("resourcereferencemanager", func() {
 	Describe("#Admit", func() {
 		var (
-			admissionHandler                  *ReferenceManager
-			kubeInformerFactory               kubeinformers.SharedInformerFactory
-			kubeClient                        *fake.Clientset
-			gardenCoreClient                  *internalclientset.Clientset
-			gardenCoreInformerFactory         coreinformers.SharedInformerFactory
-			gardenCoreExternalInformerFactory externalcoreinformers.SharedInformerFactory
-			fakeAuthorizer                    fakeAuthorizerType
-			scheme                            *runtime.Scheme
-			dynamicClient                     *dynamicfake.FakeDynamicClient
+			admissionHandler          *ReferenceManager
+			kubeInformerFactory       kubeinformers.SharedInformerFactory
+			kubeClient                *fake.Clientset
+			gardenCoreClient          *internalclientset.Clientset
+			gardenCoreInformerFactory gardencoreinformers.SharedInformerFactory
+			fakeAuthorizer            fakeAuthorizerType
+			scheme                    *runtime.Scheme
+			dynamicClient             *dynamicfake.FakeDynamicClient
 
 			backupBucket core.BackupBucket
 			backupEntry  core.BackupEntry
@@ -144,11 +141,6 @@ var _ = Describe("resourcereferencemanager", func() {
 					SecretRef: &corev1.SecretReference{
 						Name:      secretName,
 						Namespace: namespace,
-					},
-					Settings: &core.SeedSettings{
-						ShootDNS: &core.SeedSettingShootDNS{
-							Enabled: true,
-						},
 					},
 				},
 			}
@@ -290,11 +282,8 @@ var _ = Describe("resourcereferencemanager", func() {
 			gardenCoreClient.Fake = testing.Fake{Resources: discoveryGardenClientResources}
 			admissionHandler.SetInternalCoreClientset(gardenCoreClient)
 
-			gardenCoreInformerFactory = coreinformers.NewSharedInformerFactory(nil, 0)
+			gardenCoreInformerFactory = gardencoreinformers.NewSharedInformerFactory(nil, 0)
 			admissionHandler.SetInternalCoreInformerFactory(gardenCoreInformerFactory)
-
-			gardenCoreExternalInformerFactory = externalcoreinformers.NewSharedInformerFactory(nil, 0)
-			admissionHandler.SetExternalCoreInformerFactory(gardenCoreExternalInformerFactory)
 
 			fakeAuthorizer = fakeAuthorizerType{}
 			admissionHandler.SetAuthorizer(fakeAuthorizer)
@@ -561,44 +550,6 @@ var _ = Describe("resourcereferencemanager", func() {
 				Expect(err).To(HaveOccurred())
 			})
 
-			It("should reject changing the shoot dns setting because shoots reference the seed", func() {
-				Expect(kubeInformerFactory.Core().V1().Secrets().Informer().GetStore().Add(&secret)).To(Succeed())
-				Expect(gardenCoreInformerFactory.Core().InternalVersion().CloudProfiles().Informer().GetStore().Add(&cloudProfile)).To(Succeed())
-				Expect(gardenCoreInformerFactory.Core().InternalVersion().Shoots().Informer().GetStore().Add(&shoot)).To(Succeed())
-
-				newSeed := seed.DeepCopy()
-				newSeed.Spec.Settings = &core.SeedSettings{
-					ShootDNS: &core.SeedSettingShootDNS{
-						Enabled: false,
-					},
-				}
-
-				attrs := admission.NewAttributesRecord(newSeed, &seed, core.Kind("Seed").WithVersion("version"), "", seed.Name, core.Resource("seeds").WithVersion("version"), "", admission.Update, &metav1.UpdateOptions{}, false, nil)
-
-				err := admissionHandler.Admit(context.TODO(), attrs, nil)
-
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("may not change shoot DNS enablement setting when shoots are still referencing to a seed"))
-			})
-
-			It("should accept changing the shoot dns setting because no shoots reference the seed", func() {
-				Expect(kubeInformerFactory.Core().V1().Secrets().Informer().GetStore().Add(&secret)).To(Succeed())
-				Expect(gardenCoreInformerFactory.Core().InternalVersion().CloudProfiles().Informer().GetStore().Add(&cloudProfile)).To(Succeed())
-
-				newSeed := seed.DeepCopy()
-				newSeed.Spec.Settings = &core.SeedSettings{
-					ShootDNS: &core.SeedSettingShootDNS{
-						Enabled: false,
-					},
-				}
-
-				attrs := admission.NewAttributesRecord(newSeed, &seed, core.Kind("Seed").WithVersion("version"), "", seed.Name, core.Resource("seeds").WithVersion("version"), "", admission.Update, &metav1.UpdateOptions{}, false, nil)
-
-				err := admissionHandler.Admit(context.TODO(), attrs, nil)
-
-				Expect(err).NotTo(HaveOccurred())
-			})
-
 			It("should accept because the secret does not have a secret ref", func() {
 				seedObj := core.Seed{
 					ObjectMeta: metav1.ObjectMeta{
@@ -764,13 +715,13 @@ var _ = Describe("resourcereferencemanager", func() {
 				})
 
 				It("should accept because the referenced exposure class exists", func() {
-					var exposureClass = gardencorev1alpha1.ExposureClass{
+					var exposureClass = core.ExposureClass{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: exposureClassName,
 						},
 					}
 
-					Expect(gardenCoreExternalInformerFactory.Core().V1alpha1().ExposureClasses().Informer().GetStore().Add(&exposureClass)).To(Succeed())
+					Expect(gardenCoreInformerFactory.Core().InternalVersion().ExposureClasses().Informer().GetStore().Add(&exposureClass)).To(Succeed())
 					attrs := admission.NewAttributesRecord(&shoot, nil, core.Kind("Shoot").WithVersion("version"), shoot.Namespace, shoot.Name, core.Resource("shoots").WithVersion("version"), "", admission.Create, &metav1.CreateOptions{}, false, defaultUserInfo)
 
 					err := admissionHandler.Admit(context.TODO(), attrs, nil)
@@ -1814,8 +1765,7 @@ var _ = Describe("resourcereferencemanager", func() {
 			internalGardenClient := &internalclientset.Clientset{}
 			rm.SetInternalCoreClientset(internalGardenClient)
 
-			rm.SetInternalCoreInformerFactory(coreinformers.NewSharedInformerFactory(nil, 0))
-			rm.SetExternalCoreInformerFactory(externalcoreinformers.NewSharedInformerFactory(nil, 0))
+			rm.SetInternalCoreInformerFactory(gardencoreinformers.NewSharedInformerFactory(nil, 0))
 
 			fakeAuthorizer := fakeAuthorizerType{}
 			rm.SetAuthorizer(fakeAuthorizer)

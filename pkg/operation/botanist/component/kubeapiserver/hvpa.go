@@ -17,10 +17,6 @@ package kubeapiserver
 import (
 	"context"
 
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/controllerutils"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-
 	hvpav1alpha1 "github.com/gardener/hvpa-controller/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2beta1 "k8s.io/api/autoscaling/v2beta1"
@@ -29,6 +25,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	vpaautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	"k8s.io/utils/pointer"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/controllerutils"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 func (k *kubeAPIServer) emptyHVPA() *hvpav1alpha1.Hvpa {
@@ -40,7 +41,7 @@ func (k *kubeAPIServer) reconcileHVPA(ctx context.Context, hvpa *hvpav1alpha1.Hv
 		k.values.Autoscaling.Replicas == nil ||
 		*k.values.Autoscaling.Replicas == 0 {
 
-		return kutil.DeleteObject(ctx, k.client.Client(), hvpa)
+		return kubernetesutils.DeleteObject(ctx, k.client.Client(), hvpa)
 	}
 
 	var (
@@ -63,18 +64,12 @@ func (k *kubeAPIServer) reconcileHVPA(ctx context.Context, hvpa *hvpav1alpha1.Hv
 			{
 				ContainerName: ContainerNameKubeAPIServer,
 				MinAllowed: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("300m"),
 					corev1.ResourceMemory: resource.MustParse("400M"),
 				},
 				MaxAllowed: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("8"),
 					corev1.ResourceMemory: resource.MustParse("25G"),
 				},
-				ControlledValues: &controlledValues,
-			},
-			{
-				ContainerName:    containerNameVPNSeed,
-				Mode:             &containerPolicyOff,
 				ControlledValues: &controlledValues,
 			},
 		}
@@ -118,7 +113,8 @@ func (k *kubeAPIServer) reconcileHVPA(ctx context.Context, hvpa *hvpav1alpha1.Hv
 	}
 
 	_, err := controllerutils.GetAndCreateOrMergePatch(ctx, k.client.Client(), hvpa, func() error {
-		hvpa.Spec.Replicas = pointer.Int32Ptr(1)
+		metav1.SetMetaDataLabel(&hvpa.ObjectMeta, resourcesv1alpha1.HighAvailabilityConfigType, resourcesv1alpha1.HighAvailabilityConfigTypeServer)
+		hvpa.Spec.Replicas = pointer.Int32(1)
 		hvpa.Spec.Hpa = hvpav1alpha1.HpaSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: hpaLabels},
 			Deploy:   true,
@@ -150,15 +146,15 @@ func (k *kubeAPIServer) reconcileHVPA(ctx context.Context, hvpa *hvpav1alpha1.Hv
 				UpdatePolicy: hvpav1alpha1.UpdatePolicy{
 					UpdateMode: &updateModeAuto,
 				},
-				StabilizationDuration: pointer.StringPtr("3m"),
+				StabilizationDuration: pointer.String("3m"),
 				MinChange: hvpav1alpha1.ScaleParams{
 					CPU: hvpav1alpha1.ChangeParams{
-						Value:      pointer.StringPtr("300m"),
-						Percentage: pointer.Int32Ptr(80),
+						Value:      pointer.String("300m"),
+						Percentage: pointer.Int32(80),
 					},
 					Memory: hvpav1alpha1.ChangeParams{
-						Value:      pointer.StringPtr("200M"),
-						Percentage: pointer.Int32Ptr(80),
+						Value:      pointer.String("200M"),
+						Percentage: pointer.Int32(80),
 					},
 				},
 			},
@@ -166,26 +162,26 @@ func (k *kubeAPIServer) reconcileHVPA(ctx context.Context, hvpa *hvpav1alpha1.Hv
 				UpdatePolicy: hvpav1alpha1.UpdatePolicy{
 					UpdateMode: &scaleDownUpdateMode,
 				},
-				StabilizationDuration: pointer.StringPtr("15m"),
+				StabilizationDuration: pointer.String("15m"),
 				MinChange: hvpav1alpha1.ScaleParams{
 					CPU: hvpav1alpha1.ChangeParams{
-						Value:      pointer.StringPtr("300m"),
-						Percentage: pointer.Int32Ptr(80),
+						Value:      pointer.String("300m"),
+						Percentage: pointer.Int32(80),
 					},
 					Memory: hvpav1alpha1.ChangeParams{
-						Value:      pointer.StringPtr("200M"),
-						Percentage: pointer.Int32Ptr(80),
+						Value:      pointer.String("200M"),
+						Percentage: pointer.Int32(80),
 					},
 				},
 			},
 			LimitsRequestsGapScaleParams: hvpav1alpha1.ScaleParams{
 				CPU: hvpav1alpha1.ChangeParams{
-					Value:      pointer.StringPtr("1"),
-					Percentage: pointer.Int32Ptr(70),
+					Value:      pointer.String("1"),
+					Percentage: pointer.Int32(70),
 				},
 				Memory: hvpav1alpha1.ChangeParams{
-					Value:      pointer.StringPtr("1G"),
-					Percentage: pointer.Int32Ptr(70),
+					Value:      pointer.String("1G"),
+					Percentage: pointer.Int32(70),
 				},
 			},
 			Template: hvpav1alpha1.VpaTemplate{

@@ -328,37 +328,6 @@ var _ = Describe("Defaults", func() {
 		})
 	})
 
-	Describe("#SetDefaults_RootCAPublisherControllerConfig", func() {
-		It("should not default the object because disabled", func() {
-			obj := &RootCAPublisherControllerConfig{}
-
-			SetDefaults_RootCAPublisherControllerConfig(obj)
-
-			Expect(obj.ConcurrentSyncs).To(BeNil())
-		})
-
-		It("should default the object because enabled", func() {
-			obj := &RootCAPublisherControllerConfig{
-				Enabled: true,
-			}
-
-			SetDefaults_RootCAPublisherControllerConfig(obj)
-
-			Expect(obj.ConcurrentSyncs).To(PointTo(Equal(5)))
-		})
-
-		It("should not overwrite existing values", func() {
-			obj := &RootCAPublisherControllerConfig{
-				Enabled:         true,
-				ConcurrentSyncs: pointer.Int(2),
-			}
-
-			SetDefaults_RootCAPublisherControllerConfig(obj)
-
-			Expect(obj.ConcurrentSyncs).To(PointTo(Equal(2)))
-		})
-	})
-
 	Describe("#SetDefaults_SecretControllerConfig", func() {
 		It("should not default the object", func() {
 			obj := &SecretControllerConfig{}
@@ -438,6 +407,40 @@ var _ = Describe("Defaults", func() {
 			SetDefaults_TokenRequestorControllerConfig(obj)
 
 			Expect(obj.ConcurrentSyncs).To(PointTo(Equal(2)))
+		})
+	})
+
+	Describe("#SetDefaults_NodeControllerConfig", func() {
+		It("should not default the object because disabled", func() {
+			obj := &NodeControllerConfig{}
+
+			SetDefaults_NodeControllerConfig(obj)
+
+			Expect(obj.ConcurrentSyncs).To(BeNil())
+		})
+
+		It("should default the object because enabled", func() {
+			obj := &NodeControllerConfig{
+				Enabled: true,
+			}
+
+			SetDefaults_NodeControllerConfig(obj)
+
+			Expect(obj.ConcurrentSyncs).To(PointTo(Equal(5)))
+			Expect(obj.Backoff).To(PointTo(Equal(metav1.Duration{Duration: 10 * time.Second})))
+		})
+
+		It("should not overwrite existing values", func() {
+			obj := &NodeControllerConfig{
+				Enabled:         true,
+				ConcurrentSyncs: pointer.Int(2),
+				Backoff:         &metav1.Duration{Duration: time.Minute},
+			}
+
+			SetDefaults_NodeControllerConfig(obj)
+
+			Expect(obj.ConcurrentSyncs).To(PointTo(Equal(2)))
+			Expect(obj.Backoff).To(PointTo(Equal(metav1.Duration{Duration: time.Minute})))
 		})
 	})
 

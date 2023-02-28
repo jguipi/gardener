@@ -16,20 +16,7 @@ package worker
 
 import (
 	"context"
-	"fmt"
-	"strconv"
 	"time"
-
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/controllerutils"
-	"github.com/gardener/gardener/pkg/extensions"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/operatingsystemconfig"
-	"github.com/gardener/gardener/pkg/utils"
 
 	"github.com/Masterminds/semver"
 	"github.com/go-logr/logr"
@@ -38,6 +25,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/controllerutils"
+	"github.com/gardener/gardener/pkg/extensions"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/operatingsystemconfig"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 )
 
 const (
@@ -86,8 +83,8 @@ type Values struct {
 	InfrastructureProviderStatus *runtime.RawExtension
 	// WorkerNameToOperatingSystemConfigsMap contains the operating system configurations for the worker pools.
 	WorkerNameToOperatingSystemConfigsMap map[string]*operatingsystemconfig.OperatingSystemConfigs
-	// NodeLocalDNSENabled indicates whether node local dns is enabled or not.
-	NodeLocalDNSENabled bool
+	// NodeLocalDNSEnabled indicates whether node local dns is enabled or not.
+	NodeLocalDNSEnabled bool
 }
 
 // New creates a new instance of Interface.
@@ -167,35 +164,6 @@ func (w *worker) deploy(ctx context.Context, operation string) (extensionsv1alph
 			}
 		}
 
-		// copy labels map
-		labels := utils.MergeStringMaps(workerPool.Labels)
-		if labels == nil {
-			labels = map[string]string{}
-		}
-		labels["node.kubernetes.io/role"] = "node"
-		labels["kubernetes.io/arch"] = *workerPool.Machine.Architecture
-
-		labels[v1beta1constants.LabelNodeLocalDNS] = strconv.FormatBool(w.values.NodeLocalDNSENabled)
-
-		if gardencorev1beta1helper.SystemComponentsAllowed(&workerPool) {
-			labels[v1beta1constants.LabelWorkerPoolSystemComponents] = "true"
-		}
-
-		// worker pool name labels
-		labels[v1beta1constants.LabelWorkerPool] = workerPool.Name
-		labels[v1beta1constants.LabelWorkerPoolDeprecated] = workerPool.Name
-
-		// add CRI labels selected by the RuntimeClass
-		if workerPool.CRI != nil {
-			labels[extensionsv1alpha1.CRINameWorkerLabel] = string(workerPool.CRI.Name)
-			if len(workerPool.CRI.ContainerRuntimes) > 0 {
-				for _, cr := range workerPool.CRI.ContainerRuntimes {
-					key := fmt.Sprintf(extensionsv1alpha1.ContainerRuntimeNameWorkerLabel, cr.Type)
-					labels[key] = "true"
-				}
-			}
-		}
-
 		var pConfig *runtime.RawExtension
 		if workerPool.ProviderConfig != nil {
 			pConfig = &runtime.RawExtension{
@@ -217,7 +185,7 @@ func (w *worker) deploy(ctx context.Context, operation string) (extensionsv1alph
 
 		if nodeTemplate == nil || machineType != workerPool.Machine.Type {
 			// initializing nodeTemplate by fetching details from cloudprofile, if present there
-			if machineDetails := gardencorev1beta1helper.FindMachineTypeByName(w.values.MachineTypes, workerPool.Machine.Type); machineDetails != nil {
+			if machineDetails := v1beta1helper.FindMachineTypeByName(w.values.MachineTypes, workerPool.Machine.Type); machineDetails != nil {
 				nodeTemplate = &extensionsv1alpha1.NodeTemplate{
 					Capacity: corev1.ResourceList{
 						corev1.ResourceCPU:    machineDetails.CPU,
@@ -237,7 +205,7 @@ func (w *worker) deploy(ctx context.Context, operation string) (extensionsv1alph
 			MaxSurge:       *workerPool.MaxSurge,
 			MaxUnavailable: *workerPool.MaxUnavailable,
 			Annotations:    workerPool.Annotations,
-			Labels:         labels,
+			Labels:         gardenerutils.NodeLabelsForWorkerPool(workerPool, w.values.NodeLocalDNSEnabled),
 			Taints:         workerPool.Taints,
 			MachineType:    workerPool.Machine.Type,
 			MachineImage: extensionsv1alpha1.MachineImage{
@@ -286,7 +254,7 @@ func (w *worker) deploy(ctx context.Context, operation string) (extensionsv1alph
 }
 
 // Restore uses the seed client and the ShootState to create the Worker resources and restore their state.
-func (w *worker) Restore(ctx context.Context, shootState *gardencorev1alpha1.ShootState) error {
+func (w *worker) Restore(ctx context.Context, shootState *gardencorev1beta1.ShootState) error {
 	return extensions.RestoreExtensionWithDeployFunction(
 		ctx,
 		w.client,

@@ -19,17 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	fakeclientset "github.com/gardener/gardener/pkg/client/kubernetes/fake"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	"github.com/gardener/gardener/pkg/operation"
-	. "github.com/gardener/gardener/pkg/operation/botanist"
-	extensionpkg "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/extension"
-	mockextension "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/extension/mock"
-	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
-
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -39,6 +28,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	kubernetesfake "github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	"github.com/gardener/gardener/pkg/operation"
+	. "github.com/gardener/gardener/pkg/operation/botanist"
+	extensionpkg "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/extension"
+	mockextension "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/extension/mock"
+	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
 )
 
 var _ = Describe("Extensions", func() {
@@ -50,7 +49,7 @@ var _ = Describe("Extensions", func() {
 
 		ctx        = context.TODO()
 		fakeErr    = fmt.Errorf("fake")
-		shootState = &gardencorev1alpha1.ShootState{}
+		shootState = &gardencorev1beta1.ShootState{}
 		namespace  = "shoot--name--space"
 	)
 
@@ -60,7 +59,7 @@ var _ = Describe("Extensions", func() {
 		gardenClient = mockclient.NewMockClient(ctrl)
 		botanist = &Botanist{Operation: &operation.Operation{
 			GardenClient:  gardenClient,
-			SeedClientSet: fakeclientset.NewClientSet(),
+			SeedClientSet: kubernetesfake.NewClientSet(),
 			Shoot: &shootpkg.Shoot{
 				Components: &shootpkg.Components{
 					Extensions: &shootpkg.Extensions{

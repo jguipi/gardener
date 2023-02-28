@@ -22,12 +22,6 @@ import (
 	"strings"
 	"time"
 
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	"github.com/gardener/gardener/pkg/utils"
-	"github.com/gardener/gardener/pkg/utils/retry"
-	"github.com/gardener/gardener/test/framework"
-	"github.com/gardener/gardener/test/framework/resources/templates"
-
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -36,6 +30,12 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	"github.com/gardener/gardener/pkg/utils"
+	"github.com/gardener/gardener/pkg/utils/retry"
+	"github.com/gardener/gardener/test/framework"
+	"github.com/gardener/gardener/test/framework/resources/templates"
 )
 
 const (
@@ -123,11 +123,11 @@ func (t *GuestBookTest) DeployGuestBookApp(ctx context.Context) {
 		framework.ExpectNoError(err)
 	}
 	shoot := t.framework.Shoot
-	if !gardencorev1beta1helper.NginxIngressEnabled(shoot.Spec.Addons) {
+	if !v1beta1helper.NginxIngressEnabled(shoot.Spec.Addons) {
 		ginkgo.Fail("The test requires .spec.addons.nginxIngress.enabled to be true")
 	}
 
-	ginkgo.By("Applying redis chart")
+	ginkgo.By("Apply redis chart")
 	masterValues := map[string]interface{}{
 		"command": "redis-server",
 	}
@@ -149,7 +149,7 @@ func (t *GuestBookTest) DeployGuestBookApp(ctx context.Context) {
 			"enabled": false,
 		},
 		"podSecurityPolicy": map[string]interface{}{
-			"create": !gardencorev1beta1helper.IsPSPDisabled(shoot),
+			"create": !v1beta1helper.IsPSPDisabled(shoot),
 		},
 		"rbac": map[string]interface{}{
 			"create": true,
@@ -238,7 +238,7 @@ func (t *GuestBookTest) Cleanup(ctx context.Context) {
 	t.dump(ctx)
 
 	// Clean up shoot
-	ginkgo.By("Cleaning up guestbook app resources")
+	ginkgo.By("Clean up guestbook app resources")
 	deleteResource := func(ctx context.Context, resource client.Object) error {
 		err := t.framework.ShootClient.Client().Delete(ctx, resource)
 		if apierrors.IsNotFound(err) {
@@ -306,5 +306,5 @@ func (t *GuestBookTest) Cleanup(ctx context.Context) {
 	cleanupGuestbook()
 	cleanupRedis()
 
-	ginkgo.By("redis and the guestbook app have been cleaned up!")
+	ginkgo.By("Redis and the guestbook app have been cleaned up!")
 }

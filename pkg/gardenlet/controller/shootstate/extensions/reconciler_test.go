@@ -19,12 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	. "github.com/gardener/gardener/pkg/gardenlet/controller/shootstate/extensions"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -36,6 +30,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	. "github.com/gardener/gardener/pkg/gardenlet/controller/shootstate/extensions"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
 )
 
 var _ = Describe("Reconciler", func() {
@@ -64,13 +64,13 @@ var _ = Describe("Reconciler", func() {
 			},
 		}
 
-		shootState                  *gardencorev1alpha1.ShootState
-		shootStateWithExtensionData *gardencorev1alpha1.ShootState
+		shootState                  *gardencorev1beta1.ShootState
+		shootStateWithExtensionData *gardencorev1beta1.ShootState
 		cluster                     *extensionsv1alpha1.Cluster
 		extension                   *extensionsv1alpha1.Extension
 		extensionState              *runtime.RawExtension
 		extensionResources          []gardencorev1beta1.NamedResourceReference
-		stateResources              []gardencorev1alpha1.ResourceData
+		stateResources              []gardencorev1beta1.ResourceData
 		secretObj                   *corev1.Secret
 	)
 
@@ -112,7 +112,7 @@ var _ = Describe("Reconciler", func() {
 			},
 		}
 
-		shootState = &gardencorev1alpha1.ShootState{
+		shootState = &gardencorev1beta1.ShootState{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: projectNamespace,
 				Name:      shootName,
@@ -122,7 +122,7 @@ var _ = Describe("Reconciler", func() {
 		secretObj = &corev1.Secret{}
 		Expect(json.Unmarshal(secretDataJSON, secretObj)).To(Succeed())
 
-		stateResources = []gardencorev1alpha1.ResourceData{
+		stateResources = []gardencorev1beta1.ResourceData{
 			{
 				CrossVersionObjectReference: autoscalingv1.CrossVersionObjectReference{
 					Name:       secretName,
@@ -158,13 +158,13 @@ var _ = Describe("Reconciler", func() {
 			},
 		}
 
-		shootStateWithExtensionData = &gardencorev1alpha1.ShootState{
+		shootStateWithExtensionData = &gardencorev1beta1.ShootState{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: projectNamespace,
 				Name:      shootName,
 			},
-			Spec: gardencorev1alpha1.ShootStateSpec{
-				Extensions: []gardencorev1alpha1.ExtensionResourceState{
+			Spec: gardencorev1beta1.ShootStateSpec{
+				Extensions: []gardencorev1beta1.ExtensionResourceState{
 					{
 						Kind:  extensionsv1alpha1.ExtensionResource,
 						Name:  &shootName,
@@ -284,7 +284,7 @@ var _ = Describe("Reconciler", func() {
 			gomock.InOrder(
 				mockClient.EXPECT().Get(ctx, client.ObjectKeyFromObject(extension), gomock.AssignableToTypeOf(&extensionsv1alpha1.Extension{})),
 				mockClient.EXPECT().Get(ctx, client.ObjectKeyFromObject(cluster), gomock.AssignableToTypeOf(&extensionsv1alpha1.Cluster{})).SetArg(2, *cluster),
-				mockClient.EXPECT().Get(ctx, client.ObjectKeyFromObject(shootState), gomock.AssignableToTypeOf(&gardencorev1alpha1.ShootState{})),
+				mockClient.EXPECT().Get(ctx, client.ObjectKeyFromObject(shootState), gomock.AssignableToTypeOf(&gardencorev1beta1.ShootState{})),
 			)
 
 			_, err := reconciler.Reconcile(ctx, reconcileRequest)

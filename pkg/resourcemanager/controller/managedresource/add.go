@@ -21,6 +21,7 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/clock"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -35,7 +36,7 @@ import (
 	"github.com/gardener/gardener/pkg/controllerutils/mapper"
 	predicateutils "github.com/gardener/gardener/pkg/controllerutils/predicate"
 	reconcilerutils "github.com/gardener/gardener/pkg/controllerutils/reconciler"
-	managerpredicate "github.com/gardener/gardener/pkg/resourcemanager/predicate"
+	resourcemanagerpredicate "github.com/gardener/gardener/pkg/resourcemanager/predicate"
 )
 
 // ControllerName is the name of the controller.
@@ -52,6 +53,9 @@ func (r *Reconciler) AddToManager(mgr manager.Manager, sourceCluster, targetClus
 	if r.TargetScheme == nil {
 		r.TargetScheme = targetCluster.GetScheme()
 	}
+	if r.Clock == nil {
+		r.Clock = clock.RealClock{}
+	}
 	if r.TargetRESTMapper == nil {
 		r.TargetRESTMapper = targetCluster.GetRESTMapper()
 	}
@@ -59,45 +63,48 @@ func (r *Reconciler) AddToManager(mgr manager.Manager, sourceCluster, targetClus
 		r.RequeueAfterOnDeletionPending = pointer.Duration(5 * time.Second)
 	}
 
-	return builder.
+	c, err := builder.
 		ControllerManagedBy(mgr).
 		Named(ControllerName).
 		For(&resourcesv1alpha1.ManagedResource{}, builder.WithPredicates(
 			r.ClassFilter,
 			predicate.Or(
 				predicate.GenerationChangedPredicate{},
-				managerpredicate.HasOperationAnnotation(),
-				managerpredicate.ConditionStatusChanged(resourcesv1alpha1.ResourcesHealthy, managerpredicate.ConditionChangedToUnhealthy),
-				managerpredicate.NoLongerIgnored(),
+				resourcemanagerpredicate.HasOperationAnnotation(),
+				resourcemanagerpredicate.ConditionStatusChanged(resourcesv1alpha1.ResourcesHealthy, resourcemanagerpredicate.ConditionChangedToUnhealthy),
+				resourcemanagerpredicate.NoLongerIgnored(),
 				// we need to reconcile once if the ManagedResource got marked as ignored in order to update the conditions
-				managerpredicate.GotMarkedAsIgnored(),
+				resourcemanagerpredicate.GotMarkedAsIgnored(),
 			),
 			// TODO: refactor this predicate chain into a single predicate.Funcs that can be properly tested as a whole
 			predicate.Or(
 				// Added again here, as otherwise NotIgnored would filter this add/update event out
-				managerpredicate.GotMarkedAsIgnored(),
-				managerpredicate.NotIgnored(),
+				resourcemanagerpredicate.GotMarkedAsIgnored(),
+				resourcemanagerpredicate.NotIgnored(),
 				predicateutils.IsDeleting(),
 			),
 		)).
-		Watches(
-			&source.Kind{Type: &corev1.Secret{}},
-			mapper.EnqueueRequestsFrom(r.MapSecretToManagedResources(
-				r.ClassFilter,
-				predicate.Or(
-					managerpredicate.NotIgnored(),
-					predicateutils.IsDeleting(),
-				),
-			), mapper.UpdateWithOldAndNew, logr.Discard()),
-		).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: pointer.IntDeref(r.Config.ConcurrentSyncs, 0),
-			RecoverPanic:            true,
 		}).
-		Complete(reconcilerutils.OperationAnnotationWrapper(
+		Build(reconcilerutils.OperationAnnotationWrapper(
 			func() client.Object { return &resourcesv1alpha1.ManagedResource{} },
 			r,
 		))
+	if err != nil {
+		return err
+	}
+
+	return c.Watch(
+		&source.Kind{Type: &corev1.Secret{}},
+		mapper.EnqueueRequestsFrom(r.MapSecretToManagedResources(
+			r.ClassFilter,
+			predicate.Or(
+				resourcemanagerpredicate.NotIgnored(),
+				predicateutils.IsDeleting(),
+			),
+		), mapper.UpdateWithOldAndNew, c.GetLogger()),
+	)
 }
 
 // MapSecretToManagedResources maps secrets to relevant ManagedResources.

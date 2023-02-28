@@ -1,8 +1,8 @@
 # Logging in Gardener Components
 
 This document aims at providing a general developer guideline on different aspects of logging practices and conventions used in the Gardener codebase.
-It contains mostly Gardener-specific points and references other existing and commonly accepted logging guidelines for general advice.
-Developers and reviewers should consult this guide when writing, refactoring and reviewing Gardener code.
+It contains mostly Gardener-specific points, and references other existing and commonly accepted logging guidelines for general advice.
+Developers and reviewers should consult this guide when writing, refactoring, and reviewing Gardener code.
 If parts are unclear or new learnings arise, this guide should be adapted accordingly.
 
 ## Logging Libraries / Implementations
@@ -41,17 +41,18 @@ As motivated above, we will use the logr interface instead of klog though.
 You can read more about the motivation behind structured logging in [logr's background and FAQ](https://github.com/go-logr/logr#background) (also see [this blog post by Dave Cheney](http://dave.cheney.net/2015/11/05/lets-talk-about-logging)).
 Also, make sure to check out controller-runtime's [logging guideline](https://github.com/kubernetes-sigs/controller-runtime/blob/v0.11.0/TMP-LOGGING.md) with specifics for projects using the library.
 The following sections will focus on the most important takeaways from those guidelines and give general instructions on how to apply them to Gardener and its controller-runtime components.
-Note: some parts in this guideline differ slightly from controller-runtime's document.
+
+> Note: Some parts in this guideline differ slightly from controller-runtime's document.
 
 ### TL;DR of Structured Logging
 
-❌ stop using `printf`-style logging:
+❌ Stop using `printf`-style logging:
 ```go
 var logger *logrus.Logger
 logger.Infof("Scaling deployment %s/%s to %d replicas", deployment.Namespace, deployment.Name, replicaCount)
 ```
 
-✅ instead, write static log messages and enrich them with additional structured information in form of key-value pairs:
+✅ Instead, write static log messages and enrich them with additional structured information in form of key-value pairs:
 
 ```go
 var logger logr.Logger
@@ -133,11 +134,11 @@ results in
 2021-12-16T09:35:59.099+0100    INFO    controller.shoot    Reconciling Shoot        {"name": "sunflower", "namespace": "garden-greenhouse"}
 ```
 
-The logger is injected by controller-runtime's `Controller` implementation and our `controllerutils.CreateWorker` alike (if a logger is passed using `controllerutils.WithLogger`). The logger returned by `logf.FromContext` is never `nil`. If the context doesn't carry a logger, it falls back to the global logger (`logf.Log`), which might discard logs if not configured, but is also never `nil`.
+The logger is injected by controller-runtime's `Controller` implementation. The logger returned by `logf.FromContext` is never `nil`. If the context doesn't carry a logger, it falls back to the global logger (`logf.Log`), which might discard logs if not configured, but is also never `nil`.
 
 > ⚠️ Make sure that you don't overwrite the `name` or `namespace` value keys for such loggers, otherwise you will lose information about the reconciled object.
 
-The controller implementation (controller-runtime / `CreateWorker`) itself takes care of logging the error returned by reconcilers.
+The controller implementation (controller-runtime) itself takes care of logging the error returned by reconcilers.
 Hence, don't log an error that you are returning.
 Generally, functions should not return an error, if they already logged it, because that means the error is already handled and not an error anymore.
 See [Dave Cheney's post](https://dave.cheney.net/2015/11/05/lets-talk-about-logging) for more on this.
@@ -145,7 +146,7 @@ See [Dave Cheney's post](https://dave.cheney.net/2015/11/05/lets-talk-about-logg
 ### Messages
 
 - Log messages should be static. Don't put variable content in there, i.e., no `fmt.Sprintf` or string concatenation (`+`). Use key-value pairs instead.
-- Log messages should be capitalized. Note: this contrasts with error messages, that should not be capitalized. However, both should not end with a punctuation mark.
+- Log messages should be capitalized. Note: This contrasts with error messages, that should not be capitalized. However, both should not end with a punctuation mark.
 
 ### Keys and Values
 
@@ -160,8 +161,8 @@ See [Dave Cheney's post](https://dave.cheney.net/2015/11/05/lets-talk-about-logg
   // ...
   ```
 
-  Note: `WithValues` bypasses controller-runtime's special zap encoder that nicely encodes `ObjectKey`/`NamespacedName` and `runtime.Object` values, see [kubernetes-sigs/controller-runtime#1290](https://github.com/kubernetes-sigs/controller-runtime/issues/1290).
-  Thus, the end result might look different depending on the value and its `Stringer` implementation.
+> Note: `WithValues` bypasses controller-runtime's special zap encoder that nicely encodes `ObjectKey`/`NamespacedName` and `runtime.Object` values, see [kubernetes-sigs/controller-runtime#1290](https://github.com/kubernetes-sigs/controller-runtime/issues/1290).
+> Thus, the end result might look different depending on the value and its `Stringer` implementation.
 
 - Use [lowerCamelCase](https://en.wiktionary.org/wiki/lowerCamelCase) for keys. Don't put spaces in keys, as it will make log processing with simple tools like `jq` harder.
 - Keys should be constant, human-readable, consistent across the codebase and naturally match parts of the log message, see [logr guideline](https://github.com/go-logr/logr#how-do-i-choose-my-keys).
@@ -230,23 +231,3 @@ See [Dave Cheney's post](https://dave.cheney.net/2015/11/05/lets-talk-about-logg
   logf.SetLogger(logger.MustNewZapLogger(logger.DebugLevel, logger.FormatJSON, zap.WriteTo(GinkgoWriter)))
   log := logf.Log.WithName("test")
   ```
-
-## Migration from logrus to logr
-
-These points might be helpful when refactoring existing code during the migration period:
-
-- For migrating an existing controller to logr:
-  - Create a named logger ([example](https://github.com/gardener/gardener/blob/ce9d741798eac2df8c470190ab483aa4c5818ebf/pkg/controllermanager/controller/cloudprofile/cloudprofile.go#L63)).
-  - Pass `controllerutils.WithLogger` to `CreateWorker` ([example](https://github.com/gardener/gardener/blob/ce9d741798eac2df8c470190ab483aa4c5818ebf/pkg/controllermanager/controller/cloudprofile/cloudprofile.go#L113)). This allows `logf.FromContext` to be used in reconcilers.
-  - Use `logf.FromContext` in `Reconcile` to retrieve the logr logger and use it from there on ([example](https://github.com/gardener/gardener/blob/ce9d741798eac2df8c470190ab483aa4c5818ebf/pkg/controllermanager/controller/cloudprofile/cloudprofile_control.go#L72)).
-  - Make sure to follow the other guidelines mentioned above as well (see [Logging in Controllers](#logging-in-controllers)).
-- Libraries might expect a different logging implementation than the component which uses it. E.g., a controller that already uses logr might want to use the `flow` package which still uses logrus. In such cases:
-  - You can consider refactoring the library along with the component itself, if feasible.
-  - It is acceptable for the migration period to use a logger derived from the respective global logger (`logger.Logger` or `logf.Log`) and pass it to the library.
-    However, please add a `TODO` for cleaning it up later on, once the migration is completed. E.g.:
-    ```go
-    // TODO: switch to logr once flow package is migrated
-    err := shootFlow.Run(flow.Opts{
-      Logger: logger.Logger.WithFields(logrus.Fields{"logger": "controller." + ControllerName, "name": shoot.Name, "namespace": shoot.Namespace})
-    })
-    ```

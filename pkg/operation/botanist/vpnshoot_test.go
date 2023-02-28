@@ -17,17 +17,17 @@ package botanist_test
 import (
 	"net"
 
+	"github.com/golang/mock/gomock"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	mockkubernetes "github.com/gardener/gardener/pkg/client/kubernetes/mock"
+	kubernetesmock "github.com/gardener/gardener/pkg/client/kubernetes/mock"
 	"github.com/gardener/gardener/pkg/operation"
 	. "github.com/gardener/gardener/pkg/operation/botanist"
 	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
 	"github.com/gardener/gardener/pkg/utils/images"
 	"github.com/gardener/gardener/pkg/utils/imagevector"
-
-	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("VPNShoot", func() {
@@ -45,10 +45,10 @@ var _ = Describe("VPNShoot", func() {
 	})
 
 	Describe("#DefaultVPNShoot", func() {
-		var kubernetesClient *mockkubernetes.MockInterface
+		var kubernetesClient *kubernetesmock.MockInterface
 
 		BeforeEach(func() {
-			kubernetesClient = mockkubernetes.NewMockInterface(ctrl)
+			kubernetesClient = kubernetesmock.NewMockInterface(ctrl)
 			botanist.SeedClientSet = kubernetesClient
 			botanist.Shoot = &shootpkg.Shoot{
 				Networks: &shootpkg.Networks{
@@ -65,20 +65,9 @@ var _ = Describe("VPNShoot", func() {
 			})
 		})
 
-		It("should successfully create a vpnShoot interface for ReversedVPN not enabled case", func() {
-			kubernetesClient.EXPECT().Client()
-			botanist.ImageVector = imagevector.ImageVector{{Name: images.ImageNameVpnShoot}}
-			botanist.Shoot.ReversedVPNEnabled = false
-
-			vpnShoot, err := botanist.DefaultVPNShoot()
-			Expect(vpnShoot).NotTo(BeNil())
-			Expect(err).NotTo(HaveOccurred())
-		})
-
-		It("should successfully create a vpnShoot interface for ReversedVPN enabled case", func() {
+		It("should successfully create a vpnShoot interface for ReversedVPN", func() {
 			kubernetesClient.EXPECT().Client()
 			botanist.ImageVector = imagevector.ImageVector{{Name: images.ImageNameVpnShootClient}}
-			botanist.Shoot.ReversedVPNEnabled = true
 
 			vpnShoot, err := botanist.DefaultVPNShoot()
 			Expect(vpnShoot).NotTo(BeNil())

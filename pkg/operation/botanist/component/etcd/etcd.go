@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Masterminds/semver"
 	druidv1alpha1 "github.com/gardener/etcd-druid/api/v1alpha1"
 	hvpav1alpha1 "github.com/gardener/hvpa-controller/api/v1alpha1"
 	"github.com/go-logr/logr"
@@ -32,24 +33,23 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
-	"k8s.io/apimachinery/pkg/util/intstr"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	vpaautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/controllerutils"
 	gardenletconfig "github.com/gardener/gardener/pkg/gardenlet/apis/config"
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/monitoring"
+	etcdconstants "github.com/gardener/gardener/pkg/operation/botanist/component/etcd/constants"
 	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	"github.com/gardener/gardener/pkg/utils/kubernetes/health"
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
 	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
 )
 
@@ -90,19 +90,7 @@ const (
 var (
 	// TimeNow is a function returning the current time exposed for testing.
 	TimeNow = time.Now
-
-	// PortEtcdPeer is the port exposed by etcd for server-to-server communication.
-	PortEtcdPeer = int32(2380)
-	// PortEtcdClient is the port exposed by etcd for client communication.
-	PortEtcdClient = int32(2379)
-	// PortBackupRestore is the client port exposed by the backup-restore sidecar container.
-	PortBackupRestore = int32(8080)
 )
-
-// ServiceName returns the service name for an etcd for the given role.
-func ServiceName(role string) string {
-	return fmt.Sprintf("etcd-%s-client", role)
-}
 
 // Interface contains functions for a etcd deployer.
 type Interface interface {
@@ -163,20 +151,16 @@ type Values struct {
 	NamePrefix              string
 	Role                    string
 	Class                   Class
-	FailureToleranceType    *gardencorev1beta1.FailureToleranceType
 	Replicas                *int32
 	StorageCapacity         string
 	StorageClassName        *string
 	DefragmentationSchedule *string
-	CARotationPhase         gardencorev1beta1.ShootCredentialsRotationPhase
-	K8sVersion              string
+	CARotationPhase         gardencorev1beta1.CredentialsRotationPhase
+	KubernetesVersion       *semver.Version
 	BackupConfig            *BackupConfig
 	HvpaConfig              *HVPAConfig
 	PriorityClassName       string
-}
-
-func (e *etcd) hasHAControlPlane() bool {
-	return helper.IsFailureToleranceTypeNode(e.values.FailureToleranceType) || helper.IsFailureToleranceTypeZone(e.values.FailureToleranceType)
+	HighAvailabilityEnabled bool
 }
 
 func (e *etcd) Deploy(ctx context.Context) error {
@@ -208,16 +192,10 @@ func (e *etcd) Deploy(ctx context.Context) error {
 	}
 
 	var (
-		clientNetworkPolicy = e.emptyNetworkPolicy(NetworkPolicyNameClient)
-		peerNetworkPolicy   = e.emptyNetworkPolicy(NetworkPolicyNamePeer)
-		hvpa                = e.emptyHVPA()
+		peerNetworkPolicy = e.emptyNetworkPolicy(NetworkPolicyNamePeer)
+		hvpa              = e.emptyHVPA()
 
 		replicas = e.computeReplicas(existingEtcd)
-
-		protocolTCP             = corev1.ProtocolTCP
-		intStrPortEtcdClient    = intstr.FromInt(int(PortEtcdClient))
-		intStrPortEtcdPeer      = intstr.FromInt(int(PortEtcdPeer))
-		intStrPortBackupRestore = intstr.FromInt(int(PortBackupRestore))
 
 		resourcesEtcd, resourcesBackupRestore = e.computeContainerResources(existingSts)
 		quota                                 = resource.MustParse("8Gi")
@@ -234,7 +212,6 @@ func (e *etcd) Deploy(ctx context.Context) error {
 		metrics             = druidv1alpha1.Basic
 		volumeClaimTemplate = e.etcd.Name
 		minAllowed          = corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("50m"),
 			corev1.ResourceMemory: resource.MustParse("200M"),
 		}
 	)
@@ -244,7 +221,6 @@ func (e *etcd) Deploy(ctx context.Context) error {
 		metrics = druidv1alpha1.Extensive
 		volumeClaimTemplate = e.values.Role + "-" + strings.TrimSuffix(e.etcd.Name, "-"+e.values.Role)
 		minAllowed = corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("200m"),
 			corev1.ResourceMemory: resource.MustParse("700M"),
 		}
 	}
@@ -254,21 +230,21 @@ func (e *etcd) Deploy(ctx context.Context) error {
 		return fmt.Errorf("secret %q not found", v1beta1constants.SecretNameCAETCD)
 	}
 
-	serverSecret, err := e.secretsManager.Generate(ctx, &secretutils.CertificateSecretConfig{
+	serverSecret, err := e.secretsManager.Generate(ctx, &secretsutils.CertificateSecretConfig{
 		Name:                        secretNamePrefixServer + e.values.Role,
 		CommonName:                  "etcd-server",
 		DNSNames:                    e.clientServiceDNSNames(),
-		CertType:                    secretutils.ServerClientCert,
+		CertType:                    secretsutils.ServerClientCert,
 		SkipPublishingCACertificate: true,
 	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCAETCD), secretsmanager.Rotate(secretsmanager.InPlace))
 	if err != nil {
 		return err
 	}
 
-	clientSecret, err := e.secretsManager.Generate(ctx, &secretutils.CertificateSecretConfig{
+	clientSecret, err := e.secretsManager.Generate(ctx, &secretsutils.CertificateSecretConfig{
 		Name:                        SecretNameClient,
 		CommonName:                  "etcd-client",
-		CertType:                    secretutils.ClientCert,
+		CertType:                    secretsutils.ClientCert,
 		SkipPublishingCACertificate: true,
 	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCAETCD), secretsmanager.Rotate(secretsmanager.InPlace))
 	if err != nil {
@@ -290,56 +266,15 @@ func (e *etcd) Deploy(ctx context.Context) error {
 	// Hence, it doesn't make sense if both component deployers are running this code - let's only do it for the main
 	// ETCD.
 	if e.values.Role == v1beta1constants.ETCDRoleMain {
-		if _, err := controllerutils.GetAndCreateOrMergePatch(ctx, e.client, clientNetworkPolicy, func() error {
-			clientNetworkPolicy.Annotations = map[string]string{
-				v1beta1constants.GardenerDescription: "Allows Ingress to etcd pods from the Shoot's Kubernetes API Server.",
-			}
-			clientNetworkPolicy.Labels = map[string]string{
-				v1beta1constants.GardenRole: v1beta1constants.GardenRoleControlPlane,
-			}
-			clientNetworkPolicy.Spec.PodSelector = metav1.LabelSelector{
-				MatchLabels: GetLabels(),
-			}
-			clientNetworkPolicy.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{
-				{
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							PodSelector: &metav1.LabelSelector{
-								// TODO: Replace below map with a function call to the to-be-introduced kubeapiserver package.
-								MatchLabels: map[string]string{
-									v1beta1constants.GardenRole: v1beta1constants.GardenRoleControlPlane,
-									v1beta1constants.LabelApp:   v1beta1constants.LabelKubernetes,
-									v1beta1constants.LabelRole:  v1beta1constants.LabelAPIServer,
-								},
-							},
-						},
-						{
-							PodSelector: &metav1.LabelSelector{
-								MatchLabels: monitoring.GetPrometheusLabels(),
-							},
-						},
-					},
-					Ports: []networkingv1.NetworkPolicyPort{
-						{
-							Protocol: &protocolTCP,
-							Port:     &intStrPortEtcdClient,
-						},
-						{
-							Protocol: &protocolTCP,
-							Port:     &intStrPortBackupRestore,
-						},
-					},
-				},
-			}
-			clientNetworkPolicy.Spec.Egress = nil
-			clientNetworkPolicy.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}
-			return nil
-		}); err != nil {
+		// TODO(rfranzke): Remove this in a future version.
+		if err := kubernetesutils.DeleteObject(ctx, e.client, e.emptyNetworkPolicy(NetworkPolicyNameClient)); err != nil {
 			return err
 		}
 
-		// create peer network policy only if the shoot has a HA control plane
-		if e.hasHAControlPlane() {
+		// create peer network policy only if there are 3 replicas
+		// TODO(rfranzke): When https://github.com/gardener/etcd-druid/pull/521 is resolved then drop this NetworkPolicy
+		//  and replace it with the new labels instead.
+		if e.values.HighAvailabilityEnabled {
 			if _, err := controllerutils.GetAndCreateOrMergePatch(ctx, e.client, peerNetworkPolicy, func() error {
 				peerNetworkPolicy.Annotations = map[string]string{
 					v1beta1constants.GardenerDescription: "Allows Ingress to etcd pods from etcd pods for peer communication.",
@@ -354,16 +289,16 @@ func (e *etcd) Deploy(ctx context.Context) error {
 					{
 						Ports: []networkingv1.NetworkPolicyPort{
 							{
-								Protocol: &protocolTCP,
-								Port:     &intStrPortEtcdClient,
+								Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+								Port:     utils.IntStrPtrFromInt(etcdconstants.PortEtcdClient),
 							},
 							{
-								Protocol: &protocolTCP,
-								Port:     &intStrPortBackupRestore,
+								Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+								Port:     utils.IntStrPtrFromInt(etcdconstants.PortBackupRestore),
 							},
 							{
-								Protocol: &protocolTCP,
-								Port:     &intStrPortEtcdPeer,
+								Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+								Port:     utils.IntStrPtrFromInt(etcdconstants.PortEtcdPeer),
 							},
 						},
 						To: []networkingv1.NetworkPolicyPeer{
@@ -386,16 +321,16 @@ func (e *etcd) Deploy(ctx context.Context) error {
 						},
 						Ports: []networkingv1.NetworkPolicyPort{
 							{
-								Protocol: &protocolTCP,
-								Port:     &intStrPortEtcdClient,
+								Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+								Port:     utils.IntStrPtrFromInt(etcdconstants.PortEtcdClient),
 							},
 							{
-								Protocol: &protocolTCP,
-								Port:     &intStrPortBackupRestore,
+								Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+								Port:     utils.IntStrPtrFromInt(etcdconstants.PortBackupRestore),
 							},
 							{
-								Protocol: &protocolTCP,
-								Port:     &intStrPortEtcdPeer,
+								Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+								Port:     utils.IntStrPtrFromInt(etcdconstants.PortEtcdPeer),
 							},
 						},
 					},
@@ -410,6 +345,12 @@ func (e *etcd) Deploy(ctx context.Context) error {
 			}
 		}
 	}
+
+	clientService := &corev1.Service{}
+	utilruntime.Must(gardenerutils.InjectNetworkPolicyAnnotationsForScrapeTargets(clientService,
+		networkingv1.NetworkPolicyPort{Port: utils.IntStrPtrFromInt(etcdconstants.PortEtcdClient), Protocol: utils.ProtocolPtr(corev1.ProtocolTCP)},
+		networkingv1.NetworkPolicyPort{Port: utils.IntStrPtrFromInt(etcdconstants.PortBackupRestore), Protocol: utils.ProtocolPtr(corev1.ProtocolTCP)},
+	))
 
 	if _, err := controllerutils.GetAndCreateOrMergePatch(ctx, e.client, e.etcd, func() error {
 		metav1.SetMetaDataAnnotation(&e.etcd.ObjectMeta, v1beta1constants.GardenerOperation, v1beta1constants.GardenerOperationReconcile)
@@ -427,7 +368,13 @@ func (e *etcd) Deploy(ctx context.Context) error {
 			v1beta1constants.LabelNetworkPolicyToDNS:             v1beta1constants.LabelNetworkPolicyAllowed,
 			v1beta1constants.LabelNetworkPolicyToPublicNetworks:  v1beta1constants.LabelNetworkPolicyAllowed,
 			v1beta1constants.LabelNetworkPolicyToPrivateNetworks: v1beta1constants.LabelNetworkPolicyAllowed,
-			v1beta1constants.LabelNetworkPolicyToSeedAPIServer:   v1beta1constants.LabelNetworkPolicyAllowed,
+			// TODO(rfranzke): etcd-druid wrongly uses all these labels for the .spec.selector of the Services it
+			//  creates. Hence, we cannot change them because otherwise multi-node ETCD clusters would break (since the
+			//  services wouldn't select anything anymore). Until this is fixed, we have to keep using the deprecated
+			//  to-seed-apiserver label instead of the new to-runtime-apiserver.
+			//  See https://github.com/gardener/etcd-druid/pull/521.
+			v1beta1constants.LabelNetworkPolicyToSeedAPIServer: v1beta1constants.LabelNetworkPolicyAllowed,
+			// v1beta1constants.LabelNetworkPolicyToRuntimeAPIServer: v1beta1constants.LabelNetworkPolicyAllowed,
 		})
 		e.etcd.Spec.Selector = &metav1.LabelSelector{
 			MatchLabels: utils.MergeStringMaps(e.getRoleLabels(), map[string]string{
@@ -442,7 +389,7 @@ func (e *etcd) Deploy(ctx context.Context) error {
 						Name:      etcdCASecret.Name,
 						Namespace: etcdCASecret.Namespace,
 					},
-					DataKey: pointer.String(secretutils.DataKeyCertificateBundle),
+					DataKey: pointer.String(secretsutils.DataKeyCertificateBundle),
 				},
 				ServerTLSSecretRef: corev1.SecretReference{
 					Name:      serverSecret.Name,
@@ -453,22 +400,23 @@ func (e *etcd) Deploy(ctx context.Context) error {
 					Namespace: clientSecret.Namespace,
 				},
 			},
-			ServerPort:              &PortEtcdPeer,
-			ClientPort:              &PortEtcdClient,
+			ServerPort:              pointer.Int32(int32(etcdconstants.PortEtcdPeer)),
+			ClientPort:              pointer.Int32(int32(etcdconstants.PortEtcdClient)),
 			Metrics:                 &metrics,
 			DefragmentationSchedule: e.computeDefragmentationSchedule(existingEtcd),
 			Quota:                   &quota,
+			ClientService:           &druidv1alpha1.ClientService{Annotations: clientService.Annotations},
 		}
 
 		// TODO(timuthy): Once https://github.com/gardener/etcd-backup-restore/issues/538 is resolved we can enable PeerUrlTLS for all remaining clusters as well.
-		if e.hasHAControlPlane() {
+		if e.values.HighAvailabilityEnabled {
 			e.etcd.Spec.Etcd.PeerUrlTLS = &druidv1alpha1.TLSConfig{
 				TLSCASecretRef: druidv1alpha1.SecretReference{
 					SecretReference: corev1.SecretReference{
 						Name:      etcdPeerCASecretName,
 						Namespace: e.namespace,
 					},
-					DataKey: pointer.String(secretutils.DataKeyCertificateBundle),
+					DataKey: pointer.String(secretsutils.DataKeyCertificateBundle),
 				},
 				ServerTLSSecretRef: corev1.SecretReference{
 					Name:      peerServerSecretName,
@@ -484,7 +432,7 @@ func (e *etcd) Deploy(ctx context.Context) error {
 						Name:      etcdCASecret.Name,
 						Namespace: etcdCASecret.Namespace,
 					},
-					DataKey: pointer.String(secretutils.DataKeyCertificateBundle),
+					DataKey: pointer.String(secretsutils.DataKeyCertificateBundle),
 				},
 				ServerTLSSecretRef: corev1.SecretReference{
 					Name:      serverSecret.Name,
@@ -495,7 +443,7 @@ func (e *etcd) Deploy(ctx context.Context) error {
 					Namespace: clientSecret.Namespace,
 				},
 			},
-			Port:                    &PortBackupRestore,
+			Port:                    pointer.Int32(int32(etcdconstants.PortBackupRestore)),
 			Resources:               resourcesBackupRestore,
 			GarbageCollectionPolicy: &garbageCollectionPolicy,
 			GarbageCollectionPeriod: &garbageCollectionPeriod,
@@ -566,8 +514,8 @@ func (e *etcd) Deploy(ctx context.Context) error {
 						Labels: hpaLabels,
 					},
 					Spec: hvpav1alpha1.HpaTemplateSpec{
-						MinReplicas: pointer.Int32(int32(replicas)),
-						MaxReplicas: int32(replicas),
+						MinReplicas: pointer.Int32(replicas),
+						MaxReplicas: replicas,
 						Metrics: []autoscalingv2beta1.MetricSpec{
 							{
 								Type: autoscalingv2beta1.ResourceMetricSourceType,
@@ -661,8 +609,8 @@ func (e *etcd) Deploy(ctx context.Context) error {
 			hvpa.Spec.WeightBasedScalingIntervals = []hvpav1alpha1.WeightBasedScalingInterval{
 				{
 					VpaWeight:         hvpav1alpha1.VpaOnly,
-					StartReplicaCount: int32(replicas),
-					LastReplicaCount:  int32(replicas),
+					StartReplicaCount: replicas,
+					LastReplicaCount:  replicas,
 				},
 			}
 			hvpa.Spec.TargetRef = &autoscalingv2beta1.CrossVersionObjectReference{
@@ -675,7 +623,7 @@ func (e *etcd) Deploy(ctx context.Context) error {
 			return err
 		}
 	} else {
-		if err := kutil.DeleteObjects(ctx, e.client, hvpa); err != nil {
+		if err := kubernetesutils.DeleteObjects(ctx, e.client, hvpa); err != nil {
 			return err
 		}
 	}
@@ -684,25 +632,21 @@ func (e *etcd) Deploy(ctx context.Context) error {
 }
 
 func (e *etcd) Destroy(ctx context.Context) error {
-	if err := gutil.ConfirmDeletion(ctx, e.client, e.etcd); client.IgnoreNotFound(err) != nil {
+	if err := gardenerutils.ConfirmDeletion(ctx, e.client, e.etcd); client.IgnoreNotFound(err) != nil {
 		return err
 	}
 
-	if err := kutil.DeleteObjects(
-		ctx,
-		e.client,
+	objects := []client.Object{
 		e.emptyHVPA(),
 		e.etcd,
 		e.emptyNetworkPolicy(NetworkPolicyNameClient),
-	); err != nil {
-		return err
 	}
 
-	if e.hasHAControlPlane() {
-		return kutil.DeleteObject(ctx, e.client, e.emptyNetworkPolicy(NetworkPolicyNamePeer))
+	if e.values.HighAvailabilityEnabled {
+		objects = append(objects, e.emptyNetworkPolicy(NetworkPolicyNamePeer))
 	}
 
-	return nil
+	return kubernetesutils.DeleteObjects(ctx, e.client, objects...)
 }
 
 func (e *etcd) getRoleLabels() map[string]string {
@@ -748,7 +692,7 @@ func (e *etcd) Snapshot(ctx context.Context, podExecutor kubernetes.PodExecutor)
 		podsList.Items[0].GetName(),
 		containerNameBackupRestore,
 		"/bin/sh",
-		fmt.Sprintf("curl -k https://etcd-%s-local:%d/snapshot/full?final=true", e.values.Role, PortBackupRestore),
+		fmt.Sprintf("curl -k https://etcd-%s-local:%d/snapshot/full?final=true", e.values.Role, etcdconstants.PortBackupRestore),
 	)
 	return err
 }
@@ -756,20 +700,20 @@ func (e *etcd) Snapshot(ctx context.Context, podExecutor kubernetes.PodExecutor)
 func (e *etcd) clientServiceDNSNames() []string {
 	var domainNames []string
 	domainNames = append(domainNames, fmt.Sprintf("%s-local", e.etcd.Name))
-	domainNames = append(domainNames, kutil.DNSNamesForService(fmt.Sprintf("%s-client", e.etcd.Name), e.namespace)...)
+	domainNames = append(domainNames, kubernetesutils.DNSNamesForService(fmt.Sprintf("%s-client", e.etcd.Name), e.namespace)...)
 
 	// The peer service needs to be considered here since the etcd-backup-restore side-car
 	// connects to member pods via pod domain names (e.g. for defragmentation).
 	// See https://github.com/gardener/etcd-backup-restore/issues/494
-	domainNames = append(domainNames, kutil.DNSNamesForService(fmt.Sprintf("*.%s-peer", e.etcd.Name), e.namespace)...)
+	domainNames = append(domainNames, kubernetesutils.DNSNamesForService(fmt.Sprintf("*.%s-peer", e.etcd.Name), e.namespace)...)
 
 	return domainNames
 }
 
 func (e *etcd) peerServiceDNSNames() []string {
 	return append(
-		kutil.DNSNamesForService(fmt.Sprintf("%s-peer", e.etcd.Name), e.namespace),
-		kutil.DNSNamesForService(fmt.Sprintf("*.%s-peer", e.etcd.Name), e.namespace)...,
+		kubernetesutils.DNSNamesForService(fmt.Sprintf("%s-peer", e.etcd.Name), e.namespace),
+		kubernetesutils.DNSNamesForService(fmt.Sprintf("*.%s-peer", e.etcd.Name), e.namespace)...,
 	)
 }
 
@@ -815,9 +759,10 @@ func (e *etcd) Scale(ctx context.Context, replicas int32) error {
 }
 
 func (e *etcd) RolloutPeerCA(ctx context.Context) error {
-	if !e.hasHAControlPlane() {
+	if !e.values.HighAvailabilityEnabled {
 		return nil
 	}
+
 	etcdPeerCASecret, found := e.secretsManager.Get(v1beta1constants.SecretNameCAETCDPeer)
 	if !found {
 		return fmt.Errorf("secret %q not found", v1beta1constants.SecretNameCAETCDPeer)
@@ -853,7 +798,6 @@ func (e *etcd) RolloutPeerCA(ctx context.Context) error {
 		}
 		return nil
 	})
-
 	return err
 }
 
@@ -927,28 +871,28 @@ func (e *etcd) computeFullSnapshotSchedule(existingEtcd *druidv1alpha1.Etcd) *st
 
 func (e *etcd) handlePeerCertificates(ctx context.Context) (caSecretName, peerSecretName string, err error) {
 	// TODO(timuthy): Remove this once https://github.com/gardener/etcd-backup-restore/issues/538 is resolved.
-	if !e.hasHAControlPlane() {
+	if !e.values.HighAvailabilityEnabled {
 		return
 	}
+
 	etcdPeerCASecret, found := e.secretsManager.Get(v1beta1constants.SecretNameCAETCDPeer)
 	if !found {
 		err = fmt.Errorf("secret %q not found", v1beta1constants.SecretNameCAETCDPeer)
 		return
 	}
 
-	var singedByCAOptions []secretsmanager.SignedByCAOption
-
+	var signedByCAOptions []secretsmanager.SignedByCAOption
 	if e.values.CARotationPhase == gardencorev1beta1.RotationPreparing {
-		singedByCAOptions = append(singedByCAOptions, secretsmanager.UseCurrentCA)
+		signedByCAOptions = append(signedByCAOptions, secretsmanager.UseCurrentCA)
 	}
 
-	peerServerSecret, err := e.secretsManager.Generate(ctx, &secretutils.CertificateSecretConfig{
+	peerServerSecret, err := e.secretsManager.Generate(ctx, &secretsutils.CertificateSecretConfig{
 		Name:                        secretNamePrefixPeerServer + e.values.Role,
 		CommonName:                  "etcd-server",
 		DNSNames:                    e.peerServiceDNSNames(),
-		CertType:                    secretutils.ServerClientCert,
+		CertType:                    secretsutils.ServerClientCert,
 		SkipPublishingCACertificate: true,
-	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCAETCDPeer, singedByCAOptions...), secretsmanager.Rotate(secretsmanager.InPlace))
+	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCAETCDPeer, signedByCAOptions...), secretsmanager.Rotate(secretsmanager.InPlace))
 	if err != nil {
 		err = fmt.Errorf("secret %q not found", v1beta1constants.SecretNameCAETCDPeer)
 		return

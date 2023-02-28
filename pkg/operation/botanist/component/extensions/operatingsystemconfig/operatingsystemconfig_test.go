@@ -21,24 +21,6 @@ import (
 	"strings"
 	"time"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/extensions"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
-	. "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/operatingsystemconfig"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/operatingsystemconfig/original/components"
-	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	"github.com/gardener/gardener/pkg/utils/imagevector"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/Masterminds/semver"
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
@@ -56,6 +38,23 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/extensions"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
+	. "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/operatingsystemconfig"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/operatingsystemconfig/original/components"
+	"github.com/gardener/gardener/pkg/utils"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/imagevector"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
+	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("OperatingSystemConfig", func() {
@@ -138,6 +137,7 @@ var _ = Describe("OperatingSystemConfig", func() {
 				{
 					Name: worker1Name,
 					Machine: gardencorev1beta1.Machine{
+						Architecture: pointer.String(v1beta1constants.ArchitectureAMD64),
 						Image: &gardencorev1beta1.ShootMachineImage{
 							Name:           "type1",
 							ProviderConfig: &runtime.RawExtension{Raw: []byte(`{"foo":"bar"}`)},
@@ -148,6 +148,7 @@ var _ = Describe("OperatingSystemConfig", func() {
 				{
 					Name: worker2Name,
 					Machine: gardencorev1beta1.Machine{
+						Architecture: pointer.String(v1beta1constants.ArchitectureAMD64),
 						Image: &gardencorev1beta1.ShootMachineImage{
 							Name: "type2",
 						},
@@ -181,7 +182,7 @@ var _ = Describe("OperatingSystemConfig", func() {
 			fakeClient = fakeclient.NewClientBuilder().WithScheme(s).Build()
 			sm = fakesecretsmanager.New(fakeClient, namespace)
 
-			By("creating secrets managed outside of this package for whose secretsmanager.Get() will be called")
+			By("Create secrets managed outside of this package for whose secretsmanager.Get() will be called")
 			Expect(fakeClient.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ca", Namespace: namespace}})).To(Succeed())
 			Expect(fakeClient.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ca-kubelet", Namespace: namespace}})).To(Succeed())
 
@@ -401,11 +402,11 @@ var _ = Describe("OperatingSystemConfig", func() {
 			var (
 				stateDownloader = []byte(`{"dummy":"state downloader"}`)
 				stateOriginal   = []byte(`{"dummy":"state original"}`)
-				shootState      *gardencorev1alpha1.ShootState
+				shootState      *gardencorev1beta1.ShootState
 			)
 
 			BeforeEach(func() {
-				extensions := make([]gardencorev1alpha1.ExtensionResourceState, 0, 2*len(workers))
+				extensions := make([]gardencorev1beta1.ExtensionResourceState, 0, 2*len(workers))
 				for _, worker := range workers {
 					k8sVersion := values.KubernetesVersion
 					if worker.Kubernetes != nil && worker.Kubernetes.Version != nil {
@@ -414,13 +415,13 @@ var _ = Describe("OperatingSystemConfig", func() {
 					key := Key(worker.Name, k8sVersion, worker.CRI)
 
 					extensions = append(extensions,
-						gardencorev1alpha1.ExtensionResourceState{
+						gardencorev1beta1.ExtensionResourceState{
 							Name:    pointer.String(key + "-" + worker.Machine.Image.Name + "-downloader"),
 							Kind:    extensionsv1alpha1.OperatingSystemConfigResource,
 							Purpose: pointer.String(string(extensionsv1alpha1.OperatingSystemConfigPurposeProvision)),
 							State:   &runtime.RawExtension{Raw: stateDownloader},
 						},
-						gardencorev1alpha1.ExtensionResourceState{
+						gardencorev1beta1.ExtensionResourceState{
 							Name:    pointer.String(key + "-" + worker.Machine.Image.Name + "-original"),
 							Kind:    extensionsv1alpha1.OperatingSystemConfigResource,
 							Purpose: pointer.String(string(extensionsv1alpha1.OperatingSystemConfigPurposeReconcile)),
@@ -428,8 +429,8 @@ var _ = Describe("OperatingSystemConfig", func() {
 						},
 					)
 				}
-				shootState = &gardencorev1alpha1.ShootState{
-					Spec: gardencorev1alpha1.ShootStateSpec{
+				shootState = &gardencorev1beta1.ShootState{
+					Spec: gardencorev1beta1.ShootStateSpec{
 						Extensions: extensions,
 					},
 				}
@@ -445,9 +446,11 @@ var _ = Describe("OperatingSystemConfig", func() {
 				mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
 				mc := mockclient.NewMockClient(ctrl)
-				mc.EXPECT().Status().Return(mc).AnyTimes()
+				mockStatusWriter := mockclient.NewMockStatusWriter(ctrl)
 
-				mc.EXPECT().Get(ctx, kutil.Key(namespace, "shoot-access-cloud-config-downloader"), gomock.AssignableToTypeOf(&corev1.Secret{})).Return(apierrors.NewNotFound(schema.GroupResource{}, ""))
+				mc.EXPECT().Status().Return(mockStatusWriter).AnyTimes()
+
+				mc.EXPECT().Get(ctx, kubernetesutils.Key(namespace, "shoot-access-cloud-config-downloader"), gomock.AssignableToTypeOf(&corev1.Secret{})).Return(apierrors.NewNotFound(schema.GroupResource{}, ""))
 				mc.EXPECT().Create(ctx, &corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "shoot-access-cloud-config-downloader",
@@ -493,7 +496,7 @@ var _ = Describe("OperatingSystemConfig", func() {
 					// restore state
 					expectedWithState := obj.DeepCopy()
 					expectedWithState.Status.State = &runtime.RawExtension{Raw: state}
-					test.EXPECTPatch(ctx, mc, expectedWithState, obj, types.MergePatchType)
+					test.EXPECTStatusPatch(ctx, mockStatusWriter, expectedWithState, obj, types.MergePatchType)
 
 					// annotate with restore annotation
 					expectedWithRestore := expectedWithState.DeepCopy()
@@ -546,11 +549,11 @@ var _ = Describe("OperatingSystemConfig", func() {
 				)()
 				mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
-				By("deploy")
+				By("Deploy")
 				// Deploy should fill internal state with the added timestamp annotation
 				Expect(defaultDepWaiter.Deploy(ctx)).To(Succeed())
 
-				By("patch object")
+				By("Patch object")
 				for i := range expected {
 					patch := client.MergeFrom(expected[i].DeepCopy())
 					// remove operation annotation, add old timestamp annotation
@@ -586,7 +589,7 @@ var _ = Describe("OperatingSystemConfig", func() {
 					Expect(c.Create(ctx, ccSecret)).To(Succeed())
 				}
 
-				By("wait")
+				By("Wait")
 				Expect(defaultDepWaiter.Wait(ctx)).NotTo(Succeed(), "operatingsystemconfig indicates error")
 			})
 
@@ -598,11 +601,11 @@ var _ = Describe("OperatingSystemConfig", func() {
 				)()
 				mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
-				By("deploy")
+				By("Deploy")
 				// Deploy should fill internal state with the added timestamp annotation
 				Expect(defaultDepWaiter.Deploy(ctx)).To(Succeed())
 
-				By("patch object")
+				By("Patch object")
 				for i := range expected {
 					patch := client.MergeFrom(expected[i].DeepCopy())
 					// remove operation annotation, add up-to-date timestamp annotation
@@ -638,7 +641,7 @@ var _ = Describe("OperatingSystemConfig", func() {
 					Expect(c.Create(ctx, ccSecret)).To(Succeed())
 				}
 
-				By("wait")
+				By("Wait")
 				Expect(defaultDepWaiter.Wait(ctx)).To(Succeed(), "operatingsystemconfig is ready")
 			})
 		})
@@ -732,7 +735,7 @@ var _ = Describe("OperatingSystemConfig", func() {
 			It("should return error if not deleted successfully", func() {
 				defer test.WithVars(
 					&extensions.TimeNow, mockNow.Do,
-					&gutil.TimeNow, mockNow.Do,
+					&gardenerutils.TimeNow, mockNow.Do,
 				)()
 				mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
@@ -741,7 +744,7 @@ var _ = Describe("OperatingSystemConfig", func() {
 						Name:      "osc1",
 						Namespace: namespace,
 						Annotations: map[string]string{
-							gutil.ConfirmationDeletion:         "true",
+							gardenerutils.ConfirmationDeletion: "true",
 							v1beta1constants.GardenerTimestamp: now.UTC().String(),
 						},
 					},

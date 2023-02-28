@@ -18,20 +18,20 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
+	clientcmdlatest "k8s.io/client-go/tools/clientcmd/api/latest"
+	clientcmdv1 "k8s.io/client-go/tools/clientcmd/api/v1"
+	componentbaseconfig "k8s.io/component-base/config"
+	"k8s.io/utils/clock"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap"
 	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
 	"github.com/gardener/gardener/pkg/utils"
-
-	"github.com/go-logr/logr"
-	corev1 "k8s.io/api/core/v1"
-	clientcmdlatest "k8s.io/client-go/tools/clientcmd/api/latest"
-	clientcmdv1 "k8s.io/client-go/tools/clientcmd/api/v1"
-	baseconfig "k8s.io/component-base/config"
-	"k8s.io/utils/clock"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // shootClientMap is a ClientMap for requesting and storing clients for Shoot clusters.
@@ -56,7 +56,7 @@ type ShootClientSetFactory struct {
 	// SeedClient is the seed cluster client.
 	SeedClient client.Client
 	// ClientConnectionConfiguration is the configuration that will be used by created ClientSets.
-	ClientConnectionConfig baseconfig.ClientConnectionConfiguration
+	ClientConnectionConfig componentbaseconfig.ClientConnectionConfiguration
 
 	// log is a logger for logging entries related to creating Shoot ClientSets.
 	log logr.Logger

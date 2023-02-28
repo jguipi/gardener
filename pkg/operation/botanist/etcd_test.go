@@ -19,25 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	fakeclientset "github.com/gardener/gardener/pkg/client/kubernetes/fake"
-	"github.com/gardener/gardener/pkg/features"
-	gardenletconfig "github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	"github.com/gardener/gardener/pkg/operation"
-	. "github.com/gardener/gardener/pkg/operation/botanist"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/etcd"
-	mocketcd "github.com/gardener/gardener/pkg/operation/botanist/component/etcd/mock"
-	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
-	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
-	"github.com/gardener/gardener/pkg/utils/test"
-
 	hvpav1alpha1 "github.com/gardener/hvpa-controller/api/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
@@ -53,6 +34,26 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	kubernetesfake "github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	"github.com/gardener/gardener/pkg/features"
+	gardenletconfig "github.com/gardener/gardener/pkg/gardenlet/apis/config"
+	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	"github.com/gardener/gardener/pkg/operation"
+	. "github.com/gardener/gardener/pkg/operation/botanist"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/etcd"
+	mocketcd "github.com/gardener/gardener/pkg/operation/botanist/component/etcd/mock"
+	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
+	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
+	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
+	"github.com/gardener/gardener/pkg/utils/test"
 )
 
 var _ = Describe("Etcd", func() {
@@ -80,7 +81,7 @@ var _ = Describe("Etcd", func() {
 		ctrl = gomock.NewController(GinkgoT())
 		c = mockclient.NewMockClient(ctrl)
 		reader = mockclient.NewMockReader(ctrl)
-		kubernetesClient = fakeclientset.NewClientSetBuilder().
+		kubernetesClient = kubernetesfake.NewClientSetBuilder().
 			WithClient(c).
 			WithAPIReader(reader).
 			Build()
@@ -154,6 +155,7 @@ var _ = Describe("Etcd", func() {
 								MaintenanceTimeWindow: maintenanceTimeWindow,
 								ScaleDownUpdateMode:   pointer.String(computeUpdateMode(class, purpose)),
 							}),
+							expectedHighAvailabilityEnabled: Equal(v1beta1helper.IsHAControlPlaneConfigured(botanist.Shoot.GetInfo())),
 						}
 
 						oldNewEtcd := NewEtcd
@@ -193,6 +195,7 @@ var _ = Describe("Etcd", func() {
 						MaintenanceTimeWindow: maintenanceTimeWindow,
 						ScaleDownUpdateMode:   pointer.String(hvpav1alpha1.UpdateModeMaintenanceWindow),
 					}),
+					expectedHighAvailabilityEnabled: Equal(v1beta1helper.IsHAControlPlaneConfigured(botanist.Shoot.GetInfo())),
 				}
 
 				oldNewEtcd := NewEtcd
@@ -224,6 +227,7 @@ var _ = Describe("Etcd", func() {
 						MaintenanceTimeWindow: maintenanceTimeWindow,
 						ScaleDownUpdateMode:   pointer.String(hvpav1alpha1.UpdateModeMaintenanceWindow),
 					}),
+					expectedHighAvailabilityEnabled: Equal(v1beta1helper.IsHAControlPlaneConfigured(botanist.Shoot.GetInfo())),
 				}
 
 				oldNewEtcd := NewEtcd
@@ -336,7 +340,7 @@ var _ = Describe("Etcd", func() {
 				}
 
 				expectGetBackupSecret = func() {
-					c.EXPECT().Get(ctx, kutil.Key(namespace, "etcd-backup"), gomock.AssignableToTypeOf(&corev1.Secret{})).DoAndReturn(
+					c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, "etcd-backup"), gomock.AssignableToTypeOf(&corev1.Secret{})).DoAndReturn(
 						func(ctx context.Context, key client.ObjectKey, obj client.Object, opt ...client.GetOption) error {
 							backupSecret.DeepCopyInto(obj.(*corev1.Secret))
 							return nil
@@ -384,7 +388,7 @@ var _ = Describe("Etcd", func() {
 			})
 
 			It("should fail when reading the backup secret fails", func() {
-				c.EXPECT().Get(ctx, kutil.Key(namespace, "etcd-backup"), gomock.AssignableToTypeOf(&corev1.Secret{})).Return(fakeErr)
+				c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, "etcd-backup"), gomock.AssignableToTypeOf(&corev1.Secret{})).Return(fakeErr)
 
 				Expect(botanist.DeployEtcd(ctx)).To(MatchError(fakeErr))
 			})
@@ -461,6 +465,7 @@ type newEtcdValidator struct {
 	expectedStorageCapacity         gomegatypes.GomegaMatcher
 	expectedDefragmentationSchedule gomegatypes.GomegaMatcher
 	expectedHVPAConfig              gomegatypes.GomegaMatcher
+	expectedHighAvailabilityEnabled gomegatypes.GomegaMatcher
 }
 
 func (v *newEtcdValidator) NewEtcd(
@@ -479,6 +484,7 @@ func (v *newEtcdValidator) NewEtcd(
 	Expect(values.Replicas).To(v.expectedReplicas)
 	Expect(values.StorageCapacity).To(v.expectedStorageCapacity)
 	Expect(values.DefragmentationSchedule).To(v.expectedDefragmentationSchedule)
+	Expect(values.HighAvailabilityEnabled).To(v.expectedHighAvailabilityEnabled)
 
 	return v
 }

@@ -19,20 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	extcoreinformers "github.com/gardener/gardener/pkg/client/core/informers/externalversions"
-	coreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/controllerutils"
-	"github.com/gardener/gardener/pkg/features"
-	mockauthorizer "github.com/gardener/gardener/pkg/mock/apiserver/authorization/authorizer"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-	. "github.com/gardener/gardener/plugin/pkg/shoot/validator"
-
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -48,22 +34,33 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/pointer"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/controllerutils"
+	"github.com/gardener/gardener/pkg/features"
+	mockauthorizer "github.com/gardener/gardener/pkg/mock/apiserver/authorization/authorizer"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
+	. "github.com/gardener/gardener/plugin/pkg/shoot/validator"
 )
 
 var _ = Describe("validator", func() {
 	Describe("#Admit", func() {
 		var (
-			ctx                    context.Context
-			admissionHandler       *ValidateShoot
-			ctrl                   *gomock.Controller
-			auth                   *mockauthorizer.MockAuthorizer
-			coreInformerFactory    coreinformers.SharedInformerFactory
-			extCoreInformerFactory extcoreinformers.SharedInformerFactory
-			cloudProfile           core.CloudProfile
-			seed                   core.Seed
-			secretBinding          core.SecretBinding
-			project                core.Project
-			shoot                  core.Shoot
+			ctx                 context.Context
+			admissionHandler    *ValidateShoot
+			ctrl                *gomock.Controller
+			auth                *mockauthorizer.MockAuthorizer
+			coreInformerFactory gardencoreinformers.SharedInformerFactory
+			cloudProfile        core.CloudProfile
+			seed                core.Seed
+			secretBinding       core.SecretBinding
+			project             core.Project
+			shoot               core.Shoot
 
 			userInfo            = &user.DefaultInfo{Name: "foo"}
 			authorizeAttributes authorizer.AttributesRecord
@@ -275,6 +272,11 @@ var _ = Describe("validator", func() {
 								Zones: []string{"europe-a"},
 							},
 						},
+						WorkersSettings: &core.WorkersSettings{
+							SSHAccess: &core.SSHAccess{
+								Enabled: true,
+							},
+						},
 						InfrastructureConfig: &runtime.RawExtension{Raw: []byte(`{
 "kind": "InfrastructureConfig",
 "apiVersion": "some.random.config/v1beta1"}`)},
@@ -282,13 +284,13 @@ var _ = Describe("validator", func() {
 				},
 			}
 
-			shootStateBase = gardencorev1alpha1.ShootState{
+			shootStateBase = core.ShootState{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      shootBase.Name,
 					Namespace: shootBase.Namespace,
 				},
-				Spec: gardencorev1alpha1.ShootStateSpec{
-					Gardener: []gardencorev1alpha1.GardenerResourceData{
+				Spec: core.ShootStateSpec{
+					Gardener: []core.GardenerResourceData{
 						{
 							Labels: map[string]string{
 								"name":       "kube-apiserver-etcd-encryption-key",
@@ -314,11 +316,8 @@ var _ = Describe("validator", func() {
 			admissionHandler, _ = New()
 			admissionHandler.SetAuthorizer(auth)
 			admissionHandler.AssignReadyFunc(func() bool { return true })
-			coreInformerFactory = coreinformers.NewSharedInformerFactory(nil, 0)
+			coreInformerFactory = gardencoreinformers.NewSharedInformerFactory(nil, 0)
 			admissionHandler.SetInternalCoreInformerFactory(coreInformerFactory)
-
-			extCoreInformerFactory = extcoreinformers.NewSharedInformerFactory(nil, 0)
-			admissionHandler.SetExternalCoreInformerFactory(extCoreInformerFactory)
 
 			authorizeAttributes = authorizer.AttributesRecord{
 				User:            userInfo,
@@ -472,7 +471,7 @@ var _ = Describe("validator", func() {
 
 				// set old shoot for update and add gardener finalizer to it
 				oldShoot = shoot.DeepCopy()
-				finalizers := sets.NewString(oldShoot.GetFinalizers()...)
+				finalizers := sets.New[string](oldShoot.GetFinalizers()...)
 				finalizers.Insert(core.GardenerName)
 				oldShoot.SetFinalizers(finalizers.UnsortedList())
 			})
@@ -662,7 +661,7 @@ var _ = Describe("validator", func() {
 
 			It("should allow adding the deletion confirmation", func() {
 				shoot.Annotations = make(map[string]string)
-				shoot.Annotations[gutil.ConfirmationDeletion] = "true"
+				shoot.Annotations[gardenerutils.ConfirmationDeletion] = "true"
 
 				attrs := admission.NewAttributesRecord(&shoot, oldShoot, core.Kind("Shoot").WithVersion("version"), shoot.Namespace, shoot.Name, core.Resource("shoots").WithVersion("version"), "", admission.Update, &metav1.UpdateOptions{}, false, nil)
 				err := admissionHandler.Admit(ctx, attrs, nil)
@@ -725,7 +724,7 @@ var _ = Describe("validator", func() {
 			var (
 				oldShoot   core.Shoot
 				newSeed    core.Seed
-				shootState gardencorev1alpha1.ShootState
+				shootState core.ShootState
 			)
 			BeforeEach(func() {
 				oldShoot = *shootBase.DeepCopy()
@@ -739,7 +738,7 @@ var _ = Describe("validator", func() {
 				Expect(coreInformerFactory.Core().InternalVersion().Seeds().Informer().GetStore().Add(&newSeed)).To(Succeed())
 				Expect(coreInformerFactory.Core().InternalVersion().CloudProfiles().Informer().GetStore().Add(&cloudProfile)).To(Succeed())
 				Expect(coreInformerFactory.Core().InternalVersion().Projects().Informer().GetStore().Add(&project)).To(Succeed())
-				Expect(extCoreInformerFactory.Core().V1alpha1().ShootStates().Informer().GetStore().Add(&shootState)).To(Succeed())
+				Expect(coreInformerFactory.Core().InternalVersion().ShootStates().Informer().GetStore().Add(&shootState)).To(Succeed())
 			})
 
 			It("should not allow changing the seedName on admission.Update if the subresource is not binding", func() {
@@ -935,6 +934,20 @@ var _ = Describe("validator", func() {
 				Expect(controllerutils.HasTask(shoot.ObjectMeta.Annotations, "deployInfrastructure")).To(BeTrue())
 			})
 
+			It("should add deploy infrastructure task because SSHAccess in WorkersSettings config has changed", func() {
+				shoot.Spec.Provider.WorkersSettings = &core.WorkersSettings{
+					SSHAccess: &core.SSHAccess{
+						Enabled: false,
+					},
+				}
+
+				attrs := admission.NewAttributesRecord(&shoot, oldShoot, core.Kind("Shoot").WithVersion("version"), shoot.Namespace, shoot.Name, core.Resource("shoots").WithVersion("version"), "", admission.Update, &metav1.UpdateOptions{}, false, nil)
+				err := admissionHandler.Admit(ctx, attrs, nil)
+
+				Expect(err).To(Not(HaveOccurred()))
+				Expect(controllerutils.HasTask(shoot.ObjectMeta.Annotations, "deployInfrastructure")).To(BeTrue())
+			})
+
 			It("should add deploy dnsrecord tasks because dns config has changed", func() {
 				shoot.Spec.DNS = &core.DNS{}
 
@@ -960,7 +973,7 @@ var _ = Describe("validator", func() {
 
 			It("should add deploy infrastructure task because shoot operation annotation to rotate all credentials was set", func() {
 				shoot.Annotations = make(map[string]string)
-				shoot.Annotations[v1beta1constants.GardenerOperation] = v1beta1constants.ShootOperationRotateCredentialsStart
+				shoot.Annotations[v1beta1constants.GardenerOperation] = v1beta1constants.OperationRotateCredentialsStart
 
 				attrs := admission.NewAttributesRecord(&shoot, oldShoot, core.Kind("Shoot").WithVersion("version"), shoot.Namespace, shoot.Name, core.Resource("shoots").WithVersion("version"), "", admission.Update, &metav1.UpdateOptions{}, false, nil)
 				err := admissionHandler.Admit(ctx, attrs, nil)
@@ -1056,6 +1069,20 @@ var _ = Describe("validator", func() {
 				Expect(err).To(BeForbiddenError())
 			})
 
+			It("should reject due to a duplicate zone", func() {
+				shoot.Spec.Provider.Workers[0].Zones = []string{"europe-a", "europe-a"}
+
+				Expect(coreInformerFactory.Core().InternalVersion().Projects().Informer().GetStore().Add(&project)).To(Succeed())
+				Expect(coreInformerFactory.Core().InternalVersion().CloudProfiles().Informer().GetStore().Add(&cloudProfile)).To(Succeed())
+				Expect(coreInformerFactory.Core().InternalVersion().Seeds().Informer().GetStore().Add(&seed)).To(Succeed())
+				Expect(coreInformerFactory.Core().InternalVersion().SecretBindings().Informer().GetStore().Add(&secretBinding)).To(Succeed())
+
+				attrs := admission.NewAttributesRecord(&shoot, nil, core.Kind("Shoot").WithVersion("version"), shoot.Namespace, shoot.Name, core.Resource("shoots").WithVersion("version"), "", admission.Create, &metav1.CreateOptions{}, false, userInfo)
+				err := admissionHandler.Admit(ctx, attrs, nil)
+
+				Expect(err).To(BeForbiddenError())
+			})
+
 			It("should reject due to an invalid zone update", func() {
 				oldShoot := shoot.DeepCopy()
 				shoot.Spec.Provider.Workers[0].Zones = append(shoot.Spec.Provider.Workers[0].Zones, oldShoot.Spec.Provider.Workers[0].Zones...)
@@ -1091,7 +1118,7 @@ var _ = Describe("validator", func() {
 			Context("scheduling checks for Create operation", func() {
 				var (
 					oldShoot   *core.Shoot
-					shootState gardencorev1alpha1.ShootState
+					shootState core.ShootState
 				)
 
 				BeforeEach(func() {
@@ -1103,7 +1130,7 @@ var _ = Describe("validator", func() {
 					Expect(coreInformerFactory.Core().InternalVersion().CloudProfiles().Informer().GetStore().Add(&cloudProfile)).To(Succeed())
 					Expect(coreInformerFactory.Core().InternalVersion().Seeds().Informer().GetStore().Add(&seed)).To(Succeed())
 					Expect(coreInformerFactory.Core().InternalVersion().SecretBindings().Informer().GetStore().Add(&secretBinding)).To(Succeed())
-					Expect(extCoreInformerFactory.Core().V1alpha1().ShootStates().Informer().GetStore().Add(&shootState)).To(Succeed())
+					Expect(coreInformerFactory.Core().InternalVersion().ShootStates().Informer().GetStore().Add(&shootState)).To(Succeed())
 				})
 
 				Context("taints and tolerations", func() {
@@ -2563,6 +2590,93 @@ var _ = Describe("validator", func() {
 						Expect(err).To(BeForbiddenError())
 					})
 
+					It("should reject due to a machine image that does not match the kubeletVersionConstraint constraint when the control plane K8s version does not match", func() {
+						cloudProfile.Spec.MachineImages = append(cloudProfile.Spec.MachineImages,
+							core.MachineImage{
+								Name: "constraint-image-name",
+								Versions: []core.MachineImageVersion{
+									{
+										ExpirableVersion: core.ExpirableVersion{
+											Version: "1.2.3",
+										},
+										KubeletVersionConstraint: pointer.String("< 1.26"),
+										Architectures:            []string{"amd64"},
+									},
+								},
+							},
+						)
+
+						shoot.Spec.Kubernetes.Version = "1.26.0"
+						shoot.Spec.Provider.Workers = []core.Worker{
+							{
+								Machine: core.Machine{
+									Type: "machine-type-1",
+									Image: &core.ShootMachineImage{
+										Name:    "constraint-image-name",
+										Version: "1.2.3",
+									},
+									Architecture: pointer.String("amd64"),
+								},
+							},
+						}
+
+						Expect(coreInformerFactory.Core().InternalVersion().Projects().Informer().GetStore().Add(&project)).To(Succeed())
+						Expect(coreInformerFactory.Core().InternalVersion().CloudProfiles().Informer().GetStore().Add(&cloudProfile)).To(Succeed())
+						Expect(coreInformerFactory.Core().InternalVersion().Seeds().Informer().GetStore().Add(&seed)).To(Succeed())
+						Expect(coreInformerFactory.Core().InternalVersion().SecretBindings().Informer().GetStore().Add(&secretBinding)).To(Succeed())
+
+						attrs := admission.NewAttributesRecord(&shoot, nil, core.Kind("Shoot").WithVersion("version"), shoot.Namespace, shoot.Name, core.Resource("shoots").WithVersion("version"), "", admission.Create, &metav1.CreateOptions{}, false, userInfo)
+						err := admissionHandler.Admit(ctx, attrs, nil)
+
+						Expect(err).To(BeForbiddenError())
+						Expect(err.Error()).To(ContainSubstring("does not support CPU architecture 'amd64', is expired or does not match kubelet version constraint"))
+					})
+
+					It("should reject due to a machine image that does not match the kubeletVersionConstraint when the worker K8s version does not match", func() {
+						cloudProfile.Spec.MachineImages = append(cloudProfile.Spec.MachineImages,
+							core.MachineImage{
+								Name: "constraint-image-name",
+								Versions: []core.MachineImageVersion{
+									{
+										ExpirableVersion: core.ExpirableVersion{
+											Version: "1.2.3",
+										},
+										KubeletVersionConstraint: pointer.String(">= 1.26"),
+										Architectures:            []string{"amd64"},
+									},
+								},
+							},
+						)
+
+						shoot.Spec.Kubernetes.Version = "1.26.0"
+						shoot.Spec.Provider.Workers = []core.Worker{
+							{
+								Machine: core.Machine{
+									Type: "machine-type-1",
+									Image: &core.ShootMachineImage{
+										Name:    "constraint-image-name",
+										Version: "1.2.3",
+									},
+									Architecture: pointer.String("amd64"),
+								},
+								Kubernetes: &core.WorkerKubernetes{
+									Version: pointer.String("1.25.0"),
+								},
+							},
+						}
+
+						Expect(coreInformerFactory.Core().InternalVersion().Projects().Informer().GetStore().Add(&project)).To(Succeed())
+						Expect(coreInformerFactory.Core().InternalVersion().CloudProfiles().Informer().GetStore().Add(&cloudProfile)).To(Succeed())
+						Expect(coreInformerFactory.Core().InternalVersion().Seeds().Informer().GetStore().Add(&seed)).To(Succeed())
+						Expect(coreInformerFactory.Core().InternalVersion().SecretBindings().Informer().GetStore().Add(&secretBinding)).To(Succeed())
+
+						attrs := admission.NewAttributesRecord(&shoot, nil, core.Kind("Shoot").WithVersion("version"), shoot.Namespace, shoot.Name, core.Resource("shoots").WithVersion("version"), "", admission.Create, &metav1.CreateOptions{}, false, userInfo)
+						err := admissionHandler.Admit(ctx, attrs, nil)
+
+						Expect(err).To(BeForbiddenError())
+						Expect(err.Error()).To(ContainSubstring("does not support CPU architecture 'amd64', is expired or does not match kubelet version constraint"))
+					})
+
 					It("should default version to latest non-preview version as shoot does not specify one", func() {
 						shoot.Spec.Provider.Workers[0].Machine.Image = nil
 						shoot.Spec.Provider.Workers[1].Machine.Image = nil
@@ -3573,7 +3687,7 @@ var _ = Describe("validator", func() {
 			var (
 				oldShoot   core.Shoot
 				newSeed    core.Seed
-				shootState gardencorev1alpha1.ShootState
+				shootState core.ShootState
 			)
 			BeforeEach(func() {
 				oldShoot = *shootBase.DeepCopy()
@@ -3587,7 +3701,7 @@ var _ = Describe("validator", func() {
 				Expect(coreInformerFactory.Core().InternalVersion().Seeds().Informer().GetStore().Add(&newSeed)).To(Succeed())
 				Expect(coreInformerFactory.Core().InternalVersion().CloudProfiles().Informer().GetStore().Add(&cloudProfile)).To(Succeed())
 				Expect(coreInformerFactory.Core().InternalVersion().Projects().Informer().GetStore().Add(&project)).To(Succeed())
-				Expect(extCoreInformerFactory.Core().V1alpha1().ShootStates().Informer().GetStore().Add(&shootState)).To(Succeed())
+				Expect(coreInformerFactory.Core().InternalVersion().ShootStates().Informer().GetStore().Add(&shootState)).To(Succeed())
 			})
 
 			Context("when binding is updated", func() {
@@ -3612,7 +3726,7 @@ var _ = Describe("validator", func() {
 					defer test.WithFeatureGate(utilfeature.DefaultFeatureGate, features.SeedChange, true)()
 					shoot.Spec.SeedName = pointer.String(newSeed.Name)
 
-					shootState.Spec.Gardener = append(shootState.Spec.Gardener, gardencorev1alpha1.GardenerResourceData{
+					shootState.Spec.Gardener = append(shootState.Spec.Gardener, core.GardenerResourceData{
 						Labels: map[string]string{
 							"name":       "kube-apiserver-etcd-encryption-key",
 							"managed-by": "secrets-manager",
@@ -3885,7 +3999,7 @@ var _ = Describe("validator", func() {
 						},
 					}
 					shoot.Annotations = map[string]string{
-						gutil.ConfirmationDeletion: "true",
+						gardenerutils.ConfirmationDeletion: "true",
 					}
 
 					Expect(shootStore.Add(&shoot)).NotTo(HaveOccurred())

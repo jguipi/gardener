@@ -18,11 +18,11 @@ import (
 	"bytes"
 	"text/template"
 
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-
 	"github.com/Masterminds/sprig"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
 )
 
 const (
@@ -100,23 +100,4 @@ func CentralMonitoringConfiguration() (component.CentralMonitoringConfig, error)
 	}
 
 	return component.CentralMonitoringConfig{ScrapeConfigs: []string{scrapeConfig.String()}}, nil
-}
-
-// ScrapeConfigs returns the scrape configurations for Prometheus.
-func (h *hvpa) ScrapeConfigs() ([]string, error) {
-	var scrapeConfig bytes.Buffer
-
-	if err := monitoringScrapeConfigTemplate.Execute(&scrapeConfig, map[string]interface{}{
-		"relabeledNamespace": h.namespace,
-		"allowedMetrics":     monitoringAllowedMetrics,
-	}); err != nil {
-		return nil, err
-	}
-
-	return []string{scrapeConfig.String()}, nil
-}
-
-// AlertingRules returns the alerting rules for AlertManager.
-func (h *hvpa) AlertingRules() (map[string]string, error) {
-	return nil, nil
 }

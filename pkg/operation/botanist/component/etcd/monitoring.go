@@ -20,10 +20,10 @@ import (
 	"strings"
 	"text/template"
 
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	versionutils "github.com/gardener/gardener/pkg/utils/version"
-
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 )
 
 const (
@@ -396,11 +396,6 @@ func (e *etcd) ScrapeConfigs() ([]string, error) {
 func (e *etcd) AlertingRules() (map[string]string, error) {
 	var alertingRules bytes.Buffer
 
-	k8sGTE121, err := versionutils.CompareVersions(e.values.K8sVersion, ">=", "1.21")
-	if err != nil {
-		return nil, err
-	}
-
 	etcdReplicas := int32(1)
 	if e.values.Replicas != nil {
 		etcdReplicas = *e.values.Replicas
@@ -412,7 +407,7 @@ func (e *etcd) AlertingRules() (map[string]string, error) {
 		"class":              e.values.Class,
 		"classImportant":     ClassImportant,
 		"backupEnabled":      e.values.BackupConfig != nil,
-		"k8sGTE121":          k8sGTE121,
+		"k8sGTE121":          versionutils.ConstraintK8sGreaterEqual121.Check(e.values.KubernetesVersion),
 		"etcdQuorumReplicas": int(etcdReplicas/2) + 1,
 		"isHA":               etcdReplicas > 1,
 	}); err != nil {

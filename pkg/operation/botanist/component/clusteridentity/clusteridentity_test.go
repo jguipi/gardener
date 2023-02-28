@@ -19,14 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	. "github.com/gardener/gardener/pkg/operation/botanist/component/clusteridentity"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -36,6 +28,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	. "github.com/gardener/gardener/pkg/operation/botanist/component/clusteridentity"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("ClusterIdentity", func() {
@@ -47,11 +49,14 @@ var _ = Describe("ClusterIdentity", func() {
 		ctx       = context.TODO()
 		fakeErr   = fmt.Errorf("fake error")
 		identity  = "hugo"
+		origin    = "shoot"
 		namespace = "shoot--foo--bar"
 
 		configMapYAML = `apiVersion: v1
 data:
   cluster-identity: ` + identity + `
+  origin: ` + origin + `
+immutable: true
 kind: ConfigMap
 metadata:
   creationTimestamp: null
@@ -104,7 +109,7 @@ metadata:
 	Describe("#Deploy", func() {
 		It("should fail because the managed resource secret cannot be updated", func() {
 			gomock.InOrder(
-				c.EXPECT().Get(ctx, kutil.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
+				c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
 				c.EXPECT().Update(ctx, gomock.AssignableToTypeOf(&corev1.Secret{})).Return(fakeErr),
 			)
 
@@ -113,9 +118,9 @@ metadata:
 
 		It("should fail because the managed resource cannot be updated", func() {
 			gomock.InOrder(
-				c.EXPECT().Get(ctx, kutil.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
+				c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
 				c.EXPECT().Update(ctx, gomock.AssignableToTypeOf(&corev1.Secret{})),
-				c.EXPECT().Get(ctx, kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})),
+				c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})),
 				c.EXPECT().Update(ctx, gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(fakeErr),
 			)
 
@@ -124,11 +129,11 @@ metadata:
 
 		It("should successfully deploy all resources", func() {
 			gomock.InOrder(
-				c.EXPECT().Get(ctx, kutil.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
+				c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
 				c.EXPECT().Update(ctx, gomock.AssignableToTypeOf(&corev1.Secret{})).Do(func(ctx context.Context, obj client.Object, opts ...client.UpdateOption) {
 					Expect(obj).To(DeepEqual(managedResourceSecret))
 				}),
-				c.EXPECT().Get(ctx, kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})),
+				c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})),
 				c.EXPECT().Update(ctx, gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Do(func(ctx context.Context, obj client.Object, opts ...client.UpdateOption) {
 					Expect(obj).To(DeepEqual(managedResource))
 				}),
@@ -177,7 +182,7 @@ metadata:
 			defer func() { TimeoutWaitForManagedResource = oldTimeout }()
 			TimeoutWaitForManagedResource = time.Millisecond
 
-			c.EXPECT().Get(gomock.Any(), kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(fakeErr)
+			c.EXPECT().Get(gomock.Any(), kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(fakeErr)
 
 			Expect(clusterIdentity.Wait(ctx)).To(MatchError(fakeErr))
 		})
@@ -187,7 +192,7 @@ metadata:
 			defer func() { TimeoutWaitForManagedResource = oldTimeout }()
 			TimeoutWaitForManagedResource = time.Millisecond
 
-			c.EXPECT().Get(gomock.Any(), kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).DoAndReturn(
+			c.EXPECT().Get(gomock.Any(), kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).DoAndReturn(
 				func(ctx context.Context, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
 					(&resourcesv1alpha1.ManagedResource{
 						ObjectMeta: metav1.ObjectMeta{
@@ -219,7 +224,7 @@ metadata:
 			defer func() { TimeoutWaitForManagedResource = oldTimeout }()
 			TimeoutWaitForManagedResource = time.Millisecond
 
-			c.EXPECT().Get(gomock.Any(), kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).DoAndReturn(
+			c.EXPECT().Get(gomock.Any(), kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).DoAndReturn(
 				func(ctx context.Context, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
 					(&resourcesv1alpha1.ManagedResource{
 						ObjectMeta: metav1.ObjectMeta{
@@ -251,37 +256,87 @@ metadata:
 		timeNowFunc := func() time.Time { return time.Time{} }
 
 		It("should fail when the wait for the managed resource deletion fails", func() {
-			oldTimeNow := gutil.TimeNow
-			defer func() { gutil.TimeNow = oldTimeNow }()
-			gutil.TimeNow = timeNowFunc
+			oldTimeNow := gardenerutils.TimeNow
+			defer func() { gardenerutils.TimeNow = oldTimeNow }()
+			gardenerutils.TimeNow = timeNowFunc
 
-			c.EXPECT().Get(gomock.Any(), kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(fakeErr)
+			c.EXPECT().Get(gomock.Any(), kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(fakeErr)
 
 			Expect(clusterIdentity.WaitCleanup(ctx)).To(MatchError(fakeErr))
 		})
 
 		It("should fail when the wait for the managed resource deletion times out", func() {
-			oldTimeNow := gutil.TimeNow
-			defer func() { gutil.TimeNow = oldTimeNow }()
-			gutil.TimeNow = timeNowFunc
+			oldTimeNow := gardenerutils.TimeNow
+			defer func() { gardenerutils.TimeNow = oldTimeNow }()
+			gardenerutils.TimeNow = timeNowFunc
 
 			oldTimeout := TimeoutWaitForManagedResource
 			defer func() { TimeoutWaitForManagedResource = oldTimeout }()
 			TimeoutWaitForManagedResource = time.Millisecond
 
-			c.EXPECT().Get(gomock.Any(), kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).AnyTimes()
+			c.EXPECT().Get(gomock.Any(), kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).AnyTimes()
 
 			Expect(clusterIdentity.WaitCleanup(ctx)).To(MatchError(ContainSubstring("still exists")))
 		})
 
 		It("should successfully delete all resources", func() {
-			oldTimeNow := gutil.TimeNow
-			defer func() { gutil.TimeNow = oldTimeNow }()
-			gutil.TimeNow = timeNowFunc
+			oldTimeNow := gardenerutils.TimeNow
+			defer func() { gardenerutils.TimeNow = oldTimeNow }()
+			gardenerutils.TimeNow = timeNowFunc
 
-			c.EXPECT().Get(gomock.Any(), kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(apierrors.NewNotFound(schema.GroupResource{}, ""))
+			c.EXPECT().Get(gomock.Any(), kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(apierrors.NewNotFound(schema.GroupResource{}, ""))
 
 			Expect(clusterIdentity.WaitCleanup(ctx)).To(Succeed())
+		})
+	})
+
+	Describe("#IsClusterIdentityEmptyOrFromOrigin", func() {
+		var (
+			seedClient client.Client
+
+			configMapSeed    *corev1.ConfigMap
+			configMapNonSeed *corev1.ConfigMap
+		)
+
+		BeforeEach(func() {
+			seedClient = fakeclient.NewClientBuilder().WithScheme(kubernetes.SeedScheme).Build()
+
+			configMapSeed = &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "cluster-identity",
+					Namespace: metav1.NamespaceSystem,
+				},
+				Immutable: pointer.Bool(true),
+				Data: map[string]string{
+					"cluster-identity": "foo",
+					"origin":           "seed",
+				},
+			}
+			configMapNonSeed = &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "cluster-identity",
+					Namespace: metav1.NamespaceSystem,
+				},
+				Immutable: pointer.Bool(true),
+				Data: map[string]string{
+					"cluster-identity": "foo",
+					"origin":           "bar",
+				},
+			}
+		})
+
+		It("should return true if there is no cluster-identity config map", func() {
+			Expect(IsClusterIdentityEmptyOrFromOrigin(ctx, seedClient, "seed")).To(BeTrue())
+		})
+
+		It("should return false if there is a cluster-identity config map with an origin not equal to seed", func() {
+			Expect(seedClient.Create(ctx, configMapNonSeed)).To(Succeed())
+			Expect(IsClusterIdentityEmptyOrFromOrigin(ctx, seedClient, "seed")).To(BeFalse())
+		})
+
+		It("should return true if there is a cluster-identity config map with an origin equal to seed", func() {
+			Expect(seedClient.Create(ctx, configMapSeed)).To(Succeed())
+			Expect(IsClusterIdentityEmptyOrFromOrigin(ctx, seedClient, "seed")).To(BeTrue())
 		})
 	})
 })

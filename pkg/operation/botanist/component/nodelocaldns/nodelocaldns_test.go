@@ -19,19 +19,6 @@ import (
 	"strconv"
 
 	"github.com/Masterminds/semver"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	. "github.com/gardener/gardener/pkg/operation/botanist/component/nodelocaldns"
-	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
-	"github.com/gardener/gardener/pkg/utils"
-	"github.com/gardener/gardener/pkg/utils/managedresources"
-	"github.com/gardener/gardener/pkg/utils/retry"
-	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -45,6 +32,20 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	. "github.com/gardener/gardener/pkg/operation/botanist/component/nodelocaldns"
+	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
+	"github.com/gardener/gardener/pkg/utils"
+	"github.com/gardener/gardener/pkg/utils/managedresources"
+	"github.com/gardener/gardener/pkg/utils/retry"
+	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("NodeLocalDNS", func() {
@@ -282,9 +283,10 @@ status:
 						Name:      "node-local-dns",
 						Namespace: metav1.NamespaceSystem,
 						Labels: map[string]string{
-							labelKey:                        labelValue,
-							v1beta1constants.GardenRole:     v1beta1constants.GardenRoleSystemComponent,
-							managedresources.LabelKeyOrigin: managedresources.LabelValueGardener,
+							labelKey:                                    labelValue,
+							v1beta1constants.GardenRole:                 v1beta1constants.GardenRoleSystemComponent,
+							managedresources.LabelKeyOrigin:             managedresources.LabelValueGardener,
+							v1beta1constants.LabelNodeCriticalComponent: "true",
 						},
 					},
 					Spec: appsv1.DaemonSetSpec{
@@ -301,8 +303,9 @@ status:
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Labels: map[string]string{
-									labelKey:                                 labelValue,
-									v1beta1constants.LabelNetworkPolicyToDNS: "allowed",
+									labelKey:                                    labelValue,
+									v1beta1constants.LabelNetworkPolicyToDNS:    "allowed",
+									v1beta1constants.LabelNodeCriticalComponent: "true",
 								},
 								Annotations: map[string]string{
 									"prometheus.io/port":   strconv.Itoa(prometheusPort),
@@ -315,10 +318,6 @@ status:
 								HostNetwork:        true,
 								DNSPolicy:          corev1.DNSDefault,
 								Tolerations: []corev1.Toleration{
-									{
-										Key:      "CriticalAddonsOnly",
-										Operator: corev1.TolerationOpExists,
-									},
 									{
 										Operator: corev1.TolerationOpExists,
 										Effect:   corev1.TaintEffectNoExecute,
@@ -472,7 +471,6 @@ spec:
         cpu: 100m
         memory: 200Mi
       minAllowed:
-        cpu: 10m
         memory: 20Mi
   targetRef:
     apiVersion: apps/v1
@@ -508,7 +506,7 @@ status: {}
 					SecretRefs: []corev1.LocalObjectReference{{
 						Name: managedResourceSecret.Name,
 					}},
-					KeepObjects: pointer.BoolPtr(false),
+					KeepObjects: pointer.Bool(false),
 				},
 			}))
 
@@ -1286,14 +1284,14 @@ ip6.arpa:53 {
 
 func bindIP(values Values) string {
 	if values.DNSServer != "" {
-		return IPVSAddress + " " + values.DNSServer
+		return "169.254.20.10 " + values.DNSServer
 	}
-	return IPVSAddress
+	return "169.254.20.10"
 }
 
 func containerArg(values Values) string {
 	if values.DNSServer != "" {
-		return IPVSAddress + "," + values.DNSServer
+		return "169.254.20.10," + values.DNSServer
 	}
-	return IPVSAddress
+	return "169.254.20.10"
 }

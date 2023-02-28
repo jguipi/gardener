@@ -19,29 +19,6 @@ import (
 	"net"
 	"time"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	"github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	fakeclientmap "github.com/gardener/gardener/pkg/client/kubernetes/clientmap/fake"
-	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap/keys"
-	"github.com/gardener/gardener/pkg/client/kubernetes/fake"
-	"github.com/gardener/gardener/pkg/features"
-	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
-	"github.com/gardener/gardener/pkg/operation"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver"
-	mockkubeapiserver "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/mock"
-	gardenpkg "github.com/gardener/gardener/pkg/operation/garden"
-	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
-	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
-	"github.com/gardener/gardener/pkg/utils/imagevector"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/Masterminds/semver"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
@@ -60,6 +37,29 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	"github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	fakeclientmap "github.com/gardener/gardener/pkg/client/kubernetes/clientmap/fake"
+	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap/keys"
+	"github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	"github.com/gardener/gardener/pkg/features"
+	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
+	"github.com/gardener/gardener/pkg/operation"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver"
+	mockkubeapiserver "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/mock"
+	"github.com/gardener/gardener/pkg/operation/garden"
+	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
+	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/imagevector"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
+	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("KubeAPIServer", func() {
@@ -104,7 +104,7 @@ var _ = Describe("KubeAPIServer", func() {
 
 		sm = fakesecretsmanager.New(seedClient, seedNamespace)
 
-		By("creating secrets managed outside of this function for whose secretsmanager.Get() will be called")
+		By("Create secrets managed outside of this function for whose secretsmanager.Get() will be called")
 		Expect(seedClient.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ca", Namespace: seedNamespace}})).To(Succeed())
 		Expect(seedClient.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "user-kubeconfig", Namespace: seedNamespace}})).To(Succeed())
 
@@ -114,7 +114,7 @@ var _ = Describe("KubeAPIServer", func() {
 				GardenClient:   gardenClient,
 				SeedClientSet:  seedClientSet,
 				SecretsManager: sm,
-				Garden:         &gardenpkg.Garden{},
+				Garden:         &garden.Garden{},
 				Seed:           &seedpkg.Seed{},
 				Shoot: &shootpkg.Shoot{
 					SeedNamespace: seedNamespace,
@@ -134,26 +134,16 @@ var _ = Describe("KubeAPIServer", func() {
 					KubernetesVersion: semver.MustParse("1.22.1"),
 				},
 				ImageVector: imagevector.ImageVector{
-					{Name: "alpine-iptables"},
 					{Name: "apiserver-proxy-pod-webhook"},
 					{Name: "kube-apiserver"},
-					{Name: "vpn-seed"},
 					{Name: "vpn-shoot-client"},
+					{Name: "alpine"},
 				},
 				APIServerAddress:   apiServerAddress,
 				APIServerClusterIP: apiServerClusterIP,
 			},
 		}
 
-		botanist.Seed.SetInfo(&gardencorev1beta1.Seed{
-			Spec: gardencorev1beta1.SeedSpec{
-				Settings: &gardencorev1beta1.SeedSettings{
-					ShootDNS: &gardencorev1beta1.SeedSettingShootDNS{
-						Enabled: true,
-					},
-				},
-			},
-		})
 		botanist.Shoot.SetInfo(&gardencorev1beta1.Shoot{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      shootName,
@@ -174,7 +164,7 @@ var _ = Describe("KubeAPIServer", func() {
 				TechnicalID: seedNamespace,
 			},
 		})
-		botanist.SetShootState(&gardencorev1alpha1.ShootState{})
+		botanist.SetShootState(&gardencorev1beta1.ShootState{})
 	})
 
 	AfterEach(func() {
@@ -182,32 +172,16 @@ var _ = Describe("KubeAPIServer", func() {
 	})
 
 	Describe("#DefaultKubeAPIServer", func() {
-		It("should return an error because the alpine-iptables image cannot be found", func() {
+		It("should return an error because the apiserver-proxy-pod-webhook image cannot be found", func() {
 			botanist.ImageVector = imagevector.ImageVector{}
-
-			kubeAPIServer, err := botanist.DefaultKubeAPIServer(ctx)
-			Expect(kubeAPIServer).To(BeNil())
-			Expect(err).To(MatchError(ContainSubstring("could not find image \"alpine-iptables\"")))
-		})
-
-		It("should return an error because the apiserver-proxy-pod-webhook cannot be found", func() {
-			botanist.ImageVector = imagevector.ImageVector{{Name: "alpine-iptables"}}
 
 			kubeAPIServer, err := botanist.DefaultKubeAPIServer(ctx)
 			Expect(kubeAPIServer).To(BeNil())
 			Expect(err).To(MatchError(ContainSubstring("could not find image \"apiserver-proxy-pod-webhook\"")))
 		})
 
-		It("should return an error because the vpn-seed cannot be found", func() {
-			botanist.ImageVector = imagevector.ImageVector{{Name: "alpine-iptables"}, {Name: "apiserver-proxy-pod-webhook"}, {Name: "kube-apiserver"}}
-
-			kubeAPIServer, err := botanist.DefaultKubeAPIServer(ctx)
-			Expect(kubeAPIServer).To(BeNil())
-			Expect(err).To(MatchError(ContainSubstring("could not find image \"vpn-seed\"")))
-		})
-
 		It("should return an error because the kube-apiserver cannot be found", func() {
-			botanist.ImageVector = imagevector.ImageVector{{Name: "alpine-iptables"}, {Name: "apiserver-proxy-pod-webhook"}, {Name: "vpn-seed"}}
+			botanist.ImageVector = imagevector.ImageVector{{Name: "apiserver-proxy-pod-webhook"}}
 
 			kubeAPIServer, err := botanist.DefaultKubeAPIServer(ctx)
 			Expect(kubeAPIServer).To(BeNil())
@@ -285,7 +259,7 @@ var _ = Describe("KubeAPIServer", func() {
 			})
 
 			DescribeTable("should have the expected admission plugins config",
-				func(configuredPlugins, expectedPlugins []gardencorev1beta1.AdmissionPlugin) {
+				func(configuredPlugins []gardencorev1beta1.AdmissionPlugin, expectedPlugins []kubeapiserver.AdmissionPluginConfig) {
 					shootCopy.Spec.Kubernetes.KubeAPIServer.AdmissionPlugins = configuredPlugins
 
 					botanist.Shoot.SetInfo(shootCopy)
@@ -297,38 +271,38 @@ var _ = Describe("KubeAPIServer", func() {
 
 				Entry("only default plugins",
 					nil,
-					[]gardencorev1beta1.AdmissionPlugin{
-						{Name: "Priority"},
-						{Name: "NamespaceLifecycle"},
-						{Name: "LimitRanger"},
-						{Name: "PodSecurityPolicy"},
-						{Name: "ServiceAccount"},
-						{Name: "NodeRestriction"},
-						{Name: "DefaultStorageClass"},
-						{Name: "DefaultTolerationSeconds"},
-						{Name: "ResourceQuota"},
-						{Name: "StorageObjectInUseProtection"},
-						{Name: "MutatingAdmissionWebhook"},
-						{Name: "ValidatingAdmissionWebhook"},
+					[]kubeapiserver.AdmissionPluginConfig{
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "Priority"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "NamespaceLifecycle"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "LimitRanger"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "PodSecurityPolicy"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ServiceAccount"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "NodeRestriction"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "DefaultStorageClass"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "DefaultTolerationSeconds"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ResourceQuota"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "StorageObjectInUseProtection"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "MutatingAdmissionWebhook"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ValidatingAdmissionWebhook"}},
 					},
 				),
 				Entry("default plugins with overrides",
 					[]gardencorev1beta1.AdmissionPlugin{
 						{Name: "NamespaceLifecycle", Config: &runtime.RawExtension{Raw: []byte("namespace-lifecycle-config")}},
 					},
-					[]gardencorev1beta1.AdmissionPlugin{
-						{Name: "Priority"},
-						{Name: "NamespaceLifecycle", Config: &runtime.RawExtension{Raw: []byte("namespace-lifecycle-config")}},
-						{Name: "LimitRanger"},
-						{Name: "PodSecurityPolicy"},
-						{Name: "ServiceAccount"},
-						{Name: "NodeRestriction"},
-						{Name: "DefaultStorageClass"},
-						{Name: "DefaultTolerationSeconds"},
-						{Name: "ResourceQuota"},
-						{Name: "StorageObjectInUseProtection"},
-						{Name: "MutatingAdmissionWebhook"},
-						{Name: "ValidatingAdmissionWebhook"},
+					[]kubeapiserver.AdmissionPluginConfig{
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "Priority"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "NamespaceLifecycle", Config: &runtime.RawExtension{Raw: []byte("namespace-lifecycle-config")}}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "LimitRanger"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "PodSecurityPolicy"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ServiceAccount"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "NodeRestriction"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "DefaultStorageClass"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "DefaultTolerationSeconds"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ResourceQuota"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "StorageObjectInUseProtection"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "MutatingAdmissionWebhook"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ValidatingAdmissionWebhook"}},
 					},
 				),
 				Entry("default plugins with overrides and other plugins",
@@ -338,22 +312,22 @@ var _ = Describe("KubeAPIServer", func() {
 						{Name: "Bar"},
 						{Name: "Baz", Config: &runtime.RawExtension{Raw: []byte("baz-config")}},
 					},
-					[]gardencorev1beta1.AdmissionPlugin{
-						{Name: "Priority"},
-						{Name: "NamespaceLifecycle", Config: &runtime.RawExtension{Raw: []byte("namespace-lifecycle-config")}},
-						{Name: "LimitRanger"},
-						{Name: "PodSecurityPolicy"},
-						{Name: "ServiceAccount"},
-						{Name: "NodeRestriction"},
-						{Name: "DefaultStorageClass"},
-						{Name: "DefaultTolerationSeconds"},
-						{Name: "ResourceQuota"},
-						{Name: "StorageObjectInUseProtection"},
-						{Name: "MutatingAdmissionWebhook"},
-						{Name: "ValidatingAdmissionWebhook"},
-						{Name: "Foo"},
-						{Name: "Bar"},
-						{Name: "Baz", Config: &runtime.RawExtension{Raw: []byte("baz-config")}},
+					[]kubeapiserver.AdmissionPluginConfig{
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "Priority"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "NamespaceLifecycle", Config: &runtime.RawExtension{Raw: []byte("namespace-lifecycle-config")}}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "LimitRanger"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "PodSecurityPolicy"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ServiceAccount"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "NodeRestriction"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "DefaultStorageClass"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "DefaultTolerationSeconds"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ResourceQuota"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "StorageObjectInUseProtection"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "MutatingAdmissionWebhook"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ValidatingAdmissionWebhook"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "Foo"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "Bar"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "Baz", Config: &runtime.RawExtension{Raw: []byte("baz-config")}}},
 					},
 				),
 				Entry("default plugins with overrides and skipping configured plugins if disabled",
@@ -363,20 +337,20 @@ var _ = Describe("KubeAPIServer", func() {
 						{Name: "Bar", Disabled: pointer.Bool(true)},
 						{Name: "Baz", Config: &runtime.RawExtension{Raw: []byte("baz-config")}, Disabled: pointer.Bool(true)},
 					},
-					[]gardencorev1beta1.AdmissionPlugin{
-						{Name: "Priority"},
-						{Name: "NamespaceLifecycle", Config: &runtime.RawExtension{Raw: []byte("namespace-lifecycle-config")}},
-						{Name: "LimitRanger"},
-						{Name: "PodSecurityPolicy"},
-						{Name: "ServiceAccount"},
-						{Name: "NodeRestriction"},
-						{Name: "DefaultStorageClass"},
-						{Name: "DefaultTolerationSeconds"},
-						{Name: "ResourceQuota"},
-						{Name: "StorageObjectInUseProtection"},
-						{Name: "MutatingAdmissionWebhook"},
-						{Name: "ValidatingAdmissionWebhook"},
-						{Name: "Foo"},
+					[]kubeapiserver.AdmissionPluginConfig{
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "Priority"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "NamespaceLifecycle", Config: &runtime.RawExtension{Raw: []byte("namespace-lifecycle-config")}}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "LimitRanger"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "PodSecurityPolicy"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ServiceAccount"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "NodeRestriction"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "DefaultStorageClass"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "DefaultTolerationSeconds"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ResourceQuota"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "StorageObjectInUseProtection"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "MutatingAdmissionWebhook"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ValidatingAdmissionWebhook"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "Foo"}},
 					},
 				),
 				Entry("default plugins with overrides and skipping default plugins if disabled",
@@ -389,20 +363,20 @@ var _ = Describe("KubeAPIServer", func() {
 						{Name: "Baz", Config: &runtime.RawExtension{Raw: []byte("baz-config")}},
 						{Name: "ServiceAccount", Disabled: pointer.Bool(false)},
 					},
-					[]gardencorev1beta1.AdmissionPlugin{
-						{Name: "Priority"},
-						{Name: "NamespaceLifecycle", Config: &runtime.RawExtension{Raw: []byte("namespace-lifecycle-config")}},
-						{Name: "LimitRanger"},
-						{Name: "ServiceAccount", Disabled: pointer.Bool(false)},
-						{Name: "NodeRestriction"},
-						{Name: "DefaultStorageClass"},
-						{Name: "DefaultTolerationSeconds"},
-						{Name: "StorageObjectInUseProtection"},
-						{Name: "MutatingAdmissionWebhook"},
-						{Name: "ValidatingAdmissionWebhook"},
-						{Name: "Foo"},
-						{Name: "Bar"},
-						{Name: "Baz", Config: &runtime.RawExtension{Raw: []byte("baz-config")}},
+					[]kubeapiserver.AdmissionPluginConfig{
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "Priority"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "NamespaceLifecycle", Config: &runtime.RawExtension{Raw: []byte("namespace-lifecycle-config")}}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "LimitRanger"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ServiceAccount", Disabled: pointer.Bool(false)}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "NodeRestriction"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "DefaultStorageClass"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "DefaultTolerationSeconds"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "StorageObjectInUseProtection"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "MutatingAdmissionWebhook"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "ValidatingAdmissionWebhook"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "Foo"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "Bar"}},
+						{AdmissionPlugin: gardencorev1beta1.AdmissionPlugin{Name: "Baz", Config: &runtime.RawExtension{Raw: []byte("baz-config")}}},
 					},
 				),
 			)
@@ -630,7 +604,7 @@ exemptions:
 					})
 				})
 
-				Context("PodSecurity admission config is neither v1alpha1 nor v1beta1", func() {
+				Context("PodSecurity admission config is neither v1alpha1 nor v1beta1 nor v1", func() {
 					BeforeEach(func() {
 						shootCopy.Spec.Kubernetes.KubeAPIServer.AdmissionPlugins = []gardencorev1beta1.AdmissionPlugin{
 							{
@@ -638,10 +612,10 @@ exemptions:
 								Config: &runtime.RawExtension{Raw: []byte(`apiVersion: pod-security.admission.config.k8s.io/foo
 kind: PodSecurityConfiguration-bar
 defaults:
-enforce: "privileged"
-enforce-version: "latest"
+  enforce: "privileged"
+  enforce-version: "latest"
 exemptions:
-usernames: ["admin"]
+  usernames: ["admin"]
 `),
 								},
 							},
@@ -968,6 +942,29 @@ usernames: ["admin"]
 			)
 		})
 
+		Describe("DefaultNotReadyTolerationSeconds and DefaultUnreachableTolerationSeconds", func() {
+			It("should not set the fields", func() {
+				kubeAPIServer, err := botanist.DefaultKubeAPIServer(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(kubeAPIServer.GetValues().DefaultNotReadyTolerationSeconds).To(BeNil())
+				Expect(kubeAPIServer.GetValues().DefaultUnreachableTolerationSeconds).To(BeNil())
+			})
+
+			It("should set the fields to the configured values", func() {
+				shootCopy := botanist.Shoot.GetInfo().DeepCopy()
+				shootCopy.Spec.Kubernetes.KubeAPIServer = &gardencorev1beta1.KubeAPIServerConfig{
+					DefaultNotReadyTolerationSeconds:    pointer.Int64(120),
+					DefaultUnreachableTolerationSeconds: pointer.Int64(130),
+				}
+				botanist.Shoot.SetInfo(shootCopy)
+
+				kubeAPIServer, err := botanist.DefaultKubeAPIServer(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(kubeAPIServer.GetValues().DefaultNotReadyTolerationSeconds).To(PointTo(Equal(int64(120))))
+				Expect(kubeAPIServer.GetValues().DefaultUnreachableTolerationSeconds).To(PointTo(Equal(int64(130))))
+			})
+		})
+
 		Describe("EventTTL", func() {
 			It("should not set the event ttl field", func() {
 				kubeAPIServer, err := botanist.DefaultKubeAPIServer(ctx)
@@ -1110,24 +1107,12 @@ usernames: ["admin"]
 					Expect(kubeAPIServer.GetValues().VPN).To(Equal(expectedConfig))
 				},
 
-				Entry("ReversedVPN disabled",
+				Entry("ReversedVPN enabled",
 					nil,
 					kubeapiserver.VPNConfig{
-						ReversedVPNEnabled: false,
-						PodNetworkCIDR:     podNetworkCIDR,
-						ServiceNetworkCIDR: serviceNetworkCIDR,
-						NodeNetworkCIDR:    &nodeNetworkCIDR,
-					},
-				),
-				Entry("ReversedVPN enabled",
-					func() {
-						botanist.Shoot.ReversedVPNEnabled = true
-					},
-					kubeapiserver.VPNConfig{
-						ReversedVPNEnabled: true,
-						PodNetworkCIDR:     podNetworkCIDR,
-						ServiceNetworkCIDR: serviceNetworkCIDR,
-						NodeNetworkCIDR:    &nodeNetworkCIDR,
+						Enabled:         true,
+						PodNetworkCIDR:  podNetworkCIDR,
+						NodeNetworkCIDR: &nodeNetworkCIDR,
 					},
 				),
 				Entry("no node network",
@@ -1137,9 +1122,8 @@ usernames: ["admin"]
 						botanist.Shoot.SetInfo(shootCopy)
 					},
 					kubeapiserver.VPNConfig{
-						ReversedVPNEnabled: false,
-						PodNetworkCIDR:     podNetworkCIDR,
-						ServiceNetworkCIDR: serviceNetworkCIDR,
+						Enabled:        true,
+						PodNetworkCIDR: podNetworkCIDR,
 					},
 				),
 			)
@@ -1356,7 +1340,7 @@ usernames: ["admin"]
 		)
 
 		DescribeTable("ETCDEncryptionConfig",
-			func(rotationPhase gardencorev1beta1.ShootCredentialsRotationPhase, prepTest func(), expectedETCDEncryptionConfig kubeapiserver.ETCDEncryptionConfig, finalizeTest func()) {
+			func(rotationPhase gardencorev1beta1.CredentialsRotationPhase, prepTest func(), expectedETCDEncryptionConfig kubeapiserver.ETCDEncryptionConfig, finalizeTest func()) {
 				if len(rotationPhase) > 0 {
 					shootCopy := botanist.Shoot.GetInfo().DeepCopy()
 					shootCopy.Status.Credentials = &gardencorev1beta1.ShootCredentials{
@@ -1391,7 +1375,7 @@ usernames: ["admin"]
 			},
 
 			Entry("no rotation",
-				gardencorev1beta1.ShootCredentialsRotationPhase(""),
+				gardencorev1beta1.CredentialsRotationPhase(""),
 				nil,
 				kubeapiserver.ETCDEncryptionConfig{EncryptWithCurrentKey: true},
 				nil,
@@ -1503,7 +1487,7 @@ usernames: ["admin"]
 					Expect(botanist.DeployKubeAPIServer(ctx)).To(Succeed())
 				},
 
-				Entry("seed enables DNS, shoot has external domain",
+				Entry("shoot has external domain",
 					nil,
 					kubeapiserver.ServerCertificateConfig{
 						ExtraIPAddresses: []net.IP{apiServerNetwork},
@@ -1515,9 +1499,9 @@ usernames: ["admin"]
 						},
 					},
 				),
-				Entry("seed enables DNS, shoot has no external domain",
+				Entry("shoot has no external domain(Uses Unmanaged Provider type)",
 					func() {
-						botanist.Shoot.DisableDNS = true
+						botanist.Shoot.GetInfo().Spec.DNS.Providers = []gardencorev1beta1.DNSProvider{{Type: pointer.String("unmanaged")}}
 						botanist.Shoot.ExternalClusterDomain = nil
 					},
 					kubeapiserver.ServerCertificateConfig{
@@ -1528,60 +1512,14 @@ usernames: ["admin"]
 						},
 					},
 				),
-				Entry("seed disables DNS, api server address is IP",
-					func() {
-						seedCopy := botanist.Seed.GetInfo().DeepCopy()
-						seedCopy.Spec.Settings.ShootDNS.Enabled = false
-						botanist.Seed.SetInfo(seedCopy)
-					},
-					kubeapiserver.ServerCertificateConfig{
-						ExtraIPAddresses: []net.IP{apiServerNetwork, net.ParseIP(apiServerAddress)},
-						ExtraDNSNames: []string{
-							"api." + internalClusterDomain,
-							seedNamespace,
-							externalClusterDomain,
-							"api." + externalClusterDomain,
-						},
-					},
-				),
-				Entry("seed disables DNS, api server address is hostname",
-					func() {
-						seedCopy := botanist.Seed.GetInfo().DeepCopy()
-						seedCopy.Spec.Settings.ShootDNS.Enabled = false
-						botanist.Seed.SetInfo(seedCopy)
-						botanist.APIServerAddress = "some-hostname.com"
-					},
-					kubeapiserver.ServerCertificateConfig{
-						ExtraIPAddresses: []net.IP{apiServerNetwork},
-						ExtraDNSNames: []string{
-							"api." + internalClusterDomain,
-							seedNamespace,
-							"some-hostname.com",
-							externalClusterDomain,
-							"api." + externalClusterDomain,
-						},
-					},
-				),
 			)
 		})
 
 		Describe("ServiceAccountConfig", func() {
 			var (
-				signingKey            = []byte("some-key")
-				signingKeySecret      *corev1.Secret
 				maxTokenExpiration    = metav1.Duration{Duration: time.Hour}
 				extendTokenExpiration = false
 			)
-
-			BeforeEach(func() {
-				signingKeySecret = &corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "my-secret",
-						Namespace: projectNamespace,
-					},
-					Data: map[string][]byte{"signing-key": signingKey},
-				}
-			})
 
 			DescribeTable("should have the expected ServiceAccountConfig config",
 				func(prepTest func(), expectedConfig kubeapiserver.ServiceAccountConfig, expectError bool, errMatcher gomegatypes.GomegaMatcher) {
@@ -1741,74 +1679,6 @@ usernames: ["admin"]
 					false,
 					Not(HaveOccurred()),
 				),
-				Entry("SigningKeySecret is nil",
-					func() {
-						shootCopy := botanist.Shoot.GetInfo().DeepCopy()
-						shootCopy.Spec.Kubernetes.KubeAPIServer = &gardencorev1beta1.KubeAPIServerConfig{
-							ServiceAccountConfig: &gardencorev1beta1.ServiceAccountConfig{},
-						}
-						botanist.Shoot.SetInfo(shootCopy)
-					},
-					kubeapiserver.ServiceAccountConfig{Issuer: "https://api." + internalClusterDomain},
-					false,
-					Not(HaveOccurred()),
-				),
-				Entry("SigningKeySecret is provided but secret is missing",
-					func() {
-						shootCopy := botanist.Shoot.GetInfo().DeepCopy()
-						shootCopy.Spec.Kubernetes.KubeAPIServer = &gardencorev1beta1.KubeAPIServerConfig{
-							ServiceAccountConfig: &gardencorev1beta1.ServiceAccountConfig{
-								SigningKeySecret: &corev1.LocalObjectReference{
-									Name: signingKeySecret.Name,
-								},
-							},
-						}
-						botanist.Shoot.SetInfo(shootCopy)
-					},
-					nil,
-					true,
-					MatchError(ContainSubstring("not found")),
-				),
-				Entry("SigningKeySecret is provided but secret does not have correct data field",
-					func() {
-						signingKeySecret.Data = nil
-						Expect(gardenClient.Create(ctx, signingKeySecret)).To(Succeed())
-
-						shootCopy := botanist.Shoot.GetInfo().DeepCopy()
-						shootCopy.Spec.Kubernetes.KubeAPIServer = &gardencorev1beta1.KubeAPIServerConfig{
-							ServiceAccountConfig: &gardencorev1beta1.ServiceAccountConfig{
-								SigningKeySecret: &corev1.LocalObjectReference{
-									Name: signingKeySecret.Name,
-								},
-							},
-						}
-						botanist.Shoot.SetInfo(shootCopy)
-					},
-					kubeapiserver.ServiceAccountConfig{Issuer: "https://api." + internalClusterDomain},
-					true,
-					MatchError(ContainSubstring("no signing key in secret")),
-				),
-				Entry("SigningKeySecret is provided and secret is compliant",
-					func() {
-						Expect(gardenClient.Create(ctx, signingKeySecret)).To(Succeed())
-
-						shootCopy := botanist.Shoot.GetInfo().DeepCopy()
-						shootCopy.Spec.Kubernetes.KubeAPIServer = &gardencorev1beta1.KubeAPIServerConfig{
-							ServiceAccountConfig: &gardencorev1beta1.ServiceAccountConfig{
-								SigningKeySecret: &corev1.LocalObjectReference{
-									Name: signingKeySecret.Name,
-								},
-							},
-						}
-						botanist.Shoot.SetInfo(shootCopy)
-					},
-					kubeapiserver.ServiceAccountConfig{
-						Issuer:     "https://api." + internalClusterDomain,
-						SigningKey: signingKey,
-					},
-					false,
-					Not(HaveOccurred()),
-				),
 			)
 		})
 
@@ -1836,16 +1706,9 @@ usernames: ["admin"]
 					Expect(botanist.DeployKubeAPIServer(ctx)).To(Succeed())
 				},
 
-				Entry("SNI disabled",
-					nil,
-					featureGatePtr(features.APIServerSNI), pointer.Bool(false),
-					kubeapiserver.SNIConfig{
-						PodMutatorEnabled: false,
-					},
-				),
 				Entry("SNI enabled but no need for internal DNS",
 					func() {
-						botanist.Shoot.DisableDNS = true
+
 					},
 					featureGatePtr(features.APIServerSNI), pointer.Bool(true),
 					kubeapiserver.SNIConfig{
@@ -1854,10 +1717,9 @@ usernames: ["admin"]
 				),
 				Entry("SNI enabled but no need for external DNS",
 					func() {
-						botanist.Shoot.DisableDNS = true
+						botanist.Shoot.GetInfo().Spec.DNS.Providers = []gardencorev1beta1.DNSProvider{{Type: pointer.String("unmanaged")}}
 						botanist.Shoot.ExternalClusterDomain = nil
-						botanist.Garden.InternalDomain = &gardenpkg.Domain{}
-						botanist.Shoot.GetInfo().Spec.DNS = nil
+						botanist.Garden.InternalDomain = &gardenerutils.Domain{}
 					},
 					featureGatePtr(features.APIServerSNI), pointer.Bool(true),
 					kubeapiserver.SNIConfig{
@@ -1866,12 +1728,11 @@ usernames: ["admin"]
 				),
 				Entry("SNI and both DNS enabled",
 					func() {
-						botanist.Shoot.DisableDNS = false
-						botanist.Garden.InternalDomain = &gardenpkg.Domain{}
-						botanist.Shoot.ExternalDomain = &gardenpkg.Domain{}
-						botanist.Shoot.ExternalClusterDomain = pointer.StringPtr("some-domain")
+						botanist.Garden.InternalDomain = &gardenerutils.Domain{}
+						botanist.Shoot.ExternalDomain = &gardenerutils.Domain{}
+						botanist.Shoot.ExternalClusterDomain = pointer.String("some-domain")
 						botanist.Shoot.GetInfo().Spec.DNS = &gardencorev1beta1.DNS{
-							Domain:    pointer.StringPtr("some-domain"),
+							Domain:    pointer.String("some-domain"),
 							Providers: []gardencorev1beta1.DNSProvider{{}},
 						}
 					},
@@ -1881,25 +1742,6 @@ usernames: ["admin"]
 						AdvertiseAddress:  apiServerClusterIP,
 						PodMutatorEnabled: true,
 						APIServerFQDN:     "api." + internalClusterDomain,
-					},
-				),
-				Entry("SNI and both DNS enabled but pod injector disabled via annotation",
-					func() {
-						botanist.Shoot.DisableDNS = false
-						botanist.Garden.InternalDomain = &gardenpkg.Domain{}
-						botanist.Shoot.ExternalDomain = &gardenpkg.Domain{}
-						botanist.Shoot.ExternalClusterDomain = pointer.StringPtr("some-domain")
-						botanist.Shoot.GetInfo().Spec.DNS = &gardencorev1beta1.DNS{
-							Domain:    pointer.StringPtr("some-domain"),
-							Providers: []gardencorev1beta1.DNSProvider{{}},
-						}
-						botanist.Shoot.GetInfo().Annotations = map[string]string{"alpha.featuregates.shoot.gardener.cloud/apiserver-sni-pod-injector": "disable"}
-					},
-					featureGatePtr(features.APIServerSNI), pointer.Bool(true),
-					kubeapiserver.SNIConfig{
-						Enabled:           true,
-						AdvertiseAddress:  apiServerClusterIP,
-						PodMutatorEnabled: false,
 					},
 				),
 			)
@@ -1932,12 +1774,12 @@ usernames: ["admin"]
 			kubeAPIServer.EXPECT().SetServiceAccountConfig(gomock.Any())
 			kubeAPIServer.EXPECT().Deploy(ctx)
 
-			Expect(gardenClient.Get(ctx, kutil.Key(projectNamespace, shootName+".kubeconfig"), &corev1.Secret{})).To(BeNotFoundError())
+			Expect(gardenClient.Get(ctx, kubernetesutils.Key(projectNamespace, shootName+".kubeconfig"), &corev1.Secret{})).To(BeNotFoundError())
 
 			Expect(botanist.DeployKubeAPIServer(ctx)).To(Succeed())
 
 			kubeconfigSecret := &corev1.Secret{}
-			Expect(gardenClient.Get(ctx, kutil.Key(projectNamespace, shootName+".kubeconfig"), kubeconfigSecret)).To(Succeed())
+			Expect(gardenClient.Get(ctx, kubernetesutils.Key(projectNamespace, shootName+".kubeconfig"), kubeconfigSecret)).To(Succeed())
 			Expect(kubeconfigSecret.Annotations).To(HaveKeyWithValue("url", "https://api."+externalClusterDomain))
 			Expect(kubeconfigSecret.Labels).To(HaveKeyWithValue("gardener.cloud/role", "kubeconfig"))
 			Expect(kubeconfigSecret.Data).To(And(
@@ -1974,7 +1816,7 @@ usernames: ["admin"]
 			}
 			Expect(gardenClient.Create(ctx, secret)).To(Succeed())
 
-			Expect(gardenClient.Get(ctx, kutil.Key(projectNamespace, shootName+".kubeconfig"), &corev1.Secret{})).To(Succeed())
+			Expect(gardenClient.Get(ctx, kubernetesutils.Key(projectNamespace, shootName+".kubeconfig"), &corev1.Secret{})).To(Succeed())
 
 			kubeAPIServer.EXPECT().GetValues()
 			kubeAPIServer.EXPECT().SetAutoscalingReplicas(gomock.Any())
@@ -2000,7 +1842,7 @@ usernames: ["admin"]
 
 			Expect(botanist.DeployKubeAPIServer(ctx)).To(Succeed())
 
-			Expect(gardenClient.Get(ctx, kutil.Key(projectNamespace, shootName+".kubeconfig"), &corev1.Secret{})).To(BeNotFoundError())
+			Expect(gardenClient.Get(ctx, kubernetesutils.Key(projectNamespace, shootName+".kubeconfig"), &corev1.Secret{})).To(BeNotFoundError())
 		})
 	})
 

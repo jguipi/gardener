@@ -22,6 +22,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	componentbaseconfigv1alpha1 "k8s.io/component-base/config/v1alpha1"
 	"k8s.io/utils/pointer"
+
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 )
 
 func addDefaultingFuncs(scheme *runtime.Scheme) error {
@@ -160,14 +162,7 @@ func SetDefaults_ManagedResourceControllerConfig(obj *ManagedResourceControllerC
 		obj.AlwaysUpdate = pointer.Bool(false)
 	}
 	if obj.ManagedByLabelValue == nil {
-		obj.ManagedByLabelValue = pointer.String("gardener")
-	}
-}
-
-// SetDefaults_RootCAPublisherControllerConfig sets defaults for the RootCAPublisherControllerConfig object.
-func SetDefaults_RootCAPublisherControllerConfig(obj *RootCAPublisherControllerConfig) {
-	if obj.Enabled && obj.ConcurrentSyncs == nil {
-		obj.ConcurrentSyncs = pointer.Int(5)
+		obj.ManagedByLabelValue = pointer.String(resourcesv1alpha1.GardenerManager)
 	}
 }
 
@@ -189,6 +184,18 @@ func SetDefaults_TokenInvalidatorControllerConfig(obj *TokenInvalidatorControlle
 func SetDefaults_TokenRequestorControllerConfig(obj *TokenRequestorControllerConfig) {
 	if obj.Enabled && obj.ConcurrentSyncs == nil {
 		obj.ConcurrentSyncs = pointer.Int(5)
+	}
+}
+
+// SetDefaults_NodeControllerConfig sets defaults for the NodeControllerConfig object.
+func SetDefaults_NodeControllerConfig(obj *NodeControllerConfig) {
+	if obj.Enabled {
+		if obj.ConcurrentSyncs == nil {
+			obj.ConcurrentSyncs = pointer.Int(5)
+		}
+		if obj.Backoff == nil {
+			obj.Backoff = &metav1.Duration{Duration: 10 * time.Second}
+		}
 	}
 }
 

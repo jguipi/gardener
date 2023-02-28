@@ -18,9 +18,15 @@ import (
 	"context"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/utils/clock"
+	"k8s.io/utils/pointer"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
 	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 	"github.com/gardener/gardener/pkg/features"
 	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
@@ -35,18 +41,12 @@ import (
 	"github.com/gardener/gardener/pkg/operation/botanist/component/nginxingress"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/seedsystem"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/vpa"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/pointer"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
-var requiredManagedResourcesSeed = sets.NewString(
+var requiredManagedResourcesSeed = sets.New[string](
 	etcd.Druid,
 	networkpolicies.ManagedResourceControlName,
-	clusteridentity.ManagedResourceControlName,
 	clusterautoscaler.ManagedResourceControlName,
 	kubestatemetrics.ManagedResourceName,
 	seedsystem.ManagedResourceName,
@@ -57,22 +57,26 @@ var requiredManagedResourcesSeed = sets.NewString(
 type SeedHealth struct {
 	seed       *gardencorev1beta1.Seed
 	seedClient client.Client
+	clock      clock.Clock
 	namespace  *string
 }
 
 // NewHealthForSeed creates a new Health instance with the given parameters.
-func NewHealthForSeed(seed *gardencorev1beta1.Seed, seedClient client.Client, namespace *string) *SeedHealth {
+func NewHealthForSeed(seed *gardencorev1beta1.Seed, seedClient client.Client, clock clock.Clock, namespace *string) *SeedHealth {
 	return &SeedHealth{
 		seedClient: seedClient,
 		seed:       seed,
+		clock:      clock,
 		namespace:  namespace,
 	}
 }
 
 // CheckSeed conducts the health checks on all the given conditions.
-func (h *SeedHealth) CheckSeed(ctx context.Context,
+func (h *SeedHealth) CheckSeed(
+	ctx context.Context,
 	conditions []gardencorev1beta1.Condition,
-	thresholdMappings map[gardencorev1beta1.ConditionType]time.Duration) []gardencorev1beta1.Condition {
+	thresholdMappings map[gardencorev1beta1.ConditionType]time.Duration,
+) []gardencorev1beta1.Condition {
 
 	var systemComponentsCondition gardencorev1beta1.Condition
 	for _, cond := range conditions {
@@ -82,44 +86,55 @@ func (h *SeedHealth) CheckSeed(ctx context.Context,
 		}
 	}
 
-	checker := NewHealthChecker(thresholdMappings, nil, nil, nil, nil)
+	checker := NewHealthChecker(h.seedClient, h.clock, thresholdMappings, nil, nil, nil, nil, nil)
 	newSystemComponentsCondition, err := h.checkSeedSystemComponents(ctx, checker, systemComponentsCondition)
-	return []gardencorev1beta1.Condition{NewConditionOrError(systemComponentsCondition, newSystemComponentsCondition, err)}
+	return []gardencorev1beta1.Condition{NewConditionOrError(h.clock, systemComponentsCondition, newSystemComponentsCondition, err)}
 }
 
 func (h *SeedHealth) checkSeedSystemComponents(
 	ctx context.Context,
 	checker *HealthChecker,
 	condition gardencorev1beta1.Condition,
-) (*gardencorev1beta1.Condition,
-	error) {
-	managedResources := requiredManagedResourcesSeed.List()
+) (
+	*gardencorev1beta1.Condition,
+	error,
+) {
+	managedResources := sets.List(requiredManagedResourcesSeed)
+
+	seedIsOriginOfClusterIdentity, err := clusteridentity.IsClusterIdentityEmptyOrFromOrigin(ctx, h.seedClient, v1beta1constants.ClusterIdentityOriginSeed)
+	if err != nil {
+		return nil, err
+	}
+	if seedIsOriginOfClusterIdentity {
+		managedResources = append(managedResources, clusteridentity.ManagedResourceControlName)
+	}
 
 	if gardenletfeatures.FeatureGate.Enabled(features.ManagedIstio) {
 		managedResources = append(managedResources, istio.ManagedResourceControlName)
+		managedResources = append(managedResources, istio.ManagedResourceIstioSystemName)
 	}
 	if gardenletfeatures.FeatureGate.Enabled(features.HVPA) {
 		managedResources = append(managedResources, hvpa.ManagedResourceName)
 	}
-	if gardencorev1beta1helper.SeedSettingDependencyWatchdogEndpointEnabled(h.seed.Spec.Settings) {
+	if v1beta1helper.SeedSettingDependencyWatchdogEndpointEnabled(h.seed.Spec.Settings) {
 		managedResources = append(managedResources, dependencywatchdog.ManagedResourceDependencyWatchdogEndpoint)
 	}
-	if gardencorev1beta1helper.SeedSettingDependencyWatchdogProbeEnabled(h.seed.Spec.Settings) {
+	if v1beta1helper.SeedSettingDependencyWatchdogProbeEnabled(h.seed.Spec.Settings) {
 		managedResources = append(managedResources, dependencywatchdog.ManagedResourceDependencyWatchdogProbe)
 	}
-	if gardencorev1beta1helper.SeedUsesNginxIngressController(h.seed) {
+	if v1beta1helper.SeedUsesNginxIngressController(h.seed) {
 		managedResources = append(managedResources, nginxingress.ManagedResourceName)
 	}
 
 	for _, name := range managedResources {
 		namespace := v1beta1constants.GardenNamespace
-		if name == istio.ManagedResourceControlName {
+		if name == istio.ManagedResourceControlName || name == istio.ManagedResourceIstioSystemName {
 			namespace = v1beta1constants.IstioSystemNamespace
 		}
 		namespace = pointer.StringDeref(h.namespace, namespace)
 
 		mr := &resourcesv1alpha1.ManagedResource{}
-		if err := h.seedClient.Get(ctx, kutil.Key(namespace, name), mr); err != nil {
+		if err := h.seedClient.Get(ctx, kubernetesutils.Key(namespace, name), mr); err != nil {
 			if apierrors.IsNotFound(err) {
 				exitCondition := checker.FailedCondition(condition, "ResourceNotFound", err.Error())
 				return &exitCondition, nil
@@ -132,15 +147,15 @@ func (h *SeedHealth) checkSeedSystemComponents(
 		}
 	}
 
-	c := gardencorev1beta1helper.UpdatedCondition(condition, gardencorev1beta1.ConditionTrue, "SystemComponentsRunning", "All system components are healthy.")
+	c := v1beta1helper.UpdatedConditionWithClock(h.clock, condition, gardencorev1beta1.ConditionTrue, "SystemComponentsRunning", "All system components are healthy.")
 	return &c, nil
 }
 
 func checkManagedResourceForSeed(checker *HealthChecker, condition gardencorev1beta1.Condition, managedResource *resourcesv1alpha1.ManagedResource) *gardencorev1beta1.Condition {
-	conditionsToCheck := map[gardencorev1beta1.ConditionType]func(status gardencorev1beta1.ConditionStatus) bool{
+	conditionsToCheck := map[gardencorev1beta1.ConditionType]func(condition gardencorev1beta1.Condition) bool{
 		resourcesv1alpha1.ResourcesApplied:     defaultSuccessfulCheck(),
 		resourcesv1alpha1.ResourcesHealthy:     defaultSuccessfulCheck(),
-		resourcesv1alpha1.ResourcesProgressing: resourcesNotProgressingCheck(),
+		resourcesv1alpha1.ResourcesProgressing: resourcesNotProgressingCheck(checker.clock, nil),
 	}
 
 	return checker.checkManagedResourceConditions(condition, managedResource, conditionsToCheck)

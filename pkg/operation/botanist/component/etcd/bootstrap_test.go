@@ -41,8 +41,8 @@ import (
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
 	. "github.com/gardener/gardener/pkg/operation/botanist/component/etcd"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
@@ -78,13 +78,13 @@ var _ = Describe("Etcd", func() {
 		c = mockclient.NewMockClient(ctrl)
 		etcdConfig = &config.ETCDConfig{
 			ETCDController: &config.ETCDController{
-				Workers: pointer.Int64Ptr(50),
+				Workers: pointer.Int64(50),
 			},
 			CustodianController: &config.CustodianController{
-				Workers: pointer.Int64Ptr(3),
+				Workers: pointer.Int64(3),
 			},
 			BackupCompactionController: &config.BackupCompactionController{
-				Workers:                pointer.Int64Ptr(3),
+				Workers:                pointer.Int64(3),
 				EnableBackupCompaction: pointer.Bool(true),
 				EventsThreshold:        pointer.Int64(1000000),
 				ActiveDeadlineDuration: &metav1.Duration{Duration: time.Hour * 3},
@@ -178,10 +178,20 @@ rules:
   - delete
 - apiGroups:
   - ""
-  - apps
   resources:
   - services
   - configmaps
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+  - create
+  - delete
+- apiGroups:
+  - apps
+  resources:
   - statefulsets
   verbs:
   - get
@@ -202,15 +212,6 @@ rules:
   - create
   - update
   - patch
-  - delete
-- apiGroups:
-  - batch
-  resources:
-  - cronjobs
-  verbs:
-  - get
-  - list
-  - watch
   - delete
 - apiGroups:
   - druid.gardener.cloud
@@ -300,7 +301,6 @@ spec:
     containerPolicies:
     - containerName: '*'
       minAllowed:
-        cpu: 50m
         memory: 100M
   targetRef:
     apiVersion: apps/v1
@@ -496,7 +496,7 @@ status:
 
 		It("should fail because the managed resource secret cannot be updated", func() {
 			gomock.InOrder(
-				c.EXPECT().Get(ctx, kutil.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
+				c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
 				c.EXPECT().Update(ctx, gomock.AssignableToTypeOf(&corev1.Secret{})).Return(fakeErr),
 			)
 
@@ -505,9 +505,9 @@ status:
 
 		It("should fail because the managed resource cannot be updated", func() {
 			gomock.InOrder(
-				c.EXPECT().Get(ctx, kutil.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
+				c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
 				c.EXPECT().Update(ctx, gomock.AssignableToTypeOf(&corev1.Secret{})),
-				c.EXPECT().Get(ctx, kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})),
+				c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})),
 				c.EXPECT().Update(ctx, gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(fakeErr),
 			)
 
@@ -516,11 +516,11 @@ status:
 
 		It("should successfully deploy all the resources (w/o image vector overwrite)", func() {
 			gomock.InOrder(
-				c.EXPECT().Get(ctx, kutil.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
+				c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
 				c.EXPECT().Update(ctx, gomock.AssignableToTypeOf(&corev1.Secret{})).Do(func(ctx context.Context, obj client.Object, opts ...client.UpdateOption) {
 					Expect(obj).To(Equal(managedResourceSecret))
 				}),
-				c.EXPECT().Get(ctx, kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})),
+				c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})),
 				c.EXPECT().Update(ctx, gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Do(func(ctx context.Context, obj client.Object, opts ...client.UpdateOption) {
 					Expect(obj).To(DeepEqual(managedResource))
 				}),
@@ -536,11 +536,11 @@ status:
 			managedResourceSecret.Data["deployment__"+namespace+"__etcd-druid.yaml"] = []byte(deploymentWithImageVectorOverwriteYAML)
 
 			gomock.InOrder(
-				c.EXPECT().Get(ctx, kutil.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
+				c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, managedResourceSecretName), gomock.AssignableToTypeOf(&corev1.Secret{})),
 				c.EXPECT().Update(ctx, gomock.AssignableToTypeOf(&corev1.Secret{})).Do(func(ctx context.Context, obj client.Object, opts ...client.UpdateOption) {
 					Expect(obj).To(DeepEqual(managedResourceSecret))
 				}),
-				c.EXPECT().Get(ctx, kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})),
+				c.EXPECT().Get(ctx, kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})),
 				c.EXPECT().Update(ctx, gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Do(func(ctx context.Context, obj client.Object, opts ...client.UpdateOption) {
 					Expect(obj).To(DeepEqual(managedResource))
 				}),
@@ -556,7 +556,7 @@ status:
 			defer func() { TimeoutWaitForManagedResource = oldTimeout }()
 			TimeoutWaitForManagedResource = time.Millisecond
 
-			c.EXPECT().Get(gomock.Any(), kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(fakeErr)
+			c.EXPECT().Get(gomock.Any(), kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(fakeErr)
 
 			Expect(bootstrapper.Wait(ctx)).To(MatchError(fakeErr))
 		})
@@ -566,7 +566,7 @@ status:
 			defer func() { TimeoutWaitForManagedResource = oldTimeout }()
 			TimeoutWaitForManagedResource = time.Millisecond
 
-			c.EXPECT().Get(gomock.Any(), kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).DoAndReturn(
+			c.EXPECT().Get(gomock.Any(), kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).DoAndReturn(
 				func(ctx context.Context, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
 					(&resourcesv1alpha1.ManagedResource{
 						ObjectMeta: metav1.ObjectMeta{
@@ -598,7 +598,7 @@ status:
 			defer func() { TimeoutWaitForManagedResource = oldTimeout }()
 			TimeoutWaitForManagedResource = time.Millisecond
 
-			c.EXPECT().Get(gomock.Any(), kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).DoAndReturn(
+			c.EXPECT().Get(gomock.Any(), kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).DoAndReturn(
 				func(ctx context.Context, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
 					(&resourcesv1alpha1.ManagedResource{
 						ObjectMeta: metav1.ObjectMeta{
@@ -763,35 +763,35 @@ status:
 
 		Describe("#WaitCleanup", func() {
 			It("should fail when the wait for the managed resource deletion fails", func() {
-				oldTimeNow := gutil.TimeNow
-				defer func() { gutil.TimeNow = oldTimeNow }()
-				gutil.TimeNow = timeNowFunc
+				oldTimeNow := gardenerutils.TimeNow
+				defer func() { gardenerutils.TimeNow = oldTimeNow }()
+				gardenerutils.TimeNow = timeNowFunc
 
-				c.EXPECT().Get(gomock.Any(), kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(fakeErr)
+				c.EXPECT().Get(gomock.Any(), kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(fakeErr)
 
 				Expect(bootstrapper.WaitCleanup(ctx)).To(MatchError(fakeErr))
 			})
 
 			It("should fail when the wait for the managed resource deletion times out", func() {
-				oldTimeNow := gutil.TimeNow
-				defer func() { gutil.TimeNow = oldTimeNow }()
-				gutil.TimeNow = timeNowFunc
+				oldTimeNow := gardenerutils.TimeNow
+				defer func() { gardenerutils.TimeNow = oldTimeNow }()
+				gardenerutils.TimeNow = timeNowFunc
 
 				oldTimeout := TimeoutWaitForManagedResource
 				defer func() { TimeoutWaitForManagedResource = oldTimeout }()
 				TimeoutWaitForManagedResource = time.Millisecond
 
-				c.EXPECT().Get(gomock.Any(), kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).AnyTimes()
+				c.EXPECT().Get(gomock.Any(), kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).AnyTimes()
 
 				Expect(bootstrapper.WaitCleanup(ctx)).To(MatchError(ContainSubstring("still exists")))
 			})
 
 			It("should successfully delete all resources", func() {
-				oldTimeNow := gutil.TimeNow
-				defer func() { gutil.TimeNow = oldTimeNow }()
-				gutil.TimeNow = timeNowFunc
+				oldTimeNow := gardenerutils.TimeNow
+				defer func() { gardenerutils.TimeNow = oldTimeNow }()
+				gardenerutils.TimeNow = timeNowFunc
 
-				c.EXPECT().Get(gomock.Any(), kutil.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(apierrors.NewNotFound(schema.GroupResource{}, ""))
+				c.EXPECT().Get(gomock.Any(), kubernetesutils.Key(namespace, managedResourceName), gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResource{})).Return(apierrors.NewNotFound(schema.GroupResource{}, ""))
 
 				Expect(bootstrapper.WaitCleanup(ctx)).To(Succeed())
 			})

@@ -19,23 +19,23 @@ import (
 	"strings"
 	"time"
 
-	bootstraputil "github.com/gardener/gardener/pkg/gardenlet/bootstrap/util"
-
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+
+	gardenletbootstraputil "github.com/gardener/gardener/pkg/gardenlet/bootstrap/util"
 )
 
-func (g *graph) setupServiceAccountWatch(_ context.Context, informer cache.Informer) {
-	informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+func (g *graph) setupServiceAccountWatch(_ context.Context, informer cache.Informer) error {
+	_, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			serviceAccount, ok := obj.(*corev1.ServiceAccount)
 			if !ok {
 				return
 			}
 
-			if !strings.HasPrefix(serviceAccount.Name, bootstraputil.ServiceAccountNamePrefix) {
+			if !strings.HasPrefix(serviceAccount.Name, gardenletbootstraputil.ServiceAccountNamePrefix) {
 				return
 			}
 
@@ -67,13 +67,14 @@ func (g *graph) setupServiceAccountWatch(_ context.Context, informer cache.Infor
 				return
 			}
 
-			if !strings.HasPrefix(serviceAccount.Name, bootstraputil.ServiceAccountNamePrefix) {
+			if !strings.HasPrefix(serviceAccount.Name, gardenletbootstraputil.ServiceAccountNamePrefix) {
 				return
 			}
 
 			g.handleServiceAccountDelete(serviceAccount)
 		},
 	})
+	return err
 }
 
 func (g *graph) handleServiceAccountCreateOrUpdate(serviceAccount *corev1.ServiceAccount) {

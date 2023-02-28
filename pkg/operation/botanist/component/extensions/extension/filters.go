@@ -15,9 +15,9 @@
 package extension
 
 import (
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-
 	"k8s.io/apimachinery/pkg/util/sets"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 )
 
 type filter func(e Extension) bool
@@ -64,8 +64,8 @@ func migrateAfterKubeAPIServer(e Extension) bool {
 	return *e.Lifecycle.Migrate == gardencorev1beta1.AfterKubeAPIServer
 }
 
-func (e *extension) filterExtensions(f filter) sets.String {
-	extensions := sets.NewString()
+func (e *extension) filterExtensions(f filter) sets.Set[string] {
+	extensions := sets.New[string]()
 	for _, ext := range e.values.Extensions {
 		if f(ext) {
 			extensions.Insert(ext.Spec.Type)

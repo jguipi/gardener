@@ -15,16 +15,16 @@
 package predicate_test
 
 import (
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	. "github.com/gardener/gardener/pkg/resourcemanager/predicate"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/types"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	. "github.com/gardener/gardener/pkg/resourcemanager/predicate"
 )
 
 var _ = Describe("#ConditionStatusChanged", func() {
@@ -40,7 +40,7 @@ var _ = Describe("#ConditionStatusChanged", func() {
 	BeforeEach(func() {
 		managedResource = &resourcesv1alpha1.ManagedResource{
 			Spec: resourcesv1alpha1.ManagedResourceSpec{
-				Class: pointer.StringPtr("shoot"),
+				Class: pointer.String("shoot"),
 			},
 		}
 		createEvent = event.CreateEvent{

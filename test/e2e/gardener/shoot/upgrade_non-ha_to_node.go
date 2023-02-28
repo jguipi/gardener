@@ -18,17 +18,17 @@ import (
 	"context"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
 	"github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	e2e "github.com/gardener/gardener/test/e2e/gardener"
 	"github.com/gardener/gardener/test/utils/shoots/update/highavailability"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("Shoot Tests", Label("Shoot", "high-availability", "upgrade-to-node"), func() {
 	f := defaultShootCreationFramework()
-	f.Shoot = e2e.DefaultShoot("e2e-upgrade-node")
+	f.Shoot = e2e.DefaultShoot("e2e-update-node")
 	f.Shoot.Spec.ControlPlane = nil
 
 	It("Create, Upgrade (non-HA to HA with failure tolerance type 'node') and Delete Shoot", func() {

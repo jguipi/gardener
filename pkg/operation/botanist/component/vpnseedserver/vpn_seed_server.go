@@ -20,17 +20,6 @@ import (
 	"path/filepath"
 
 	"github.com/Masterminds/semver"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/controllerutils"
-	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
-	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-	"github.com/gardener/gardener/pkg/utils/version"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	istionetworkingv1beta1 "istio.io/api/networking/v1beta1"
@@ -50,6 +39,19 @@ import (
 	vpaautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/controllerutils"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	kubeapiserverconstants "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/constants"
+	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
+	"github.com/gardener/gardener/pkg/utils"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
+	"github.com/gardener/gardener/pkg/utils/version"
 )
 
 const (
@@ -64,9 +66,11 @@ const (
 	// EnvoyPort is the port exposed by the envoy proxy on which it receives http proxy/connect requests.
 	EnvoyPort = 9443
 	// OpenVPNPort is the port exposed by the vpn seed server for tcp tunneling.
-	OpenVPNPort     = 1194
-	metricsPort     = 15000
-	metricsPortName = "metrics"
+	OpenVPNPort = 1194
+	// HighAvailabilityReplicaCount is the replica count used when highly available VPN is configured.
+	HighAvailabilityReplicaCount = 2
+	metricsPort                  = 15000
+	metricsPortName              = "metrics"
 
 	secretNameDH            = "vpn-seed-server-dh"
 	envoyProxyContainerName = "envoy-proxy"
@@ -99,23 +103,14 @@ type Interface interface {
 	// SetSeedNamespaceObjectUID sets UID for the namespace
 	SetSeedNamespaceObjectUID(namespaceUID types.UID)
 
-	// SetExposureClassHandlerName sets the name of the ExposureClass handler.
-	SetExposureClassHandlerName(string)
-
-	// SetSNIConfig set the sni config.
-	SetSNIConfig(*config.SNI)
+	// GetValues returns the current configuration values of the deployer.
+	GetValues() Values
 }
 
 // Secrets is collection of secrets for the vpn-seed-server.
 type Secrets struct {
 	// DiffieHellmanKey is a secret containing the diffie hellman key.
 	DiffieHellmanKey component.Secret
-}
-
-// IstioIngressGateway contains the values for istio ingress gateway configuration.
-type IstioIngressGateway struct {
-	Namespace string
-	Labels    map[string]string
 }
 
 // NetworkValues contains the configuration values for the network.
@@ -146,8 +141,6 @@ type Values struct {
 	HighAvailabilityNumberOfSeedServers int
 	// HighAvailabilityNumberOfShootClients is the number of VPN shoot clients used for HA
 	HighAvailabilityNumberOfShootClients int
-	// IstioIngressGateway contains the values for istio ingress gateway configuration.
-	IstioIngressGateway IstioIngressGateway
 	// SeedVersion is the Kubernetes version of the Seed.
 	SeedVersion *semver.Version
 }
@@ -157,25 +150,30 @@ func New(
 	client client.Client,
 	namespace string,
 	secretsManager secretsmanager.Interface,
+	istioNamespaceFunc func() string,
 	values Values,
 ) Interface {
 	return &vpnSeedServer{
-		client:         client,
-		namespace:      namespace,
-		secretsManager: secretsManager,
-		values:         values,
+		client:             client,
+		namespace:          namespace,
+		secretsManager:     secretsManager,
+		values:             values,
+		istioNamespaceFunc: istioNamespaceFunc,
 	}
 }
 
 type vpnSeedServer struct {
-	client                   client.Client
-	namespace                string
-	secretsManager           secretsmanager.Interface
-	namespaceUID             types.UID
-	values                   Values
-	exposureClassHandlerName *string
-	sniConfig                *config.SNI
-	secrets                  Secrets
+	client             client.Client
+	namespace          string
+	secretsManager     secretsmanager.Interface
+	namespaceUID       types.UID
+	values             Values
+	secrets            Secrets
+	istioNamespaceFunc func() string
+}
+
+func (v *vpnSeedServer) GetValues() Values {
+	return v.values
 }
 
 func (v *vpnSeedServer) Deploy(ctx context.Context) error {
@@ -204,26 +202,26 @@ func (v *vpnSeedServer) Deploy(ctx context.Context) error {
 		}
 	)
 
-	utilruntime.Must(kutil.MakeUnique(configMap))
-	utilruntime.Must(kutil.MakeUnique(dhSecret))
+	utilruntime.Must(kubernetesutils.MakeUnique(configMap))
+	utilruntime.Must(kubernetesutils.MakeUnique(dhSecret))
 
 	secretCAVPN, found := v.secretsManager.Get(v1beta1constants.SecretNameCAVPN)
 	if !found {
 		return fmt.Errorf("secret %q not found", v1beta1constants.SecretNameCAVPN)
 	}
 
-	secretServer, err := v.secretsManager.Generate(ctx, &secretutils.CertificateSecretConfig{
+	secretServer, err := v.secretsManager.Generate(ctx, &secretsutils.CertificateSecretConfig{
 		Name:                        "vpn-seed-server",
 		CommonName:                  "vpn-seed-server",
-		DNSNames:                    kutil.DNSNamesForService(ServiceName, v.namespace),
-		CertType:                    secretutils.ServerCert,
+		DNSNames:                    kubernetesutils.DNSNamesForService(ServiceName, v.namespace),
+		CertType:                    secretsutils.ServerCert,
 		SkipPublishingCACertificate: true,
 	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCAVPN), secretsmanager.Rotate(secretsmanager.InPlace))
 	if err != nil {
 		return err
 	}
 
-	secretTLSAuth, err := v.secretsManager.Generate(ctx, &secretutils.VPNTLSAuthConfig{
+	secretTLSAuth, err := v.secretsManager.Generate(ctx, &secretsutils.VPNTLSAuthConfig{
 		Name: SecretNameTLSAuth,
 	}, secretsmanager.Rotate(secretsmanager.InPlace))
 	if err != nil {
@@ -238,15 +236,15 @@ func (v *vpnSeedServer) Deploy(ctx context.Context) error {
 		return err
 	}
 
-	if err := v.deployNetworkPolicy(ctx); err != nil {
+	// TODO(rfranzke): Delete this in a future release.
+	if err := kubernetesutils.DeleteObject(ctx, v.client, v.emptyNetworkPolicy()); err != nil {
 		return err
 	}
 
 	podTemplate := v.podTemplate(configMap, dhSecret, secretCAVPN, secretServer, secretTLSAuth)
 	labels := map[string]string{
-		v1beta1constants.GardenRole:                           v1beta1constants.GardenRoleControlPlane,
-		v1beta1constants.LabelApp:                             DeploymentName,
-		v1beta1constants.LabelNetworkPolicyFromShootAPIServer: v1beta1constants.LabelNetworkPolicyAllowed,
+		v1beta1constants.GardenRole: v1beta1constants.GardenRoleControlPlane,
+		v1beta1constants.LabelApp:   DeploymentName,
 	}
 
 	if v.values.HighAvailabilityEnabled {
@@ -261,7 +259,7 @@ func (v *vpnSeedServer) Deploy(ctx context.Context) error {
 				return err
 			}
 		}
-		if err := kutil.DeleteObjects(ctx, v.client,
+		if err := kubernetesutils.DeleteObjects(ctx, v.client,
 			v.emptyDeployment(),
 			v.emptyService(nil),
 			v.emptyDestinationRule(nil),
@@ -282,7 +280,7 @@ func (v *vpnSeedServer) Deploy(ctx context.Context) error {
 		for i := 0; i < v.values.HighAvailabilityNumberOfSeedServers; i++ {
 			objects = append(objects, v.emptyService(&i), v.emptyDestinationRule(&i))
 		}
-		if err := kutil.DeleteObjects(ctx, v.client, objects...); err != nil {
+		if err := kubernetesutils.DeleteObjects(ctx, v.client, objects...); err != nil {
 			return err
 		}
 	}
@@ -304,7 +302,7 @@ func (v *vpnSeedServer) podTemplate(configMap *corev1.ConfigMap, dhSecret, secre
 				v1beta1constants.LabelNetworkPolicyToShootNetworks:   v1beta1constants.LabelNetworkPolicyAllowed,
 				v1beta1constants.LabelNetworkPolicyToDNS:             v1beta1constants.LabelNetworkPolicyAllowed,
 				v1beta1constants.LabelNetworkPolicyToPrivateNetworks: v1beta1constants.LabelNetworkPolicyAllowed,
-				v1beta1constants.LabelNetworkPolicyFromPrometheus:    v1beta1constants.LabelNetworkPolicyAllowed,
+				gardenerutils.NetworkPolicyLabel(v1beta1constants.DeploymentNameKubeAPIServer, kubeapiserverconstants.Port): v1beta1constants.LabelNetworkPolicyAllowed,
 			},
 		},
 		Spec: corev1.PodSpec{
@@ -327,6 +325,7 @@ func (v *vpnSeedServer) podTemplate(configMap *corev1.ConfigMap, dhSecret, secre
 						Capabilities: &corev1.Capabilities{
 							Add: []corev1.Capability{
 								"NET_ADMIN",
+								"NET_RAW",
 							},
 						},
 					},
@@ -418,7 +417,7 @@ func (v *vpnSeedServer) podTemplate(configMap *corev1.ConfigMap, dhSecret, secre
 											Name: secretCAVPN.Name,
 										},
 										Items: []corev1.KeyToPath{{
-											Key:  secretutils.DataKeyCertificateBundle,
+											Key:  secretsutils.DataKeyCertificateBundle,
 											Path: fileNameCABundle,
 										}},
 									},
@@ -430,12 +429,12 @@ func (v *vpnSeedServer) podTemplate(configMap *corev1.ConfigMap, dhSecret, secre
 										},
 										Items: []corev1.KeyToPath{
 											{
-												Key:  secretutils.DataKeyCertificate,
-												Path: secretutils.DataKeyCertificate,
+												Key:  secretsutils.DataKeyCertificate,
+												Path: secretsutils.DataKeyCertificate,
 											},
 											{
-												Key:  secretutils.DataKeyPrivateKey,
-												Path: secretutils.DataKeyPrivateKey,
+												Key:  secretsutils.DataKeyPrivateKey,
+												Path: secretsutils.DataKeyPrivateKey,
 											},
 										},
 									},
@@ -711,14 +710,15 @@ func (v *vpnSeedServer) deployDeployment(ctx context.Context, labels map[string]
 }
 
 func (v *vpnSeedServer) deployService(ctx context.Context, idx *int) error {
-	var (
-		service = v.emptyService(idx)
-	)
+	service := v.emptyService(idx)
 
 	_, err := controllerutils.GetAndCreateOrMergePatch(ctx, v.client, service, func() error {
-		service.Annotations = map[string]string{
-			"networking.istio.io/exportTo": "*",
-		}
+		metav1.SetMetaDataAnnotation(&service.ObjectMeta, "networking.istio.io/exportTo", "*")
+
+		metav1.SetMetaDataAnnotation(&service.ObjectMeta, resourcesv1alpha1.NetworkingPodLabelSelectorNamespaceAlias, v1beta1constants.LabelNetworkPolicyShootNamespaceAlias)
+		utilruntime.Must(gardenerutils.InjectNetworkPolicyNamespaceSelectors(service, metav1.LabelSelector{MatchLabels: map[string]string{v1beta1constants.GardenRole: v1beta1constants.GardenRoleIstioIngress}}))
+		utilruntime.Must(gardenerutils.InjectNetworkPolicyAnnotationsForScrapeTargets(service, networkingv1.NetworkPolicyPort{Port: utils.IntStrPtrFromInt(metricsPort), Protocol: utils.ProtocolPtr(corev1.ProtocolTCP)}))
+
 		service.Spec.Type = corev1.ServiceTypeClusterIP
 		service.Spec.Ports = []corev1.ServicePort{
 			{
@@ -737,6 +737,7 @@ func (v *vpnSeedServer) deployService(ctx context.Context, idx *int) error {
 				TargetPort: intstr.FromInt(metricsPort),
 			},
 		}
+
 		if idx == nil {
 			service.Spec.Selector = map[string]string{
 				v1beta1constants.LabelApp: DeploymentName,
@@ -746,6 +747,7 @@ func (v *vpnSeedServer) deployService(ctx context.Context, idx *int) error {
 				"statefulset.kubernetes.io/pod-name": v.indexedName(idx),
 			}
 		}
+
 		return nil
 	})
 	return err
@@ -791,83 +793,6 @@ func (v *vpnSeedServer) deployDestinationRule(ctx context.Context, idx *int) err
 	return err
 }
 
-func (v *vpnSeedServer) deployNetworkPolicy(ctx context.Context) error {
-	var (
-		networkPolicy = v.emptyNetworkPolicy()
-		igwSelectors  = v.getIngressGatewaySelectors()
-	)
-	_, err := controllerutils.GetAndCreateOrMergePatch(ctx, v.client, networkPolicy, func() error {
-		networkPolicy.ObjectMeta.Annotations = map[string]string{
-			v1beta1constants.GardenerDescription: "Allows only Ingress/Egress between the kube-apiserver of the same control plane and the corresponding vpn-seed-server and Ingress from the istio ingress gateway to the vpn-seed-server.",
-		}
-		networkPolicy.Spec = networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{
-				MatchLabels: GetLabels(),
-			},
-			Ingress: []networkingv1.NetworkPolicyIngressRule{
-				{
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							PodSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									v1beta1constants.GardenRole: v1beta1constants.GardenRoleControlPlane,
-									v1beta1constants.LabelApp:   v1beta1constants.LabelKubernetes,
-									v1beta1constants.LabelRole:  v1beta1constants.LabelAPIServer,
-								},
-							},
-						},
-					},
-				},
-				{
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							PodSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									v1beta1constants.GardenRole: v1beta1constants.GardenRoleMonitoring,
-									v1beta1constants.LabelApp:   v1beta1constants.StatefulSetNamePrometheus,
-									v1beta1constants.LabelRole:  v1beta1constants.GardenRoleMonitoring,
-								},
-							},
-						},
-					},
-				},
-				{
-					From: []networkingv1.NetworkPolicyPeer{
-						{
-							// we don't want to modify existing labels on the istio namespace
-							NamespaceSelector: &metav1.LabelSelector{},
-							PodSelector: &metav1.LabelSelector{
-								MatchLabels: igwSelectors,
-							},
-						},
-					},
-				},
-			},
-			Egress: []networkingv1.NetworkPolicyEgressRule{
-				{
-					To: []networkingv1.NetworkPolicyPeer{
-						{
-							PodSelector: &metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									v1beta1constants.GardenRole: v1beta1constants.GardenRoleControlPlane,
-									v1beta1constants.LabelApp:   v1beta1constants.LabelKubernetes,
-									v1beta1constants.LabelRole:  v1beta1constants.LabelAPIServer,
-								},
-							},
-						},
-					},
-				},
-			},
-			PolicyTypes: []networkingv1.PolicyType{
-				networkingv1.PolicyTypeIngress,
-				networkingv1.PolicyTypeEgress,
-			},
-		}
-		return nil
-	})
-	return err
-}
-
 func (v *vpnSeedServer) deployVPA(ctx context.Context) error {
 	var (
 		vpa              = v.emptyVPA()
@@ -888,7 +813,6 @@ func (v *vpnSeedServer) deployVPA(ctx context.Context) error {
 				{
 					ContainerName: DeploymentName,
 					MinAllowed: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("100m"),
 						corev1.ResourceMemory: resource.MustParse("100Mi"),
 					},
 					ControlledValues: &controlledValues,
@@ -896,7 +820,6 @@ func (v *vpnSeedServer) deployVPA(ctx context.Context) error {
 				{
 					ContainerName: envoyProxyContainerName,
 					MinAllowed: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("20m"),
 						corev1.ResourceMemory: resource.MustParse("20Mi"),
 					},
 					ControlledValues: &controlledValues,
@@ -922,7 +845,7 @@ func (v *vpnSeedServer) Destroy(ctx context.Context) error {
 	for i := 0; i < v.values.HighAvailabilityNumberOfSeedServers; i++ {
 		objects = append(objects, v.emptyDestinationRule(&i), v.emptyService(&i))
 	}
-	return kutil.DeleteObjects(ctx, v.client, objects...)
+	return kubernetesutils.DeleteObjects(ctx, v.client, objects...)
 }
 
 func (v *vpnSeedServer) Wait(_ context.Context) error        { return nil }
@@ -933,10 +856,6 @@ func (v *vpnSeedServer) SetSecrets(secrets Secrets) { v.secrets = secrets }
 func (v *vpnSeedServer) SetSeedNamespaceObjectUID(namespaceUID types.UID) {
 	v.namespaceUID = namespaceUID
 }
-func (v *vpnSeedServer) SetExposureClassHandlerName(handlerName string) {
-	v.exposureClassHandlerName = &handlerName
-}
-func (v *vpnSeedServer) SetSNIConfig(cfg *config.SNI) { v.sniConfig = cfg }
 
 func (v *vpnSeedServer) indexedName(idx *int) string {
 	if idx == nil {
@@ -986,30 +905,10 @@ func (v *vpnSeedServer) emptyVPA() *vpaautoscalingv1.VerticalPodAutoscaler {
 }
 
 func (v *vpnSeedServer) emptyEnvoyFilter() *networkingv1alpha3.EnvoyFilter {
-	var namespace = v.values.IstioIngressGateway.Namespace
-	if v.sniConfig != nil && v.exposureClassHandlerName != nil {
-		namespace = *v.sniConfig.Ingress.Namespace
-	}
-	return &networkingv1alpha3.EnvoyFilter{ObjectMeta: metav1.ObjectMeta{Name: v.namespace + "-vpn", Namespace: namespace}}
+	return &networkingv1alpha3.EnvoyFilter{ObjectMeta: metav1.ObjectMeta{Name: v.namespace + "-vpn", Namespace: v.istioNamespaceFunc()}}
 }
 
-func (v *vpnSeedServer) getIngressGatewaySelectors() map[string]string {
-	var defaulIgwSelectors = map[string]string{
-		v1beta1constants.LabelApp: v1beta1constants.DefaultIngressGatewayAppLabelValue,
-	}
-
-	if v.sniConfig != nil {
-		if v.exposureClassHandlerName != nil {
-			return gutil.GetMandatoryExposureClassHandlerSNILabels(v.sniConfig.Ingress.Labels, *v.exposureClassHandlerName)
-		}
-		return utils.MergeStringMaps(v.sniConfig.Ingress.Labels, defaulIgwSelectors)
-	}
-
-	return defaulIgwSelectors
-}
-
-// GetLabels returns the labels for the vpn-seed-server
-func GetLabels() map[string]string {
+func getLabels() map[string]string {
 	return map[string]string{
 		v1beta1constants.GardenRole: v1beta1constants.GardenRoleControlPlane,
 		v1beta1constants.LabelApp:   DeploymentName,
@@ -1035,8 +934,8 @@ var envoyConfig = `static_resources:
           "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
           common_tls_context:
             tls_certificates:
-            - certificate_chain: { filename: "` + volumeMountPathCerts + `/` + secretutils.DataKeyCertificate + `" }
-              private_key: { filename: "` + volumeMountPathCerts + `/` + secretutils.DataKeyPrivateKey + `" }
+            - certificate_chain: { filename: "` + volumeMountPathCerts + `/` + secretsutils.DataKeyCertificate + `" }
+              private_key: { filename: "` + volumeMountPathCerts + `/` + secretsutils.DataKeyPrivateKey + `" }
             validation_context:
               trusted_ca:
                 filename: ` + volumeMountPathCerts + `/` + fileNameCABundle + `

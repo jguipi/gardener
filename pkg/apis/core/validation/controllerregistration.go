@@ -17,24 +17,24 @@ package validation
 import (
 	"fmt"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/extensions"
-
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 )
 
-var availablePolicies = sets.NewString(
+var availablePolicies = sets.New[string](
 	string(core.ControllerDeploymentPolicyOnDemand),
 	string(core.ControllerDeploymentPolicyAlways),
 	string(core.ControllerDeploymentPolicyAlwaysExceptNoShoots),
 )
 
-var availableExtensionStrategies = sets.NewString(
+var availableExtensionStrategies = sets.New[string](
 	string(core.BeforeKubeAPIServer),
 	string(core.AfterKubeAPIServer),
 )
@@ -50,7 +50,7 @@ func ValidateControllerRegistration(controllerRegistration *core.ControllerRegis
 }
 
 // SupportedExtensionKinds contains all supported extension kinds.
-var SupportedExtensionKinds = sets.NewString(
+var SupportedExtensionKinds = sets.New[string](
 	extensionsv1alpha1.BackupBucketResource,
 	extensionsv1alpha1.BackupEntryResource,
 	extensionsv1alpha1.BastionResource,
@@ -91,7 +91,7 @@ func ValidateControllerRegistrationSpec(spec *core.ControllerRegistrationSpec, f
 			allErrs = append(allErrs, field.Required(idxPath.Child("type"), "field is required"))
 		}
 		if t, ok := resources[resource.Kind]; ok && t == resource.Type {
-			allErrs = append(allErrs, field.Duplicate(idxPath, extensions.Id(resource.Kind, resource.Type)))
+			allErrs = append(allErrs, field.Duplicate(idxPath, gardenerutils.ExtensionsID(resource.Kind, resource.Type)))
 		}
 		if resource.Kind != extensionsv1alpha1.ExtensionResource {
 			if resource.GloballyEnabled != nil {
@@ -108,13 +108,13 @@ func ValidateControllerRegistrationSpec(spec *core.ControllerRegistrationSpec, f
 		if resource.Kind == extensionsv1alpha1.ExtensionResource && resource.Lifecycle != nil {
 			lifecyclePath := idxPath.Child("lifecycle")
 			if resource.Lifecycle.Reconcile != nil && !availableExtensionStrategies.Has(string(*resource.Lifecycle.Reconcile)) {
-				allErrs = append(allErrs, field.NotSupported(lifecyclePath.Child("reconcile"), *resource.Lifecycle.Reconcile, availableExtensionStrategies.List()))
+				allErrs = append(allErrs, field.NotSupported(lifecyclePath.Child("reconcile"), *resource.Lifecycle.Reconcile, sets.List(availableExtensionStrategies)))
 			}
 			if resource.Lifecycle.Delete != nil && !availableExtensionStrategies.Has(string(*resource.Lifecycle.Delete)) {
-				allErrs = append(allErrs, field.NotSupported(lifecyclePath.Child("delete"), *resource.Lifecycle.Delete, availableExtensionStrategies.List()))
+				allErrs = append(allErrs, field.NotSupported(lifecyclePath.Child("delete"), *resource.Lifecycle.Delete, sets.List(availableExtensionStrategies)))
 			}
 			if resource.Lifecycle.Migrate != nil && !availableExtensionStrategies.Has(string(*resource.Lifecycle.Migrate)) {
-				allErrs = append(allErrs, field.NotSupported(lifecyclePath.Child("migrate"), *resource.Lifecycle.Migrate, availableExtensionStrategies.List()))
+				allErrs = append(allErrs, field.NotSupported(lifecyclePath.Child("migrate"), *resource.Lifecycle.Migrate, sets.List(availableExtensionStrategies)))
 			}
 		}
 
@@ -126,7 +126,7 @@ func ValidateControllerRegistrationSpec(spec *core.ControllerRegistrationSpec, f
 
 	if deployment := spec.Deployment; deployment != nil {
 		if policy := deployment.Policy; policy != nil && !availablePolicies.Has(string(*policy)) {
-			allErrs = append(allErrs, field.NotSupported(deploymentPath.Child("policy"), *policy, availablePolicies.List()))
+			allErrs = append(allErrs, field.NotSupported(deploymentPath.Child("policy"), *policy, sets.List(availablePolicies)))
 		}
 
 		if deployment.SeedSelector != nil {
@@ -134,7 +134,7 @@ func ValidateControllerRegistrationSpec(spec *core.ControllerRegistrationSpec, f
 				allErrs = append(allErrs, field.Forbidden(deploymentPath.Child("seedSelector"), "specifying a seed selector is not allowed when controlling resources primarily"))
 			}
 
-			allErrs = append(allErrs, metav1validation.ValidateLabelSelector(deployment.SeedSelector, deploymentPath.Child("seedSelector"))...)
+			allErrs = append(allErrs, metav1validation.ValidateLabelSelector(deployment.SeedSelector, metav1validation.LabelSelectorValidationOptions{AllowInvalidLabelValueInSelector: true}, deploymentPath.Child("seedSelector"))...)
 		}
 
 		deploymentRefsCount := len(deployment.DeploymentRefs)

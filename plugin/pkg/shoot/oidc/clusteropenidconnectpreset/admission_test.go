@@ -17,29 +17,29 @@ package clusteropenidconnectpreset_test
 import (
 	"context"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	settingsv1alpha1 "github.com/gardener/gardener/pkg/apis/settings/v1alpha1"
-	coreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
-	settingsinformer "github.com/gardener/gardener/pkg/client/settings/informers/externalversions"
-	. "github.com/gardener/gardener/plugin/pkg/shoot/oidc/clusteropenidconnectpreset"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/utils/pointer"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	settingsv1alpha1 "github.com/gardener/gardener/pkg/apis/settings/v1alpha1"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	settingsinformers "github.com/gardener/gardener/pkg/client/settings/informers/externalversions"
+	. "github.com/gardener/gardener/plugin/pkg/shoot/oidc/clusteropenidconnectpreset"
 )
 
 var _ = Describe("Cluster OpenIDConfig Preset", func() {
 	Describe("#Admit", func() {
 		var (
 			admissionHandler        *ClusterOpenIDConnectPreset
-			settingsInformerFactory settingsinformer.SharedInformerFactory
+			settingsInformerFactory settingsinformers.SharedInformerFactory
 			shoot                   *core.Shoot
 			project                 *core.Project
 			preset                  *settingsv1alpha1.ClusterOpenIDConnectPreset
-			coreInformerFactory     coreinformers.SharedInformerFactory
+			coreInformerFactory     gardencoreinformers.SharedInformerFactory
 		)
 
 		BeforeEach(func() {
@@ -105,9 +105,9 @@ var _ = Describe("Cluster OpenIDConfig Preset", func() {
 			}
 			admissionHandler, _ = New()
 			admissionHandler.AssignReadyFunc(func() bool { return true })
-			settingsInformerFactory = settingsinformer.NewSharedInformerFactory(nil, 0)
+			settingsInformerFactory = settingsinformers.NewSharedInformerFactory(nil, 0)
 			admissionHandler.SetSettingsInformerFactory(settingsInformerFactory)
-			coreInformerFactory = coreinformers.NewSharedInformerFactory(nil, 0)
+			coreInformerFactory = gardencoreinformers.NewSharedInformerFactory(nil, 0)
 			admissionHandler.SetInternalCoreInformerFactory(coreInformerFactory)
 
 		})
@@ -315,15 +315,15 @@ var _ = Describe("Cluster OpenIDConfig Preset", func() {
 			})
 
 			It("when projectLister is not set", func() {
-				plugin.SetSettingsInformerFactory(settingsinformer.NewSharedInformerFactory(nil, 0))
+				plugin.SetSettingsInformerFactory(settingsinformers.NewSharedInformerFactory(nil, 0))
 				err := plugin.ValidateInitialization()
 				Expect(err).To(HaveOccurred())
 			})
 		})
 
 		It("should return nil error when everything is set", func() {
-			plugin.SetSettingsInformerFactory(settingsinformer.NewSharedInformerFactory(nil, 0))
-			plugin.SetInternalCoreInformerFactory(coreinformers.NewSharedInformerFactory(nil, 0))
+			plugin.SetSettingsInformerFactory(settingsinformers.NewSharedInformerFactory(nil, 0))
+			plugin.SetInternalCoreInformerFactory(gardencoreinformers.NewSharedInformerFactory(nil, 0))
 			Expect(plugin.ValidateInitialization()).ToNot(HaveOccurred())
 		})
 	})

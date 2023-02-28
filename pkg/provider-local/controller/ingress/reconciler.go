@@ -18,11 +18,6 @@ import (
 	"context"
 	"fmt"
 
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/provider-local/local"
-	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -32,6 +27,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/apis/extensions/v1alpha1/helper"
+	"github.com/gardener/gardener/pkg/provider-local/local"
+	"github.com/gardener/gardener/pkg/utils"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 )
 
 type reconciler struct {
@@ -106,14 +107,14 @@ func dnsRecordsForIngress(ingress *networkingv1.Ingress, ip string, scheme *runt
 				},
 				Annotations: map[string]string{
 					// skip deletion protection, otherwise garbage collector won't be able to delete this DNSRecord object
-					gutil.ConfirmationDeletion: "true",
+					gardenerutils.ConfirmationDeletion: "true",
 				},
 			},
 			Spec: extensionsv1alpha1.DNSRecordSpec{
 				DefaultSpec: extensionsv1alpha1.DefaultSpec{
 					Type: local.Type,
 				},
-				RecordType: extensionsv1alpha1.DNSRecordTypeA,
+				RecordType: helper.GetDNSRecordType(ip),
 				Name:       host,
 				Values:     []string{ip},
 				SecretRef: corev1.SecretReference{

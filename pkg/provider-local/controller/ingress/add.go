@@ -16,7 +16,6 @@ package ingress
 
 import (
 	networkingv1 "k8s.io/api/networking/v1"
-
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -39,7 +38,6 @@ type AddOptions struct {
 // The opts.Reconciler is being set with a newly instantiated actuator.
 func AddToManagerWithOptions(mgr manager.Manager, opts AddOptions) error {
 	opts.Controller.Reconciler = &reconciler{}
-	opts.Controller.RecoverPanic = true
 
 	ctrl, err := controller.New(ControllerName, mgr, opts.Controller)
 	if err != nil {

@@ -19,11 +19,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/gardener/gardener/extensions/pkg/controller/backupbucket"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-
 	"github.com/go-logr/logr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gardener/gardener/extensions/pkg/controller/backupbucket"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 )
 
 type actuator struct {
@@ -52,6 +52,12 @@ func (a *actuator) Reconcile(_ context.Context, log logr.Logger, bb *extensionsv
 	if err := os.Mkdir(filePath, fileMode); err != nil && !os.IsExist(err) {
 		return err
 	}
+
+	// ensure the backup-bucket directory has the correct set of permissions, even if they have been changed externally
+	if err := os.Chmod(filePath, fileMode); err != nil {
+		return err
+	}
+
 	return nil
 }
 

@@ -31,7 +31,7 @@ controllers:
     syncPeriod: 30s
   controllerInstallationRequired:
     concurrentSyncs: 1
-  seedAPIServerNetworkPolicy:
+  networkPolicy:
     concurrentSyncs: 5
   shoot:
     concurrentSyncs: 20
@@ -52,10 +52,13 @@ controllers:
     staleExtensionHealthChecks:
       enabled: true
     # threshold: 5m
+    managedResourceProgressingThreshold: 1h
     conditionThresholds:
     - type: APIServerAvailable
       duration: 1m
     - type: ControlPlaneHealthy
+      duration: 1m
+    - type: ObservabilityComponentsHealthy
       duration: 1m
     - type: SystemComponentsHealthy
       duration: 1m
@@ -80,16 +83,6 @@ controllers:
     syncPeriod: 1h
     waitSyncPeriod: 15s
     syncJitterPeriod: 5m
-  shootMigration:
-    concurrentSyncs: 5
-    syncPeriod: 1m
-    gracePeriod: 2h
-    lastOperationStaleDuration: 10m
-  backupEntryMigration:
-    concurrentSyncs: 5
-    syncPeriod: 1m
-    gracePeriod: 10m
-    lastOperationStaleDuration: 2m
 resources:
   capacity:
     shoots: 200
@@ -118,9 +111,7 @@ featureGates:
   HVPAForShootedSeed: true
   ManagedIstio: true
   APIServerSNI: true
-  ReversedVPN: true
   CopyEtcdBackupsDuringControlPlaneMigration: true
-  ForceRestore: false
   DefaultSeccompProfile: true
   CoreDNSQueryRewriting: true
 # seedConfig:

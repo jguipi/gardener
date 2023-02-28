@@ -19,16 +19,16 @@ import (
 	"net"
 	"time"
 
-	gardencore "github.com/gardener/gardener/pkg/apis/core"
-	corevalidation "github.com/gardener/gardener/pkg/apis/core/validation"
-	"github.com/gardener/gardener/pkg/features"
-	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	"github.com/gardener/gardener/pkg/logger"
-
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+
+	gardencore "github.com/gardener/gardener/pkg/apis/core"
+	gardencorevalidation "github.com/gardener/gardener/pkg/apis/core/validation"
+	"github.com/gardener/gardener/pkg/features"
+	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
+	"github.com/gardener/gardener/pkg/logger"
 )
 
 // ValidateGardenletConfiguration validates a GardenletConfiguration object.
@@ -65,19 +65,22 @@ func ValidateGardenletConfiguration(cfg *config.GardenletConfiguration, fldPath 
 		if cfg.Controllers.Shoot != nil {
 			allErrs = append(allErrs, ValidateShootControllerConfiguration(cfg.Controllers.Shoot, fldPath.Child("controllers", "shoot"))...)
 		}
+		if cfg.Controllers.ShootCare != nil {
+			allErrs = append(allErrs, ValidateShootCareControllerConfiguration(cfg.Controllers.ShootCare, fldPath.Child("controllers", "shootCare"))...)
+		}
 		if cfg.Controllers.ManagedSeed != nil {
 			allErrs = append(allErrs, ValidateManagedSeedControllerConfiguration(cfg.Controllers.ManagedSeed, fldPath.Child("controllers", "managedSeed"))...)
 		}
 	}
 
 	if cfg.LogLevel != "" {
-		if !sets.NewString(logger.AllLogLevels...).Has(cfg.LogLevel) {
+		if !sets.New[string](logger.AllLogLevels...).Has(cfg.LogLevel) {
 			allErrs = append(allErrs, field.NotSupported(field.NewPath("logLevel"), cfg.LogLevel, logger.AllLogLevels))
 		}
 	}
 
 	if cfg.LogFormat != "" {
-		if !sets.NewString(logger.AllLogFormats...).Has(cfg.LogFormat) {
+		if !sets.New[string](logger.AllLogFormats...).Has(cfg.LogFormat) {
 			allErrs = append(allErrs, field.NotSupported(field.NewPath("logFormat"), cfg.LogFormat, logger.AllLogFormats))
 		}
 	}
@@ -87,7 +90,7 @@ func ValidateGardenletConfiguration(cfg *config.GardenletConfiguration, fldPath 
 	}
 
 	if cfg.SeedConfig != nil {
-		allErrs = append(allErrs, corevalidation.ValidateSeedTemplate(&cfg.SeedConfig.SeedTemplate, fldPath.Child("seedConfig"))...)
+		allErrs = append(allErrs, gardencorevalidation.ValidateSeedTemplate(&cfg.SeedConfig.SeedTemplate, fldPath.Child("seedConfig"))...)
 	}
 
 	resourcesPath := fldPath.Child("resources")
@@ -138,7 +141,7 @@ func ValidateGardenletConfigurationUpdate(newCfg, oldCfg *config.GardenletConfig
 	allErrs := field.ErrorList{}
 
 	if newCfg.SeedConfig != nil && oldCfg.SeedConfig != nil {
-		allErrs = append(allErrs, corevalidation.ValidateSeedTemplateUpdate(&newCfg.SeedConfig.SeedTemplate, &oldCfg.SeedConfig.SeedTemplate, fldPath.Child("seedConfig"))...)
+		allErrs = append(allErrs, gardencorevalidation.ValidateSeedTemplateUpdate(&newCfg.SeedConfig.SeedTemplate, &oldCfg.SeedConfig.SeedTemplate, fldPath.Child("seedConfig"))...)
 	}
 
 	return allErrs
@@ -178,6 +181,33 @@ func ValidateShootControllerConfiguration(cfg *config.ShootControllerConfigurati
 	return allErrs
 }
 
+// ValidateShootCareControllerConfiguration validates the shootCare controller configuration.
+func ValidateShootCareControllerConfiguration(cfg *config.ShootCareControllerConfiguration, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+
+	if cfg.ConcurrentSyncs != nil {
+		allErrs = append(allErrs, apivalidation.ValidateNonnegativeField(int64(*cfg.ConcurrentSyncs), fldPath.Child("concurrentSyncs"))...)
+	}
+
+	if cfg.SyncPeriod != nil {
+		allErrs = append(allErrs, apivalidation.ValidateNonnegativeField(int64(cfg.SyncPeriod.Duration), fldPath.Child("syncPeriod"))...)
+	}
+
+	if cfg.StaleExtensionHealthChecks != nil {
+		allErrs = append(allErrs, apivalidation.ValidateNonnegativeField(int64(cfg.StaleExtensionHealthChecks.Threshold.Duration), fldPath.Child("staleExtensionHealthChecks", "threshold"))...)
+	}
+
+	if cfg.ManagedResourceProgressingThreshold != nil {
+		allErrs = append(allErrs, apivalidation.ValidateNonnegativeField(int64(cfg.ManagedResourceProgressingThreshold.Duration), fldPath.Child("managedResourceProgressingThreshold"))...)
+	}
+
+	for i := range cfg.ConditionThresholds {
+		allErrs = append(allErrs, apivalidation.ValidateNonnegativeField(int64(cfg.ConditionThresholds[i].Duration.Duration), fldPath.Child("conditionThresholds").Index(i).Child("duration"))...)
+	}
+
+	return allErrs
+}
+
 // ValidateManagedSeedControllerConfiguration validates the managed seed controller configuration.
 func ValidateManagedSeedControllerConfiguration(cfg *config.ManagedSeedControllerConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
@@ -198,7 +228,7 @@ func ValidateManagedSeedControllerConfiguration(cfg *config.ManagedSeedControlle
 	return allErrs
 }
 
-var availableShootPurposes = sets.NewString(
+var availableShootPurposes = sets.New[string](
 	string(gardencore.ShootPurposeEvaluation),
 	string(gardencore.ShootPurposeTesting),
 	string(gardencore.ShootPurposeDevelopment),
@@ -216,7 +246,7 @@ func ValidateBackupEntryControllerConfiguration(cfg *config.BackupEntryControlle
 
 	for i, purpose := range cfg.DeletionGracePeriodShootPurposes {
 		if !availableShootPurposes.Has(string(purpose)) {
-			allErrs = append(allErrs, field.NotSupported(fldPath.Child("deletionGracePeriodShootPurposes").Index(i), purpose, availableShootPurposes.List()))
+			allErrs = append(allErrs, field.NotSupported(fldPath.Child("deletionGracePeriodShootPurposes").Index(i), purpose, sets.List(availableShootPurposes)))
 		}
 	}
 

@@ -54,7 +54,7 @@ webhooks:
       path: /webhooks/high-availability-config
       port: 443
   failurePolicy: Fail
-  matchPolicy: Exact
+  matchPolicy: Equivalent
   name: high-availability-config.resources.gardener.cloud
   namespaceSelector:
     matchLabels:
@@ -75,6 +75,25 @@ webhooks:
     resources:
     - deployments
     - statefulsets
+  - apiGroups:
+    - autoscaling
+    apiVersions:
+    - v2beta1
+    - v2
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - horizontalpodautoscalers
+  - apiGroups:
+    - autoscaling.k8s.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - hvpas
     scope: '*'
   sideEffects: None
   timeoutSeconds: 10
@@ -165,8 +184,8 @@ webhooks:
 {{- end }}
 {{- if .Values.global.config.webhooks.podTopologySpreadConstraints.enabled }}
 - admissionReviewVersions:
-    - v1beta1
-    - v1
+  - v1beta1
+  - v1
   clientConfig:
     {{- if .Values.global.config.server.webhooks.ca }}
     caBundle: {{ b64enc .Values.global.config.server.webhooks.ca }}
@@ -207,8 +226,8 @@ webhooks:
 {{- end }}
 {{- if .Values.global.config.webhooks.podSchedulerName.enabled }}
 - admissionReviewVersions:
-    - v1beta1
-    - v1
+  - v1beta1
+  - v1
   clientConfig:
     {{- if .Values.global.config.server.webhooks.ca }}
     caBundle: {{ b64enc .Values.global.config.server.webhooks.ca }}
@@ -234,6 +253,41 @@ webhooks:
     resources:
     - pods
     scope: '*'
+  sideEffects: None
+  timeoutSeconds: 10
+{{- end }}
+{{- if .Values.global.config.webhooks.systemComponentsConfig.enabled }}
+- admissionReviewVersions:
+  - v1beta1
+  - v1
+  clientConfig:
+    {{- if .Values.global.config.server.webhooks.ca }}
+    caBundle: {{ b64enc .Values.global.config.server.webhooks.ca }}
+    {{- end }}
+    service:
+      name: gardener-resource-manager
+      namespace: {{ .Release.Namespace }}
+      path: /webhooks/system-components-config
+      port: 443
+  failurePolicy: Fail
+  matchPolicy: Exact
+  name: system-components-config.resources.gardener.cloud
+  objectSelector:
+    matchExpressions:
+    - key: system-components-config.resources.gardener.cloud/skip
+      operator: DoesNotExist
+    matchLabels:
+      resources.gardener.cloud/managed-by: gardener
+  reinvocationPolicy: Never
+  rules:
+  - apiGroups:
+    - ""
+    apiVersions:
+    - v1
+    resources:
+    - pods
+    operations:
+    - CREATE
   sideEffects: None
   timeoutSeconds: 10
 {{- end }}

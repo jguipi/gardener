@@ -16,14 +16,7 @@ package managedresource_test
 
 import (
 	"encoding/json"
-
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/controllerutils"
-	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
-	"github.com/gardener/gardener/pkg/utils"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -34,9 +27,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/controllerutils"
+	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
+	"github.com/gardener/gardener/pkg/utils"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("ManagedResource controller tests", func() {
@@ -63,7 +65,7 @@ var _ = Describe("ManagedResource controller tests", func() {
 		// test all cases in a clean environment to make sure we don't have any unintended dependencies between test code.
 		// We could also use GenerateName for this purpose, but then we would need an extra call to update the name of the
 		// marshalled ConfigMap in the already created Secret.
-		resourceName = "test-" + utils.ComputeSHA256Hex([]byte(CurrentSpecReport().LeafNodeLocation.String()))[:8]
+		resourceName = "test-" + utils.ComputeSHA256Hex([]byte(uuid.NewUUID()))[:8]
 		objectKey = client.ObjectKey{Namespace: testNamespace.Name, Name: resourceName}
 
 		configMap = &corev1.ConfigMap{
@@ -96,22 +98,24 @@ var _ = Describe("ManagedResource controller tests", func() {
 				SecretRefs: []corev1.LocalObjectReference{{Name: secretForManagedResource.Name}},
 			},
 		}
+
+		fakeClock.SetTime(time.Now())
 	})
 
 	JustBeforeEach(func() {
 		if secretForManagedResource != nil {
-			By("creating Secret for test")
-			log.Info("Creating Secret for test", "secret", objectKey)
+			By("Create Secret for test")
+			log.Info("Create Secret for test", "secret", objectKey)
 			Expect(testClient.Create(ctx, secretForManagedResource)).To(Succeed())
 		}
 
-		By("creating ManagedResource for test")
-		log.Info("Creating ManagedResource for test", "managedResource", objectKey)
+		By("Create ManagedResource for test")
+		log.Info("Create ManagedResource for test", "managedResource", objectKey)
 		Expect(testClient.Create(ctx, managedResource)).To(Succeed())
 	})
 
 	AfterEach(func() {
-		By("deleting ManagedResource")
+		By("Delete ManagedResource")
 		Expect(testClient.Delete(ctx, managedResource)).To(Or(Succeed(), BeNotFoundError()))
 
 		Eventually(func(g Gomega) {
@@ -120,7 +124,7 @@ var _ = Describe("ManagedResource controller tests", func() {
 		}).Should(Succeed())
 
 		if secretForManagedResource != nil {
-			By("deleting Secret")
+			By("Delete Secret")
 			Expect(testClient.Delete(ctx, secretForManagedResource)).To(Or(Succeed(), BeNotFoundError()))
 		}
 	})
@@ -209,8 +213,8 @@ var _ = Describe("ManagedResource controller tests", func() {
 			oldConditions := managedResource.DeepCopy().Status.Conditions
 			managedResource.Status.Conditions = v1beta1helper.MergeConditions(
 				oldConditions,
-				v1beta1helper.UpdatedCondition(v1beta1helper.GetOrInitCondition(oldConditions, resourcesv1alpha1.ResourcesHealthy), gardencorev1beta1.ConditionTrue, "test", "test"),
-				v1beta1helper.UpdatedCondition(v1beta1helper.GetOrInitCondition(oldConditions, resourcesv1alpha1.ResourcesProgressing), gardencorev1beta1.ConditionFalse, "test", "test"),
+				v1beta1helper.UpdatedConditionWithClock(fakeClock, v1beta1helper.GetOrInitConditionWithClock(fakeClock, oldConditions, resourcesv1alpha1.ResourcesHealthy), gardencorev1beta1.ConditionTrue, "test", "test"),
+				v1beta1helper.UpdatedConditionWithClock(fakeClock, v1beta1helper.GetOrInitConditionWithClock(fakeClock, oldConditions, resourcesv1alpha1.ResourcesProgressing), gardencorev1beta1.ConditionFalse, "test", "test"),
 			)
 			Expect(testClient.Status().Patch(ctx, managedResource, patch)).To(Succeed())
 		})
@@ -383,7 +387,7 @@ var _ = Describe("ManagedResource controller tests", func() {
 				ContainCondition(OfType(resourcesv1alpha1.ResourcesApplied), WithStatus(gardencorev1beta1.ConditionTrue), WithReason(resourcesv1alpha1.ConditionApplySucceeded)),
 			)
 
-			By("deleting ManagedResource")
+			By("Delete ManagedResource")
 			Expect(testClient.Delete(ctx, managedResource)).To(Succeed())
 
 			Eventually(func(g Gomega) []gardencorev1beta1.Condition {
@@ -526,7 +530,7 @@ var _ = Describe("ManagedResource controller tests", func() {
 			})
 
 			It("should keep the object even after deletion of ManagedResource", func() {
-				By("deleting ManagedResource")
+				By("Delete ManagedResource")
 				Expect(testClient.Delete(ctx, managedResource)).To(Or(Succeed(), BeNotFoundError()))
 
 				Eventually(func() error {
@@ -593,7 +597,7 @@ var _ = Describe("ManagedResource controller tests", func() {
 			})
 
 			It("should keep the garbage-collectable objects even after deletion of ManagedResource", func() {
-				By("deleting ManagedResource")
+				By("Delete ManagedResource")
 				Expect(testClient.Delete(ctx, managedResource)).To(Or(Succeed(), BeNotFoundError()))
 
 				Eventually(func() error {
@@ -704,7 +708,7 @@ var _ = Describe("ManagedResource controller tests", func() {
 						Selector: &metav1.LabelSelector{
 							MatchLabels: map[string]string{"foo": "bar"},
 						},
-						Replicas: pointer.Int32Ptr(1),
+						Replicas: pointer.Int32(1),
 						Template: *defaultPodTemplateSpec,
 					},
 				}
@@ -713,7 +717,7 @@ var _ = Describe("ManagedResource controller tests", func() {
 			})
 
 			AfterEach(func() {
-				By("deleting ManagedResource")
+				By("Delete ManagedResource")
 				Expect(testClient.Delete(ctx, managedResource)).To(Or(Succeed(), BeNotFoundError()))
 
 				// resource-manager deletes Deployments with foreground deletion, which causes API server to add the
@@ -834,7 +838,7 @@ var _ = Describe("ManagedResource controller tests", func() {
 						Selector: &metav1.LabelSelector{
 							MatchLabels: map[string]string{"foo": "bar"},
 						},
-						Replicas: pointer.Int32Ptr(1),
+						Replicas: pointer.Int32(1),
 						Template: *defaultPodTemplateSpec,
 					},
 				}
@@ -843,7 +847,7 @@ var _ = Describe("ManagedResource controller tests", func() {
 			})
 
 			AfterEach(func() {
-				By("deleting ManagedResource")
+				By("Delete ManagedResource")
 				Expect(testClient.Delete(ctx, managedResource)).To(Or(Succeed(), BeNotFoundError()))
 
 				// resource-manager deletes Deployments with foreground deletion, which causes API server to add the
@@ -873,8 +877,12 @@ var _ = Describe("ManagedResource controller tests", func() {
 						)
 
 						patch := client.MergeFrom(deployment.DeepCopy())
-						deployment.Spec.Replicas = pointer.Int32Ptr(5)
+						deployment.Spec.Replicas = pointer.Int32(5)
 						Expect(testClient.Patch(ctx, deployment, patch)).To(Succeed())
+
+						patch = client.MergeFrom(managedResource.DeepCopy())
+						metav1.SetMetaDataAnnotation(&managedResource.ObjectMeta, "gardener.cloud/operation", "reconcile")
+						Expect(testClient.Patch(ctx, managedResource, patch)).To(Succeed())
 
 						Eventually(func(g Gomega) int32 {
 							g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(deployment), deployment)).To(Succeed())
@@ -898,7 +906,7 @@ var _ = Describe("ManagedResource controller tests", func() {
 						)
 
 						patch := client.MergeFrom(deployment.DeepCopy())
-						deployment.Spec.Replicas = pointer.Int32Ptr(5)
+						deployment.Spec.Replicas = pointer.Int32(5)
 						Expect(testClient.Patch(ctx, deployment, patch)).To(Succeed())
 
 						Consistently(func(g Gomega) int32 {
@@ -939,6 +947,10 @@ var _ = Describe("ManagedResource controller tests", func() {
 						deployment.Spec.Template = *newPodTemplateSpec
 						Expect(testClient.Patch(ctx, deployment, patch)).To(Succeed())
 
+						patch = client.MergeFrom(managedResource.DeepCopy())
+						metav1.SetMetaDataAnnotation(&managedResource.ObjectMeta, "gardener.cloud/operation", "reconcile")
+						Expect(testClient.Patch(ctx, managedResource, patch)).To(Succeed())
+
 						Eventually(func(g Gomega) corev1.ResourceRequirements {
 							g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(deployment), deployment)).To(Succeed())
 							return deployment.Spec.Template.Spec.Containers[0].Resources
@@ -971,6 +983,59 @@ var _ = Describe("ManagedResource controller tests", func() {
 					})
 				})
 			})
+		})
+	})
+
+	Describe("Immutable resources", func() {
+		BeforeEach(func() {
+			configMap.Immutable = pointer.Bool(true)
+			secretForManagedResource = &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: testNamespace.Name,
+				},
+				Data: secretDataForObject(configMap, dataKey),
+			}
+		})
+
+		It("should recreate the resource if the update is invalid", func() {
+			Eventually(func(g Gomega) []gardencorev1beta1.Condition {
+				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(managedResource), managedResource)).To(Succeed())
+				return managedResource.Status.Conditions
+			}).Should(
+				ContainCondition(OfType(resourcesv1alpha1.ResourcesApplied), WithStatus(gardencorev1beta1.ConditionTrue), WithReason(resourcesv1alpha1.ConditionApplySucceeded)),
+			)
+
+			Expect(testClient.Delete(ctx, configMap)).To(Succeed())
+
+			Eventually(func() error {
+				return testClient.Get(ctx, client.ObjectKeyFromObject(configMap), configMap)
+			}).Should(BeNotFoundError())
+
+			newData := map[string]string{
+				"foo": "bar",
+			}
+			oldData := configMap.Data
+			configMap.Data = newData
+			Expect(testClient.Create(ctx, configMap)).To(Succeed())
+
+			Eventually(func(g Gomega) error {
+				return testClient.Get(ctx, client.ObjectKeyFromObject(configMap), configMap)
+			}).Should(Succeed())
+
+			Consistently(func(g Gomega) map[string]string {
+				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(configMap), configMap)).To(Succeed())
+				return configMap.Data
+			}).Should(Equal(newData))
+
+			patch := client.MergeFrom(managedResource.DeepCopy())
+			metav1.SetMetaDataAnnotation(&managedResource.ObjectMeta, "gardener.cloud/operation", "reconcile")
+			Expect(testClient.Patch(ctx, managedResource, patch)).To(Succeed())
+
+			Eventually(func(g Gomega) map[string]string {
+				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(configMap), configMap)).To(Succeed())
+				return configMap.Data
+			}).Should(Equal(oldData))
 		})
 	})
 })

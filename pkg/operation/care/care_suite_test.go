@@ -17,14 +17,14 @@ package care_test
 import (
 	"testing"
 
-	"github.com/gardener/gardener/pkg/gardenlet/features"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/gardener/gardener/pkg/gardenlet/features"
 )
 
-func TestValidator(t *testing.T) {
+func TestCare(t *testing.T) {
 	features.RegisterFeatureGates()
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Care Suite")
+	RunSpecs(t, "Operation Care Suite")
 }

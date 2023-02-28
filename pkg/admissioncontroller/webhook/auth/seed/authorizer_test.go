@@ -18,17 +18,6 @@ import (
 	"context"
 	"fmt"
 
-	. "github.com/gardener/gardener/pkg/admissioncontroller/webhook/auth/seed"
-	graphpkg "github.com/gardener/gardener/pkg/admissioncontroller/webhook/auth/seed/graph"
-	mockgraph "github.com/gardener/gardener/pkg/admissioncontroller/webhook/auth/seed/graph/mock"
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardenoperationsv1alpha1 "github.com/gardener/gardener/pkg/apis/operations/v1alpha1"
-	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
-	bootstraputil "github.com/gardener/gardener/pkg/gardenlet/bootstrap/util"
-	"github.com/gardener/gardener/pkg/logger"
-
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
@@ -42,6 +31,17 @@ import (
 	"k8s.io/apiserver/pkg/authentication/user"
 	auth "k8s.io/apiserver/pkg/authorization/authorizer"
 	logzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
+
+	. "github.com/gardener/gardener/pkg/admissioncontroller/webhook/auth/seed"
+	graphpkg "github.com/gardener/gardener/pkg/admissioncontroller/webhook/auth/seed/graph"
+	mockgraph "github.com/gardener/gardener/pkg/admissioncontroller/webhook/auth/seed/graph/mock"
+	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	operationsv1alpha1 "github.com/gardener/gardener/pkg/apis/operations/v1alpha1"
+	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
+	gardenletbootstraputil "github.com/gardener/gardener/pkg/gardenlet/bootstrap/util"
+	"github.com/gardener/gardener/pkg/logger"
 )
 
 var _ = Describe("Seed", func() {
@@ -354,7 +354,7 @@ var _ = Describe("Seed", func() {
 					User:            seedUser,
 					Name:            name,
 					Namespace:       namespace,
-					APIGroup:        gardencorev1alpha1.SchemeGroupVersion.Group,
+					APIGroup:        gardencorev1beta1.SchemeGroupVersion.Group,
 					Resource:        "shootstates",
 					ResourceRequest: true,
 					Verb:            "get",
@@ -862,7 +862,7 @@ var _ = Describe("Seed", func() {
 					User:            seedUser,
 					Name:            name,
 					Namespace:       namespace,
-					APIGroup:        gardenoperationsv1alpha1.SchemeGroupVersion.Group,
+					APIGroup:        operationsv1alpha1.SchemeGroupVersion.Group,
 					Resource:        "bastions",
 					ResourceRequest: true,
 					Verb:            "list",
@@ -1700,7 +1700,7 @@ var _ = Describe("Seed", func() {
 			It("should allow to delete the gardenlet's bootstrap tokens without consulting the graph", func() {
 				attrs.Verb = "delete"
 				attrs.Namespace = "kube-system"
-				attrs.Name = "bootstrap-token-" + bootstraputil.TokenID(metav1.ObjectMeta{Name: seedName, Namespace: v1beta1constants.GardenNamespace})
+				attrs.Name = "bootstrap-token-" + gardenletbootstraputil.TokenID(metav1.ObjectMeta{Name: seedName, Namespace: v1beta1constants.GardenNamespace})
 
 				decision, reason, err := authorizer.Authorize(ctx, attrs)
 				Expect(err).NotTo(HaveOccurred())

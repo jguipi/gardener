@@ -15,13 +15,13 @@
 package dns_test
 
 import (
+	"testing"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"testing"
 )
 
 func TestDNS(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Admission ShootDNS Suite")
+	RunSpecs(t, "AdmissionPlugin Shoot DNS Suite")
 }

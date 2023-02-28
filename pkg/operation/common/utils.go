@@ -21,10 +21,6 @@ import (
 	"net"
 	"strings"
 
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-
 	hvpav1alpha1 "github.com/gardener/hvpa-controller/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -33,6 +29,10 @@ import (
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 // FilterEntriesByPrefix returns a list of strings which begin with the given prefix.
@@ -109,7 +109,7 @@ func DeleteLoki(ctx context.Context, k8sClient client.Client, namespace string) 
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "loki-loki-0", Namespace: namespace}},
 	}
 
-	return kutil.DeleteObjects(ctx, k8sClient, resources...)
+	return kubernetesutils.DeleteObjects(ctx, k8sClient, resources...)
 }
 
 // DeleteSeedLoggingStack deletes all seed resource of the logging stack in the garden namespace.
@@ -126,7 +126,7 @@ func DeleteSeedLoggingStack(ctx context.Context, k8sClient client.Client) error 
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "fluent-bit", Namespace: v1beta1constants.GardenNamespace}},
 	}
 
-	if err := kutil.DeleteObjects(ctx, k8sClient, resources...); err != nil {
+	if err := kubernetesutils.DeleteObjects(ctx, k8sClient, resources...); err != nil {
 		return err
 	}
 
@@ -180,7 +180,50 @@ func DeleteAlertmanager(ctx context.Context, k8sClient client.Client, namespace 
 		},
 	}
 
-	return kutil.DeleteObjects(ctx, k8sClient, objs...)
+	return kubernetesutils.DeleteObjects(ctx, k8sClient, objs...)
+}
+
+// DeleteGrafana deletes the monitoring stack for the shoot owner.
+func DeleteGrafana(ctx context.Context, k8sClient kubernetes.Interface, namespace string) error {
+	if k8sClient == nil {
+		return fmt.Errorf("require kubernetes client")
+	}
+
+	deleteOptions := []client.DeleteAllOfOption{
+		client.InNamespace(namespace),
+		client.MatchingLabels{
+			"component": "grafana",
+		},
+	}
+
+	if err := k8sClient.Client().DeleteAllOf(ctx, &appsv1.Deployment{}, append(deleteOptions, client.PropagationPolicy(metav1.DeletePropagationForeground))...); err != nil {
+		return err
+	}
+
+	if err := k8sClient.Client().DeleteAllOf(ctx, &corev1.ConfigMap{}, deleteOptions...); err != nil {
+		return err
+	}
+
+	if err := k8sClient.Client().DeleteAllOf(ctx, &networkingv1.Ingress{}, deleteOptions...); err != nil {
+		return err
+	}
+
+	if err := k8sClient.Client().DeleteAllOf(ctx, &corev1.Secret{}, deleteOptions...); err != nil {
+		return err
+	}
+
+	if err := k8sClient.Client().Delete(
+		ctx,
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "grafana",
+				Namespace: namespace,
+			}},
+	); client.IgnoreNotFound(err) != nil {
+		return err
+	}
+
+	return nil
 }
 
 // DeleteGrafanaByRole deletes the monitoring stack for the shoot owner.
@@ -197,19 +240,19 @@ func DeleteGrafanaByRole(ctx context.Context, k8sClient kubernetes.Interface, na
 		},
 	}
 
-	if err := k8sClient.Client().DeleteAllOf(ctx, &appsv1.Deployment{}, append(deleteOptions, client.PropagationPolicy(metav1.DeletePropagationForeground))...); client.IgnoreNotFound(err) != nil {
+	if err := k8sClient.Client().DeleteAllOf(ctx, &appsv1.Deployment{}, append(deleteOptions, client.PropagationPolicy(metav1.DeletePropagationForeground))...); err != nil {
 		return err
 	}
 
-	if err := k8sClient.Client().DeleteAllOf(ctx, &corev1.ConfigMap{}, deleteOptions...); client.IgnoreNotFound(err) != nil {
+	if err := k8sClient.Client().DeleteAllOf(ctx, &corev1.ConfigMap{}, deleteOptions...); err != nil {
 		return err
 	}
 
-	if err := k8sClient.Client().DeleteAllOf(ctx, &networkingv1.Ingress{}, deleteOptions...); client.IgnoreNotFound(err) != nil {
+	if err := k8sClient.Client().DeleteAllOf(ctx, &networkingv1.Ingress{}, deleteOptions...); err != nil {
 		return err
 	}
 
-	if err := k8sClient.Client().DeleteAllOf(ctx, &corev1.Secret{}, deleteOptions...); client.IgnoreNotFound(err) != nil {
+	if err := k8sClient.Client().DeleteAllOf(ctx, &corev1.Secret{}, deleteOptions...); err != nil {
 		return err
 	}
 

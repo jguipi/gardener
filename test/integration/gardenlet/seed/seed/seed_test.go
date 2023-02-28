@@ -16,42 +16,176 @@ package seed_test
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
 	gomegatypes "github.com/onsi/gomega/types"
-	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/utils/pointer"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	"github.com/gardener/gardener/charts"
+	"github.com/gardener/gardener/pkg/api/indexer"
+	gardencore "github.com/gardener/gardener/pkg/apis/core"
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	operatorv1alpha1 "github.com/gardener/gardener/pkg/apis/operator/v1alpha1"
 	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/controllerutils"
 	"github.com/gardener/gardener/pkg/features"
+	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
+	seedcontroller "github.com/gardener/gardener/pkg/gardenlet/controller/seed/seed"
 	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/resourcemanager"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/imagevector"
 	"github.com/gardener/gardener/pkg/utils/retry"
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
 	"github.com/gardener/gardener/pkg/utils/test"
 	. "github.com/gardener/gardener/pkg/utils/test/matchers"
+	"github.com/gardener/gardener/test/utils/namespacefinalizer"
 )
 
 var _ = Describe("Seed controller tests", func() {
 	var (
-		seed *gardencorev1beta1.Seed
+		testRunID     string
+		testNamespace *corev1.Namespace
+		seedName      string
+		seed          *gardencorev1beta1.Seed
+		identity      = &gardencorev1beta1.Gardener{Version: "1.2.3"}
 	)
 
+	BeforeEach(func() {
+		By("Create test Namespace")
+		testNamespace = &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				GenerateName: "garden-",
+			},
+		}
+		Expect(testClient.Create(ctx, testNamespace)).To(Succeed())
+		log.Info("Created Namespace for test", "namespaceName", testNamespace.Name)
+		testRunID = testNamespace.Name
+		seedName = "seed-" + testRunID
+
+		DeferCleanup(func() {
+			By("Delete test Namespace")
+			Expect(testClient.Delete(ctx, testNamespace)).To(Or(Succeed(), BeNotFoundError()))
+		})
+
+		By("Setup manager")
+		mapper, err := apiutil.NewDynamicRESTMapper(restConfig)
+		Expect(err).NotTo(HaveOccurred())
+
+		mgr, err := manager.New(restConfig, manager.Options{
+			Scheme:             testScheme,
+			MetricsBindAddress: "0",
+			NewCache: cache.BuilderWithOptions(cache.Options{
+				Mapper: mapper,
+				SelectorsByObject: map[client.Object]cache.ObjectSelector{
+					&gardencorev1beta1.Seed{}: {
+						Label: labels.SelectorFromSet(labels.Set{testID: testRunID}),
+					},
+					&operatorv1alpha1.Garden{}: {
+						Label: labels.SelectorFromSet(labels.Set{testID: testRunID}),
+					},
+				},
+			}),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		mgrClient = mgr.GetClient()
+
+		// We create the seed namespace in the garden and delete it after every test, so let's ensure it gets finalized.
+		Expect((&namespacefinalizer.Reconciler{}).AddToManager(mgr)).To(Succeed())
+
+		By("Setup field indexes")
+		Expect(indexer.AddBackupBucketSeedName(ctx, mgr.GetFieldIndexer())).To(Succeed())
+		Expect(indexer.AddControllerInstallationSeedRefName(ctx, mgr.GetFieldIndexer())).To(Succeed())
+		Expect(indexer.AddShootSeedName(ctx, mgr.GetFieldIndexer())).To(Succeed())
+
+		By("Create test clientset")
+		testClientSet, err = kubernetes.NewWithConfig(
+			kubernetes.WithRESTConfig(mgr.GetConfig()),
+			kubernetes.WithRuntimeAPIReader(mgr.GetAPIReader()),
+			kubernetes.WithRuntimeClient(mgr.GetClient()),
+			kubernetes.WithRuntimeCache(mgr.GetCache()),
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Register controller")
+		chartsPath := filepath.Join("..", "..", "..", "..", "..", charts.Path)
+		imageVector, err := imagevector.ReadGlobalImageVectorWithEnvOverride(filepath.Join(chartsPath, "images.yaml"))
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect((&seedcontroller.Reconciler{
+			SeedClientSet: testClientSet,
+			Config: config.GardenletConfiguration{
+				Controllers: &config.GardenletControllerConfiguration{
+					Seed: &config.SeedControllerConfiguration{
+						// This controller is pretty heavy-weight, so use a higher duration.
+						SyncPeriod: &metav1.Duration{Duration: time.Minute},
+					},
+				},
+				SNI: &config.SNI{
+					Ingress: &config.SNIIngress{
+						Namespace: pointer.String(testNamespace.Name + "-istio"),
+					},
+				},
+				ETCDConfig: &config.ETCDConfig{
+					BackupCompactionController: &config.BackupCompactionController{
+						EnableBackupCompaction: pointer.Bool(false),
+						EventsThreshold:        pointer.Int64(1),
+						Workers:                pointer.Int64(1),
+					},
+					CustodianController: &config.CustodianController{
+						Workers: pointer.Int64(1),
+					},
+					ETCDController: &config.ETCDController{
+						Workers: pointer.Int64(1),
+					},
+				},
+				SeedConfig: &config.SeedConfig{
+					SeedTemplate: gardencore.SeedTemplate{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: seedName,
+						},
+					},
+				},
+			},
+			Identity:        identity,
+			ImageVector:     imageVector,
+			GardenNamespace: testNamespace.Name,
+			ChartsPath:      chartsPath,
+		}).AddToManager(mgr, mgr)).To(Succeed())
+
+		By("Start manager")
+		mgrContext, mgrCancel := context.WithCancel(ctx)
+
+		go func() {
+			defer GinkgoRecover()
+			Expect(mgr.Start(mgrContext)).To(Succeed())
+		}()
+
+		DeferCleanup(func() {
+			By("Stop manager")
+			mgrCancel()
+		})
+	})
+
 	JustBeforeEach(func() {
-		DeferCleanup(test.WithVar(&secretutils.GenerateKey, secretutils.FakeGenerateKey))
+		DeferCleanup(test.WithVars(
+			&secretsutils.GenerateKey, secretsutils.FakeGenerateKey,
+			&resourcemanager.SkipWebhookDeployment, true,
+		))
 		DeferCleanup(test.WithFeatureGate(gardenletfeatures.FeatureGate, features.HVPA, true))
 
 		seed = &gardencorev1beta1.Seed{
@@ -116,7 +250,7 @@ var _ = Describe("Seed controller tests", func() {
 
 		JustBeforeEach(func() {
 			By("Create seed namespace in garden")
-			seedNamespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: gutil.ComputeGardenNamespace(seed.Name)}}
+			seedNamespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: gardenerutils.ComputeGardenNamespace(seed.Name)}}
 			Expect(testClient.Create(ctx, seedNamespace)).To(Succeed())
 
 			By("Wait until the manager cache observes the seed namespace")
@@ -290,20 +424,6 @@ var _ = Describe("Seed controller tests", func() {
 							deployment.Status.Conditions = []appsv1.DeploymentCondition{{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue}}
 							g.Expect(testClient.Status().Patch(ctx, deployment, patch)).To(Succeed())
 						}).Should(Succeed())
-
-						// The gardener-resource-manager is not really running in this test scenario, hence there is
-						// nothing to serve the webhook endpoints. However, the envtest kube-apiserver would try to
-						// reach them, so let's better delete them here for the sake of this test.
-						By("Delete gardener-resource-manager webhooks")
-						mutatingWebhookConfiguration := &admissionregistrationv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "gardener-resource-manager"}}
-						validatingWebhookConfiguration := &admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "gardener-resource-manager"}}
-						Eventually(func(g Gomega) {
-							g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(mutatingWebhookConfiguration), mutatingWebhookConfiguration)).To(Succeed())
-							g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(validatingWebhookConfiguration), validatingWebhookConfiguration)).To(Succeed())
-
-							g.Expect(testClient.Delete(ctx, mutatingWebhookConfiguration)).To(Succeed())
-							g.Expect(testClient.Delete(ctx, validatingWebhookConfiguration)).To(Succeed())
-						}).Should(Succeed())
 					} else {
 						// Usually, the gardener-operator would deploy gardener-resource-manager and the related CRD for
 						// ManagedResources and VerticalPodAutoscaler. However, it is not really running, so we have to fake its behaviour here.
@@ -325,7 +445,6 @@ var _ = Describe("Seed controller tests", func() {
 					By("Verify that the seed system components have been deployed")
 					expectedManagedResources := []gomegatypes.GomegaMatcher{
 						MatchFields(IgnoreExtras, Fields{"ObjectMeta": MatchFields(IgnoreExtras, Fields{"Name": Equal("cluster-autoscaler")})}),
-						MatchFields(IgnoreExtras, Fields{"ObjectMeta": MatchFields(IgnoreExtras, Fields{"Name": Equal("cluster-identity")})}),
 						MatchFields(IgnoreExtras, Fields{"ObjectMeta": MatchFields(IgnoreExtras, Fields{"Name": Equal("dependency-watchdog-endpoint")})}),
 						MatchFields(IgnoreExtras, Fields{"ObjectMeta": MatchFields(IgnoreExtras, Fields{"Name": Equal("dependency-watchdog-probe")})}),
 						MatchFields(IgnoreExtras, Fields{"ObjectMeta": MatchFields(IgnoreExtras, Fields{"Name": Equal("global-network-policies")})}),
@@ -345,11 +464,7 @@ var _ = Describe("Seed controller tests", func() {
 						managedResourceList := &resourcesv1alpha1.ManagedResourceList{}
 						g.Expect(testClient.List(ctx, managedResourceList, client.InNamespace(testNamespace.Name))).To(Succeed())
 						return managedResourceList.Items
-					}).
-						// a lot of CPU-intensive stuff is happening between GRM deployment and this assertion, so to
-						// prevent flakes we have to increase the timeout here manually
-						WithTimeout(10 * time.Second).
-						Should(ConsistOf(expectedManagedResources))
+					}).Should(ConsistOf(expectedManagedResources))
 
 					By("Verify that the fluent operator CRDs have been deployed")
 					expectedFluentOperatorCRDs := []gomegatypes.GomegaMatcher{

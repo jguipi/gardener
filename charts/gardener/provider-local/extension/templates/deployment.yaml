@@ -24,6 +24,7 @@ spec:
         {{- end }}
         {{- if and .Values.metrics.enableScraping }}
         prometheus.io/scrape: "true"
+        prometheus.io/name: 'provider-local'
         # default metrics endpoint in controller-runtime
         prometheus.io/port: "{{ .Values.metricsPort }}"
         {{- end }}
@@ -51,6 +52,9 @@ spec:
         - --ingress-max-concurrent-reconciles={{ .Values.controllers.ingress.concurrentSyncs }}
         - --service-max-concurrent-reconciles={{ .Values.controllers.service.concurrentSyncs }}
         - --service-host-ip={{ .Values.controllers.service.hostIP }}
+        - --service-zone-0-ip={{ .Values.controllers.service.zone0IP }}
+        - --service-zone-1-ip={{ .Values.controllers.service.zone1IP }}
+        - --service-zone-2-ip={{ .Values.controllers.service.zone2IP }}
         - --service-apiserver-sni-enabled={{ .Values.controllers.service.apiServerSNIEnabled }}
         - --backupbucket-local-dir={{ .Values.controllers.backupbucket.localDir }}
         - --backupbucket-container-mount-path={{ .Values.controllers.backupbucket.containerMountPath }}

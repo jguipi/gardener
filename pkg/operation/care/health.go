@@ -19,10 +19,21 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-logr/logr"
+	coordinationv1 "k8s.io/api/coordination/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/clock"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+
 	apiextensions "github.com/gardener/gardener/pkg/api/extensions"
 	"github.com/gardener/gardener/pkg/apis/core"
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
@@ -34,20 +45,9 @@ import (
 	"github.com/gardener/gardener/pkg/operation/common"
 	"github.com/gardener/gardener/pkg/operation/shoot"
 	"github.com/gardener/gardener/pkg/utils/flow"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	"github.com/gardener/gardener/pkg/utils/kubernetes/health"
-	"github.com/gardener/gardener/pkg/utils/managedresources"
-
-	"github.com/go-logr/logr"
-	coordinationv1 "k8s.io/api/coordination/v1"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
 
 // Health contains information needed to execute shoot health checks.
@@ -62,6 +62,7 @@ type Health struct {
 	log logr.Logger
 
 	gardenletConfiguration                    *gardenletconfig.GardenletConfiguration
+	clock                                     clock.Clock
 	controllerRegistrationToLastHeartbeatTime map[string]*metav1.MicroTime
 }
 
@@ -69,13 +70,14 @@ type Health struct {
 type ShootClientInit func() (kubernetes.Interface, bool, error)
 
 // NewHealth creates a new Health instance with the given parameters.
-func NewHealth(op *operation.Operation, shootClientInit ShootClientInit) *Health {
+func NewHealth(op *operation.Operation, shootClientInit ShootClientInit, clock clock.Clock) *Health {
 	return &Health{
 		shoot:                  op.Shoot,
 		gardenClient:           op.GardenClient,
 		seedClient:             op.SeedClientSet,
 		initializeShootClients: shootClientInit,
 		shootClient:            op.ShootClientSet,
+		clock:                  clock,
 		log:                    op.Logger,
 		gardenletConfiguration: op.Config,
 		controllerRegistrationToLastHeartbeatTime: map[string]*metav1.MicroTime{},
@@ -92,7 +94,7 @@ func (h *Health) Check(
 	updatedConditions := h.healthChecks(ctx, thresholdMappings, healthCheckOutdatedThreshold, conditions)
 	lastOp := h.shoot.GetInfo().Status.LastOperation
 	lastErrors := h.shoot.GetInfo().Status.LastErrors
-	return PardonConditions(updatedConditions, lastOp, lastErrors)
+	return PardonConditions(h.clock, updatedConditions, lastOp, lastErrors)
 }
 
 // ExtensionCondition contains information about the extension type, name, namespace and the respective condition object.
@@ -189,10 +191,11 @@ func (h *Health) retrieveExtensions(ctx context.Context) ([]runtime.Object, erro
 	// Get BackupEntries separately as they are not namespaced i.e., they cannot be narrowed down
 	// to a shoot namespace like other extension resources above.
 	be := &extensionsv1alpha1.BackupEntry{}
-	if err := h.seedClient.Client().Get(ctx, kutil.Key(h.shoot.BackupEntryName), be); client.IgnoreNotFound(err) != nil {
+	if err := h.seedClient.Client().Get(ctx, kubernetesutils.Key(h.shoot.BackupEntryName), be); err == nil {
+		allExtensions = append(allExtensions, be)
+	} else if !apierrors.IsNotFound(err) {
 		return nil, err
 	}
-	allExtensions = append(allExtensions, be)
 
 	return allExtensions, nil
 }
@@ -215,7 +218,7 @@ func (h *Health) getLastHeartbeatTimeForExtension(ctx context.Context, controlle
 	heartBeatLease := &coordinationv1.Lease{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      extensions.HeartBeatResourceName,
-			Namespace: gutil.NamespaceNameForControllerInstallation(controllerInstallation),
+			Namespace: gardenerutils.NamespaceNameForControllerInstallation(controllerInstallation),
 		},
 	}
 
@@ -258,16 +261,18 @@ func (h *Health) healthChecks(
 	conditions []gardencorev1beta1.Condition,
 ) []gardencorev1beta1.Condition {
 	if h.shoot.HibernationEnabled || h.shoot.GetInfo().Status.IsHibernated {
-		return shootHibernatedConditions(conditions)
+		return shootHibernatedConditions(h.clock, conditions)
 	}
 
-	var apiserverAvailability, controlPlane, nodes, systemComponents gardencorev1beta1.Condition
+	var apiserverAvailability, controlPlane, observabilityComponents, nodes, systemComponents gardencorev1beta1.Condition
 	for _, cond := range conditions {
 		switch cond.Type {
 		case gardencorev1beta1.ShootAPIServerAvailable:
 			apiserverAvailability = cond
 		case gardencorev1beta1.ShootControlPlaneHealthy:
 			controlPlane = cond
+		case gardencorev1beta1.ShootObservabilityComponentsHealthy:
+			observabilityComponents = cond
 		case gardencorev1beta1.ShootEveryNodeReady:
 			nodes = cond
 		case gardencorev1beta1.ShootSystemComponentsHealthy:
@@ -280,13 +285,7 @@ func (h *Health) healthChecks(
 		h.log.Error(err, "Error getting extension conditions")
 	}
 
-	var (
-		checker               = NewHealthChecker(thresholdMappings, healthCheckOutdatedThreshold, h.shoot.GetInfo().Status.LastOperation, h.shoot.KubernetesVersion, h.shoot.GardenerVersion)
-		seedDeploymentLister  = makeDeploymentLister(ctx, h.seedClient.Client(), h.shoot.SeedNamespace, controlPlaneMonitoringLoggingSelector)
-		seedStatefulSetLister = makeStatefulSetLister(ctx, h.seedClient.Client(), h.shoot.SeedNamespace, controlPlaneMonitoringLoggingSelector)
-		seedEtcdLister        = makeEtcdLister(ctx, h.seedClient.Client(), h.shoot.SeedNamespace)
-		seedWorkerLister      = makeWorkerLister(ctx, h.seedClient.Client(), h.shoot.SeedNamespace)
-	)
+	checker := NewHealthChecker(h.seedClient.Client(), h.clock, thresholdMappings, healthCheckOutdatedThreshold, gardenlethelper.GetManagedResourceProgressingThreshold(h.gardenletConfiguration), h.shoot.GetInfo().Status.LastOperation, h.shoot.KubernetesVersion, h.shoot.GardenerVersion)
 
 	shootClient, apiServerRunning, err := h.initializeShootClients()
 	if err != nil || !apiServerRunning {
@@ -298,12 +297,16 @@ func (h *Health) healthChecks(
 		}
 
 		apiserverAvailability = checker.FailedCondition(apiserverAvailability, "APIServerDown", "Could not reach API server during client initialization.")
-		nodes = gardencorev1beta1helper.UpdatedConditionUnknownErrorMessage(nodes, message)
-		systemComponents = gardencorev1beta1helper.UpdatedConditionUnknownErrorMessage(systemComponents, message)
+		nodes = v1beta1helper.UpdatedConditionUnknownErrorMessageWithClock(h.clock, nodes, message)
+		systemComponents = v1beta1helper.UpdatedConditionUnknownErrorMessageWithClock(h.clock, systemComponents, message)
 
-		newControlPlane, err := h.checkControlPlane(ctx, checker, controlPlane, seedDeploymentLister, seedStatefulSetLister, seedEtcdLister, seedWorkerLister, extensionConditionsControlPlaneHealthy)
-		controlPlane = NewConditionOrError(controlPlane, newControlPlane, err)
-		return []gardencorev1beta1.Condition{apiserverAvailability, controlPlane, nodes, systemComponents}
+		newControlPlane, err := h.checkControlPlane(ctx, checker, controlPlane, extensionConditionsControlPlaneHealthy)
+		controlPlane = NewConditionOrError(h.clock, controlPlane, newControlPlane, err)
+
+		newObservabilityComponents, err := h.checkObservabilityComponents(ctx, checker, observabilityComponents)
+		observabilityComponents = NewConditionOrError(h.clock, observabilityComponents, newObservabilityComponents, err)
+
+		return []gardencorev1beta1.Condition{apiserverAvailability, controlPlane, observabilityComponents, nodes, systemComponents}
 	}
 
 	h.shootClient = shootClient
@@ -312,47 +315,61 @@ func (h *Health) healthChecks(
 		apiserverAvailability = h.checkAPIServerAvailability(ctx, checker, apiserverAvailability)
 		return nil
 	}, func(ctx context.Context) error {
-		newControlPlane, err := h.checkControlPlane(ctx, checker, controlPlane, seedDeploymentLister, seedStatefulSetLister, seedEtcdLister, seedWorkerLister, extensionConditionsControlPlaneHealthy)
-		controlPlane = NewConditionOrError(controlPlane, newControlPlane, err)
+		newControlPlane, err := h.checkControlPlane(ctx, checker, controlPlane, extensionConditionsControlPlaneHealthy)
+		controlPlane = NewConditionOrError(h.clock, controlPlane, newControlPlane, err)
+		return nil
+	}, func(ctx context.Context) error {
+		newObservabilityComponents, err := h.checkObservabilityComponents(ctx, checker, observabilityComponents)
+		observabilityComponents = NewConditionOrError(h.clock, observabilityComponents, newObservabilityComponents, err)
 		return nil
 	}, func(ctx context.Context) error {
 		newNodes, err := h.checkClusterNodes(ctx, h.shootClient.Client(), checker, nodes, extensionConditionsEveryNodeReady)
-		nodes = NewConditionOrError(nodes, newNodes, err)
+		nodes = NewConditionOrError(h.clock, nodes, newNodes, err)
 		return nil
 	}, func(ctx context.Context) error {
 		newSystemComponents, err := h.checkSystemComponents(ctx, checker, systemComponents, extensionConditionsSystemComponentsHealthy)
-		systemComponents = NewConditionOrError(systemComponents, newSystemComponents, err)
+		systemComponents = NewConditionOrError(h.clock, systemComponents, newSystemComponents, err)
 		return nil
 	})(ctx)
 
-	return []gardencorev1beta1.Condition{apiserverAvailability, controlPlane, nodes, systemComponents}
+	return []gardencorev1beta1.Condition{apiserverAvailability, controlPlane, observabilityComponents, nodes, systemComponents}
 }
 
 // checkAPIServerAvailability checks if the API server of a Shoot cluster is reachable and measure the response time.
 func (h *Health) checkAPIServerAvailability(ctx context.Context, checker *HealthChecker, condition gardencorev1beta1.Condition) gardencorev1beta1.Condition {
-	return health.CheckAPIServerAvailability(ctx, h.log, condition, h.shootClient.RESTClient(), func(conditionType, message string) gardencorev1beta1.Condition {
+	return health.CheckAPIServerAvailability(ctx, h.clock, h.log, condition, h.shootClient.RESTClient(), func(conditionType, message string) gardencorev1beta1.Condition {
 		return checker.FailedCondition(condition, conditionType, message)
 	})
 }
 
-// checkControlPlane checks whether the control plane of the Shoot cluster is healthy.
+// checkControlPlane checks whether the core components of the Shoot controlplane (ETCD, KAPI, KCM..) are healthy.
 func (h *Health) checkControlPlane(
-	_ context.Context,
+	ctx context.Context,
 	checker *HealthChecker,
 	condition gardencorev1beta1.Condition,
-	seedDeploymentLister kutil.DeploymentLister,
-	seedStatefulSetLister kutil.StatefulSetLister,
-	seedEtcdLister kutil.EtcdLister,
-	seedWorkerLister kutil.WorkerLister,
 	extensionConditions []ExtensionCondition,
 ) (*gardencorev1beta1.Condition, error) {
-	if exitCondition, err := checker.CheckControlPlane(h.shoot.GetInfo(), h.shoot.SeedNamespace, condition, seedDeploymentLister, seedEtcdLister, seedWorkerLister); err != nil || exitCondition != nil {
+	if exitCondition, err := checker.CheckControlPlane(ctx, h.shoot.GetInfo(), h.shoot.SeedNamespace, condition); err != nil || exitCondition != nil {
 		return exitCondition, err
 	}
 
+	if exitCondition := checker.CheckExtensionCondition(condition, extensionConditions); exitCondition != nil {
+		return exitCondition, nil
+	}
+
+	c := v1beta1helper.UpdatedConditionWithClock(h.clock, condition, gardencorev1beta1.ConditionTrue, "ControlPlaneRunning", "All control plane components are healthy.")
+	return &c, nil
+}
+
+// checkObservabilityComponents checks whether the  observability components of the Shoot control plane (Prometheus, Loki, Grafana..) are healthy.
+func (h *Health) checkObservabilityComponents(
+	ctx context.Context,
+	checker *HealthChecker,
+	condition gardencorev1beta1.Condition,
+) (*gardencorev1beta1.Condition, error) {
 	wantsAlertmanager := h.shoot.WantsAlertmanager
 	wantsShootMonitoring := gardenlethelper.IsMonitoringEnabled(h.gardenletConfiguration) && h.shoot.Purpose != gardencorev1beta1.ShootPurposeTesting
-	if exitCondition, err := checker.CheckMonitoringControlPlane(h.shoot.SeedNamespace, wantsShootMonitoring, wantsAlertmanager, condition, seedDeploymentLister, seedStatefulSetLister); err != nil || exitCondition != nil {
+	if exitCondition, err := checker.CheckMonitoringControlPlane(ctx, h.shoot.SeedNamespace, wantsShootMonitoring, wantsAlertmanager, condition); err != nil || exitCondition != nil {
 		return exitCondition, err
 	}
 
@@ -361,15 +378,12 @@ func (h *Health) checkControlPlane(
 	eventLoggingEnabled := gardenlethelper.IsEventLoggingEnabled(h.gardenletConfiguration)
 
 	if loggingEnabled {
-		if exitCondition, err := checker.CheckLoggingControlPlane(h.shoot.SeedNamespace, h.shoot.Purpose == gardencorev1beta1.ShootPurposeTesting, eventLoggingEnabled, lokiEnabled, condition, seedDeploymentLister, seedStatefulSetLister); err != nil || exitCondition != nil {
+		if exitCondition, err := checker.CheckLoggingControlPlane(ctx, h.shoot.SeedNamespace, h.shoot.Purpose == gardencorev1beta1.ShootPurposeTesting, eventLoggingEnabled, lokiEnabled, condition); err != nil || exitCondition != nil {
 			return exitCondition, err
 		}
 	}
-	if exitCondition := checker.CheckExtensionCondition(condition, extensionConditions); exitCondition != nil {
-		return exitCondition, nil
-	}
 
-	c := gardencorev1beta1helper.UpdatedCondition(condition, gardencorev1beta1.ConditionTrue, "ControlPlaneRunning", "All control plane components are healthy.")
+	c := v1beta1helper.UpdatedConditionWithClock(h.clock, condition, gardencorev1beta1.ConditionTrue, "ObservabilityComponentsRunning", "All observability components are healthy.")
 	return &c, nil
 }
 
@@ -384,7 +398,7 @@ func (h *Health) checkSystemComponents(
 	error,
 ) {
 	mrList := &resourcesv1alpha1.ManagedResourceList{}
-	if err := h.seedClient.Client().List(ctx, mrList, client.InNamespace(h.shoot.SeedNamespace), client.MatchingLabels{managedresources.LabelKeyOrigin: managedresources.LabelValueGardener}); err != nil {
+	if err := h.seedClient.Client().List(ctx, mrList, client.InNamespace(h.shoot.SeedNamespace)); err != nil {
 		return nil, err
 	}
 
@@ -421,7 +435,7 @@ func (h *Health) checkSystemComponents(
 		return &c, nil
 	}
 
-	c := gardencorev1beta1helper.UpdatedCondition(condition, gardencorev1beta1.ConditionTrue, "SystemComponentsRunning", "All system components are healthy.")
+	c := v1beta1helper.UpdatedConditionWithClock(h.clock, condition, gardencorev1beta1.ConditionTrue, "SystemComponentsRunning", "All system components are healthy.")
 	return &c, nil
 }
 
@@ -441,6 +455,6 @@ func (h *Health) checkClusterNodes(
 		return exitCondition, nil
 	}
 
-	c := gardencorev1beta1helper.UpdatedCondition(condition, gardencorev1beta1.ConditionTrue, "EveryNodeReady", "All nodes are ready.")
+	c := v1beta1helper.UpdatedConditionWithClock(h.clock, condition, gardencorev1beta1.ConditionTrue, "EveryNodeReady", "All nodes are ready.")
 	return &c, nil
 }

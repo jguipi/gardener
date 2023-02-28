@@ -194,6 +194,8 @@ var _ = Describe("ControllerInstallation controller tests", func() {
       ` + testID + `: ` + testRunID + `
       provider.extensions.gardener.cloud/` + seed.Spec.Provider.Type + `: "true"
     networks:
+      ipFamilies:
+      - IPv4
       nodes: ` + *seed.Spec.Networks.Nodes + `
       pods: ` + seed.Spec.Networks.Pods + `
       services: ` + seed.Spec.Networks.Services + `
@@ -204,6 +206,8 @@ var _ = Describe("ControllerInstallation controller tests", func() {
       dns:
         ingressDomain: ` + *seed.Spec.DNS.IngressDomain + `
       networks:
+        ipFamilies:
+        - IPv4
         nodes: ` + *seed.Spec.Networks.Nodes + `
         pods: ` + seed.Spec.Networks.Pods + `
         services: ` + seed.Spec.Networks.Services + `
@@ -226,8 +230,6 @@ var _ = Describe("ControllerInstallation controller tests", func() {
           enabled: true
         scheduling:
           visible: true
-        shootDNS:
-          enabled: true
         verticalPodAutoscaler:
           enabled: true
     taints: null
@@ -268,7 +270,7 @@ var _ = Describe("ControllerInstallation controller tests", func() {
 				return testClient.Get(ctx, client.ObjectKeyFromObject(controllerInstallation), controllerInstallation)
 			}).Should(BeNotFoundError())
 
-			By("Verifying controller artefacts were removed")
+			By("Verify controller artefacts were removed")
 			Expect(testClient.Get(ctx, client.ObjectKeyFromObject(namespace), namespace)).To(BeNotFoundError())
 			Expect(testClient.Get(ctx, client.ObjectKeyFromObject(managedResource), managedResource)).To(BeNotFoundError())
 			Expect(testClient.Get(ctx, client.ObjectKeyFromObject(secret), secret)).To(BeNotFoundError())

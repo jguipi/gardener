@@ -19,8 +19,12 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
 	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap"
@@ -30,10 +34,6 @@ import (
 	"github.com/gardener/gardener/pkg/operation/shoot"
 	"github.com/gardener/gardener/pkg/utils/imagevector"
 	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-
-	"github.com/go-logr/logr"
-	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Builder is an object that builds Operation objects.
@@ -43,7 +43,6 @@ type Builder struct {
 	gardenerInfoFunc          func() (*gardencorev1beta1.Gardener, error)
 	gardenClusterIdentityFunc func() (string, error)
 	imageVectorFunc           func() (imagevector.ImageVector, error)
-	exposureClassFunc         func(string) (*config.ExposureClassHandler, error)
 	loggerFunc                func() (logr.Logger, error)
 	secretsFunc               func() (map[string]*corev1.Secret, error)
 	seedFunc                  func(context.Context) (*seed.Seed, error)
@@ -68,7 +67,7 @@ type Operation struct {
 	Seed                  *seed.Seed
 	Shoot                 *shoot.Shoot
 	ManagedSeed           *seedmanagementv1alpha1.ManagedSeed
-	ManagedSeedAPIServer  *gardencorev1beta1helper.ManagedSeedAPIServer
+	ManagedSeedAPIServer  *v1beta1helper.ManagedSeedAPIServer
 	GardenClient          client.Client
 	SeedClientSet         kubernetes.Interface
 	ShootClientMap        clientmap.ClientMap
@@ -76,7 +75,6 @@ type Operation struct {
 	APIServerAddress      string
 	APIServerClusterIP    string
 	SeedNamespaceObject   *corev1.Namespace
-	ExposureClassHandler  *config.ExposureClassHandler
 
 	// ControlPlaneWildcardCert is a wildcard tls certificate which is issued for the seed's ingress domain.
 	ControlPlaneWildcardCert *corev1.Secret

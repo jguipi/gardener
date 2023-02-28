@@ -18,14 +18,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	corev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
-	corefake "github.com/gardener/gardener/pkg/client/core/clientset/internalversion/fake"
-	seedmanagementfake "github.com/gardener/gardener/pkg/client/seedmanagement/clientset/versioned/fake"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-	. "github.com/gardener/gardener/plugin/pkg/shoot/managedseed"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -33,6 +25,15 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/client-go/testing"
+	"k8s.io/utils/pointer"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
+	corefake "github.com/gardener/gardener/pkg/client/core/clientset/internalversion/fake"
+	fakeseedmanagement "github.com/gardener/gardener/pkg/client/seedmanagement/clientset/versioned/fake"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
+	. "github.com/gardener/gardener/plugin/pkg/shoot/managedseed"
 )
 
 const (
@@ -46,7 +47,7 @@ var _ = Describe("ManagedSeed", func() {
 			shoot                *core.Shoot
 			managedSeed          *seedmanagementv1alpha1.ManagedSeed
 			coreClient           *corefake.Clientset
-			seedManagementClient *seedmanagementfake.Clientset
+			seedManagementClient *fakeseedmanagement.Clientset
 			admissionHandler     *ManagedSeed
 		)
 
@@ -69,6 +70,10 @@ var _ = Describe("ManagedSeed", func() {
 							Enabled: true,
 						},
 					},
+					Networking: core.Networking{
+						Type:  "foo",
+						Nodes: pointer.String("10.181.0.0/18"),
+					},
 				},
 			}
 
@@ -90,7 +95,7 @@ var _ = Describe("ManagedSeed", func() {
 			coreClient = &corefake.Clientset{}
 			admissionHandler.SetInternalCoreClientset(coreClient)
 
-			seedManagementClient = &seedmanagementfake.Clientset{}
+			seedManagementClient = &fakeseedmanagement.Clientset{}
 			admissionHandler.SetSeedManagementClientset(seedManagementClient)
 		})
 
@@ -107,8 +112,8 @@ var _ = Describe("ManagedSeed", func() {
 					return true, &seedmanagementv1alpha1.ManagedSeedList{Items: []seedmanagementv1alpha1.ManagedSeed{*managedSeed}}, nil
 				})
 				shoot.Spec.Addons.NginxIngress.Enabled = true
-
-				attrs := getShootAttributes(shoot, admission.Update, &metav1.UpdateOptions{})
+				oldShoot := shoot.DeepCopy()
+				attrs := getShootAttributes(shoot, oldShoot, admission.Update, &metav1.UpdateOptions{})
 				err := admissionHandler.Validate(context.TODO(), attrs, nil)
 				Expect(err).To(BeInvalidError())
 				Expect(err.Error()).To(ContainSubstring("shoot ingress addon is not supported for managed seeds - use the managed seed ingress controller"))
@@ -119,8 +124,8 @@ var _ = Describe("ManagedSeed", func() {
 					return true, &seedmanagementv1alpha1.ManagedSeedList{Items: []seedmanagementv1alpha1.ManagedSeed{*managedSeed}}, nil
 				})
 				shoot.Spec.Kubernetes.VerticalPodAutoscaler.Enabled = false
-
-				attrs := getShootAttributes(shoot, admission.Update, &metav1.UpdateOptions{})
+				oldShoot := shoot.DeepCopy()
+				attrs := getShootAttributes(shoot, oldShoot, admission.Update, &metav1.UpdateOptions{})
 				err := admissionHandler.Validate(context.TODO(), attrs, nil)
 				Expect(err).To(BeInvalidError())
 				Expect(err.Error()).To(ContainSubstring("shoot VPA has to be enabled for managed seeds"))
@@ -130,8 +135,8 @@ var _ = Describe("ManagedSeed", func() {
 				seedManagementClient.AddReactor("list", "managedseeds", func(action testing.Action) (bool, runtime.Object, error) {
 					return true, &seedmanagementv1alpha1.ManagedSeedList{Items: []seedmanagementv1alpha1.ManagedSeed{*managedSeed}}, nil
 				})
-
-				attrs := getShootAttributes(shoot, admission.Update, &metav1.UpdateOptions{})
+				oldShoot := shoot.DeepCopy()
+				attrs := getShootAttributes(shoot, oldShoot, admission.Update, &metav1.UpdateOptions{})
 				err := admissionHandler.Validate(context.TODO(), attrs, nil)
 				Expect(err).NotTo(HaveOccurred())
 			})
@@ -140,12 +145,25 @@ var _ = Describe("ManagedSeed", func() {
 				seedManagementClient.AddReactor("list", "managedseeds", func(action testing.Action) (bool, runtime.Object, error) {
 					return true, nil, apierrors.NewInternalError(errors.New("Internal Server Error"))
 				})
-
-				attrs := getShootAttributes(shoot, admission.Update, &metav1.UpdateOptions{})
+				oldShoot := shoot.DeepCopy()
+				attrs := getShootAttributes(shoot, oldShoot, admission.Update, &metav1.UpdateOptions{})
 				err := admissionHandler.Validate(context.TODO(), attrs, nil)
 				Expect(err).To(HaveOccurred())
 				Expect(err).ToNot(BeInvalidError())
 			})
+
+			It("should forbid Shoot if the spec.Networking.Nodes is changes", func() {
+				seedManagementClient.AddReactor("list", "managedseeds", func(action testing.Action) (bool, runtime.Object, error) {
+					return true, &seedmanagementv1alpha1.ManagedSeedList{Items: []seedmanagementv1alpha1.ManagedSeed{*managedSeed}}, nil
+				})
+				oldShoot := shoot.DeepCopy()
+				shoot.Spec.Networking.Nodes = pointer.String("10.181.0.0/16")
+				attrs := getShootAttributes(shoot, oldShoot, admission.Update, &metav1.UpdateOptions{})
+				err := admissionHandler.Validate(context.TODO(), attrs, nil)
+				Expect(err).To(HaveOccurred())
+				Expect(err).To(BeInvalidError())
+			})
+
 		})
 
 		Context("delete", func() {
@@ -154,7 +172,7 @@ var _ = Describe("ManagedSeed", func() {
 					return true, &seedmanagementv1alpha1.ManagedSeedList{Items: []seedmanagementv1alpha1.ManagedSeed{*managedSeed}}, nil
 				})
 
-				attrs := getShootAttributes(shoot, admission.Delete, &metav1.DeleteOptions{})
+				attrs := getShootAttributes(shoot, nil, admission.Delete, &metav1.DeleteOptions{})
 				err := admissionHandler.Validate(context.TODO(), attrs, nil)
 				Expect(err).To(BeForbiddenError())
 			})
@@ -164,7 +182,7 @@ var _ = Describe("ManagedSeed", func() {
 					return true, &seedmanagementv1alpha1.ManagedSeedList{Items: []seedmanagementv1alpha1.ManagedSeed{}}, nil
 				})
 
-				attrs := getShootAttributes(shoot, admission.Delete, &metav1.DeleteOptions{})
+				attrs := getShootAttributes(shoot, nil, admission.Delete, &metav1.DeleteOptions{})
 				err := admissionHandler.Validate(context.TODO(), attrs, nil)
 				Expect(err).NotTo(HaveOccurred())
 			})
@@ -174,7 +192,7 @@ var _ = Describe("ManagedSeed", func() {
 					return true, nil, apierrors.NewInternalError(errors.New("Internal Server Error"))
 				})
 
-				attrs := getShootAttributes(shoot, admission.Delete, &metav1.DeleteOptions{})
+				attrs := getShootAttributes(shoot, nil, admission.Delete, &metav1.DeleteOptions{})
 				err := admissionHandler.Validate(context.TODO(), attrs, nil)
 				Expect(err).To(HaveOccurred())
 				Expect(err).ToNot(BeForbiddenError())
@@ -254,7 +272,7 @@ var _ = Describe("ManagedSeed", func() {
 		It("should not fail if the required clients are set", func() {
 			admissionHandler, _ := New()
 			admissionHandler.SetInternalCoreClientset(&corefake.Clientset{})
-			admissionHandler.SetSeedManagementClientset(&seedmanagementfake.Clientset{})
+			admissionHandler.SetSeedManagementClientset(&fakeseedmanagement.Clientset{})
 
 			err := admissionHandler.ValidateInitialization()
 			Expect(err).ToNot(HaveOccurred())
@@ -262,10 +280,10 @@ var _ = Describe("ManagedSeed", func() {
 	})
 })
 
-func getShootAttributes(shoot *core.Shoot, operation admission.Operation, operationOptions runtime.Object) admission.Attributes {
-	return admission.NewAttributesRecord(shoot, nil, corev1beta1.Kind("Shoot").WithVersion("v1beta1"), shoot.Namespace, shoot.Name, corev1beta1.Resource("shoots").WithVersion("v1beta1"), "", operation, operationOptions, false, nil)
+func getShootAttributes(shoot *core.Shoot, oldShoot *core.Shoot, operation admission.Operation, operationOptions runtime.Object) admission.Attributes {
+	return admission.NewAttributesRecord(shoot, oldShoot, gardencorev1beta1.Kind("Shoot").WithVersion("v1beta1"), shoot.Namespace, shoot.Name, gardencorev1beta1.Resource("shoots").WithVersion("v1beta1"), "", operation, operationOptions, false, nil)
 }
 
 func getAllShootsAttributes(namespace string) admission.Attributes {
-	return admission.NewAttributesRecord(nil, nil, corev1beta1.Kind("Shoot").WithVersion("v1beta1"), namespace, "", corev1beta1.Resource("shoots").WithVersion("v1beta1"), "", admission.Delete, &metav1.DeleteOptions{}, false, nil)
+	return admission.NewAttributesRecord(nil, nil, gardencorev1beta1.Kind("Shoot").WithVersion("v1beta1"), namespace, "", gardencorev1beta1.Resource("shoots").WithVersion("v1beta1"), "", admission.Delete, &metav1.DeleteOptions{}, false, nil)
 }

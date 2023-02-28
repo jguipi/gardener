@@ -19,24 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	cr "github.com/gardener/gardener/pkg/chartrenderer"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	fakeclientset "github.com/gardener/gardener/pkg/client/kubernetes/fake"
-	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	"github.com/gardener/gardener/pkg/operation"
-	. "github.com/gardener/gardener/pkg/operation/botanist"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/dnsrecord"
-	mockdnsrecord "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/dnsrecord/mock"
-	"github.com/gardener/gardener/pkg/operation/garden"
-	"github.com/gardener/gardener/pkg/operation/seed"
-	"github.com/gardener/gardener/pkg/operation/shoot"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
@@ -51,6 +33,24 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/chartrenderer"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	kubernetesfake "github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
+	"github.com/gardener/gardener/pkg/operation"
+	. "github.com/gardener/gardener/pkg/operation/botanist"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/dnsrecord"
+	mockdnsrecord "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/dnsrecord/mock"
+	"github.com/gardener/gardener/pkg/operation/garden"
+	"github.com/gardener/gardener/pkg/operation/seed"
+	"github.com/gardener/gardener/pkg/operation/shoot"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 const (
@@ -119,7 +119,7 @@ var _ = Describe("dnsrecord", func() {
 				Shoot: &shoot.Shoot{
 					SeedNamespace:         seedNamespace,
 					ExternalClusterDomain: pointer.String(externalDomain),
-					ExternalDomain: &garden.Domain{
+					ExternalDomain: &gardenerutils.Domain{
 						Domain:   externalDomain,
 						Provider: externalProvider,
 						Zone:     externalZone,
@@ -136,7 +136,7 @@ var _ = Describe("dnsrecord", func() {
 					},
 				},
 				Garden: &garden.Garden{
-					InternalDomain: &garden.Domain{
+					InternalDomain: &gardenerutils.Domain{
 						Domain:   internalDomain,
 						Provider: internalProvider,
 						Zone:     internalZone,
@@ -167,10 +167,10 @@ var _ = Describe("dnsrecord", func() {
 			},
 		})
 
-		renderer := cr.NewWithServerVersion(&version.Info{})
+		renderer := chartrenderer.NewWithServerVersion(&version.Info{})
 		chartApplier := kubernetes.NewChartApplier(renderer, kubernetes.NewApplier(c, meta.NewDefaultRESTMapper([]schema.GroupVersion{})))
 		Expect(chartApplier).NotTo(BeNil(), "should return chart applier")
-		b.SeedClientSet = fakeclientset.NewClientSetBuilder().
+		b.SeedClientSet = kubernetesfake.NewClientSetBuilder().
 			WithClient(c).
 			WithChartApplier(chartApplier).
 			Build()
@@ -428,7 +428,7 @@ var _ = Describe("dnsrecord", func() {
 	})
 
 	Describe("#DeployOrDestroyExternalDNSRecord", func() {
-		Context("deploy (DNS enabled)", func() {
+		Context("deploy", func() {
 			It("should call Deploy and Wait and succeed if they succeeded", func() {
 				externalDNSRecord.EXPECT().Deploy(ctx)
 				externalDNSRecord.EXPECT().Wait(ctx)
@@ -441,8 +441,8 @@ var _ = Describe("dnsrecord", func() {
 			})
 		})
 
-		Context("restore (DNS enabled and restore operation)", func() {
-			var shootState = &gardencorev1alpha1.ShootState{}
+		Context("restore", func() {
+			var shootState = &gardencorev1beta1.ShootState{}
 
 			JustBeforeEach(func() {
 				b.SetShootState(shootState)
@@ -465,9 +465,13 @@ var _ = Describe("dnsrecord", func() {
 			})
 		})
 
-		Context("destroy (DNS disabled)", func() {
+		Context("destroy (Shoot DNS is set to nil)", func() {
 			JustBeforeEach(func() {
-				b.Shoot.DisableDNS = true
+				b.Shoot.SetInfo(&gardencorev1beta1.Shoot{
+					Spec: gardencorev1beta1.ShootSpec{
+						DNS: nil,
+					},
+				})
 			})
 
 			It("should call Destroy and WaitCleanup and succeed if they succeeded", func() {
@@ -484,7 +488,7 @@ var _ = Describe("dnsrecord", func() {
 	})
 
 	Describe("#DeployOrDestroyInternalDNSRecord", func() {
-		Context("deploy (DNS enabled)", func() {
+		Context("deploy", func() {
 			It("should call Deploy and Wait and succeed if they succeeded", func() {
 				internalDNSRecord.EXPECT().Deploy(ctx)
 				internalDNSRecord.EXPECT().Wait(ctx)
@@ -497,8 +501,8 @@ var _ = Describe("dnsrecord", func() {
 			})
 		})
 
-		Context("restore (DNS enabled and restore operation)", func() {
-			var shootState = &gardencorev1alpha1.ShootState{}
+		Context("restore", func() {
+			var shootState = &gardencorev1beta1.ShootState{}
 
 			JustBeforeEach(func() {
 				b.SetShootState(shootState)
@@ -521,9 +525,9 @@ var _ = Describe("dnsrecord", func() {
 			})
 		})
 
-		Context("destroy (DNS disabled)", func() {
+		Context("destroy (Garden InternalDomain is set to nil)", func() {
 			JustBeforeEach(func() {
-				b.Shoot.DisableDNS = true
+				b.Garden.InternalDomain = nil
 			})
 
 			It("should call Destroy and WaitCleanup and succeed if they succeeded", func() {

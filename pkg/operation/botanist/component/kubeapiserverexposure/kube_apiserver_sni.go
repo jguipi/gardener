@@ -21,14 +21,6 @@ import (
 	"fmt"
 	"text/template"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/controllerutils"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-
 	"github.com/Masterminds/sprig"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -42,6 +34,14 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/controllerutils"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	kubeapiserverconstants "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/constants"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 // SNIValues configure the kube-apiserver service SNI.
@@ -65,25 +65,25 @@ func NewSNI(
 	client client.Client,
 	applier kubernetes.Applier,
 	namespace string,
-	values *SNIValues,
+	valuesFunc func() *SNIValues,
 ) component.DeployWaiter {
-	if values == nil {
-		values = &SNIValues{}
+	if valuesFunc == nil {
+		valuesFunc = func() *SNIValues { return &SNIValues{} }
 	}
 
 	return &sni{
-		client:    client,
-		applier:   applier,
-		namespace: namespace,
-		values:    values,
+		client:     client,
+		applier:    applier,
+		namespace:  namespace,
+		valuesFunc: valuesFunc,
 	}
 }
 
 type sni struct {
-	client    client.Client
-	applier   kubernetes.Applier
-	namespace string
-	values    *SNIValues
+	client     client.Client
+	applier    kubernetes.Applier
+	namespace  string
+	valuesFunc func() *SNIValues
 }
 
 type envoyFilterTemplateValues struct {
@@ -106,11 +106,11 @@ func (s *sni) Deploy(ctx context.Context) error {
 	)
 
 	if err := envoyFilterSpecTemplate.Execute(&envoyFilterSpec, envoyFilterTemplateValues{
-		SNIValues: s.values,
+		SNIValues: s.valuesFunc(),
 		Name:      envoyFilter.Name,
 		Namespace: envoyFilter.Namespace,
 		Host:      hostName,
-		Port:      kubeapiserver.Port,
+		Port:      kubeapiserverconstants.Port,
 	}); err != nil {
 		return err
 	}
@@ -156,11 +156,11 @@ func (s *sni) Deploy(ctx context.Context) error {
 	if _, err := controllerutils.GetAndCreateOrMergePatch(ctx, s.client, gateway, func() error {
 		gateway.Labels = getLabels()
 		gateway.Spec = istioapinetworkingv1beta1.Gateway{
-			Selector: s.values.IstioIngressGateway.Labels,
+			Selector: s.valuesFunc().IstioIngressGateway.Labels,
 			Servers: []*istioapinetworkingv1beta1.Server{{
-				Hosts: s.values.Hosts,
+				Hosts: s.valuesFunc().Hosts,
 				Port: &istioapinetworkingv1beta1.Port{
-					Number:   kubeapiserver.Port,
+					Number:   kubeapiserverconstants.Port,
 					Name:     "tls",
 					Protocol: "TLS",
 				},
@@ -178,17 +178,17 @@ func (s *sni) Deploy(ctx context.Context) error {
 		virtualService.Labels = getLabels()
 		virtualService.Spec = istioapinetworkingv1beta1.VirtualService{
 			ExportTo: []string{"*"},
-			Hosts:    s.values.Hosts,
+			Hosts:    s.valuesFunc().Hosts,
 			Gateways: []string{gateway.Name},
 			Tls: []*istioapinetworkingv1beta1.TLSRoute{{
 				Match: []*istioapinetworkingv1beta1.TLSMatchAttributes{{
-					Port:     kubeapiserver.Port,
-					SniHosts: s.values.Hosts,
+					Port:     kubeapiserverconstants.Port,
+					SniHosts: s.valuesFunc().Hosts,
 				}},
 				Route: []*istioapinetworkingv1beta1.RouteDestination{{
 					Destination: &istioapinetworkingv1beta1.Destination{
 						Host: hostName,
-						Port: &istioapinetworkingv1beta1.PortSelector{Number: kubeapiserver.Port},
+						Port: &istioapinetworkingv1beta1.PortSelector{Number: kubeapiserverconstants.Port},
 					},
 				}},
 			}},
@@ -202,7 +202,7 @@ func (s *sni) Deploy(ctx context.Context) error {
 }
 
 func (s *sni) Destroy(ctx context.Context) error {
-	return kutil.DeleteObjects(
+	return kubernetesutils.DeleteObjects(
 		ctx,
 		s.client,
 		s.emptyDestinationRule(),
@@ -220,7 +220,7 @@ func (s *sni) emptyDestinationRule() *istionetworkingv1beta1.DestinationRule {
 }
 
 func (s *sni) emptyEnvoyFilter() *istionetworkingv1alpha3.EnvoyFilter {
-	return &istionetworkingv1alpha3.EnvoyFilter{ObjectMeta: metav1.ObjectMeta{Name: s.namespace, Namespace: s.values.IstioIngressGateway.Namespace}}
+	return &istionetworkingv1alpha3.EnvoyFilter{ObjectMeta: metav1.ObjectMeta{Name: s.namespace, Namespace: s.valuesFunc().IstioIngressGateway.Namespace}}
 }
 
 func (s *sni) emptyGateway() *istionetworkingv1beta1.Gateway {

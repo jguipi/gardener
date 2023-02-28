@@ -20,13 +20,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
-	externalcoreinformers "github.com/gardener/gardener/pkg/client/core/informers/externalversions"
-	corev1beta1listers "github.com/gardener/gardener/pkg/client/core/listers/core/v1beta1"
-
 	"github.com/hashicorp/go-multierror"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -34,6 +27,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/admission"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	gardencorelisters "github.com/gardener/gardener/pkg/client/core/listers/core/internalversion"
 )
 
 const (
@@ -54,13 +53,13 @@ func NewFactory(config io.Reader) (admission.Interface, error) {
 // ExtensionValidator contains listers and admission handler.
 type ExtensionValidator struct {
 	*admission.Handler
-	controllerRegistrationLister corev1beta1listers.ControllerRegistrationLister
-	backupBucketLister           corev1beta1listers.BackupBucketLister
+	controllerRegistrationLister gardencorelisters.ControllerRegistrationLister
+	backupBucketLister           gardencorelisters.BackupBucketLister
 	readyFunc                    admission.ReadyFunc
 }
 
 var (
-	_ = admissioninitializer.WantsExternalCoreInformerFactory(&ExtensionValidator{})
+	_ = admissioninitializer.WantsInternalCoreInformerFactory(&ExtensionValidator{})
 
 	readyFuncs []admission.ReadyFunc
 )
@@ -78,12 +77,12 @@ func (e *ExtensionValidator) AssignReadyFunc(f admission.ReadyFunc) {
 	e.SetReadyFunc(f)
 }
 
-// SetExternalCoreInformerFactory sets the external garden core informer factory.
-func (e *ExtensionValidator) SetExternalCoreInformerFactory(f externalcoreinformers.SharedInformerFactory) {
-	controllerRegistrationInformer := f.Core().V1beta1().ControllerRegistrations()
+// SetInternalCoreInformerFactory gets Lister from SharedInformerFactory.
+func (e *ExtensionValidator) SetInternalCoreInformerFactory(f gardencoreinformers.SharedInformerFactory) {
+	controllerRegistrationInformer := f.Core().InternalVersion().ControllerRegistrations()
 	e.controllerRegistrationLister = controllerRegistrationInformer.Lister()
 
-	backupBucketInformer := f.Core().V1beta1().BackupBuckets()
+	backupBucketInformer := f.Core().InternalVersion().BackupBuckets()
 	e.backupBucketLister = backupBucketInformer.Lister()
 
 	readyFuncs = append(readyFuncs, controllerRegistrationInformer.Informer().HasSynced, backupBucketInformer.Informer().HasSynced)
@@ -229,7 +228,7 @@ func (e *ExtensionValidator) Validate(ctx context.Context, a admission.Attribute
 	return nil
 }
 
-func (e *ExtensionValidator) validateBackupBucket(kindToTypesMap map[string]sets.String, spec core.BackupBucketSpec) error {
+func (e *ExtensionValidator) validateBackupBucket(kindToTypesMap map[string]sets.Set[string], spec core.BackupBucketSpec) error {
 	return isExtensionRegistered(
 		kindToTypesMap,
 		extensionsv1alpha1.BackupBucketResource,
@@ -238,7 +237,7 @@ func (e *ExtensionValidator) validateBackupBucket(kindToTypesMap map[string]sets
 	)
 }
 
-func (e *ExtensionValidator) validateBackupEntry(kindToTypesMap map[string]sets.String, bucketType string) error {
+func (e *ExtensionValidator) validateBackupEntry(kindToTypesMap map[string]sets.Set[string], bucketType string) error {
 	return isExtensionRegistered(
 		kindToTypesMap,
 		extensionsv1alpha1.BackupEntryResource,
@@ -247,7 +246,7 @@ func (e *ExtensionValidator) validateBackupEntry(kindToTypesMap map[string]sets.
 	)
 }
 
-func (e *ExtensionValidator) validateSeed(kindToTypesMap map[string]sets.String, spec core.SeedSpec) error {
+func (e *ExtensionValidator) validateSeed(kindToTypesMap map[string]sets.Set[string], spec core.SeedSpec) error {
 	var (
 		message = "given Seed uses non-registered"
 
@@ -273,7 +272,7 @@ func (e *ExtensionValidator) validateSeed(kindToTypesMap map[string]sets.String,
 	return requiredExtensions.areRegistered(kindToTypesMap)
 }
 
-func (e *ExtensionValidator) validateShoot(kindToTypesMap map[string]sets.String, spec core.ShootSpec) error {
+func (e *ExtensionValidator) validateShoot(kindToTypesMap map[string]sets.Set[string], spec core.ShootSpec) error {
 	var (
 		message         = "given Shoot uses non-registered"
 		providerTypeMsg = fmt.Sprintf("%s provider type: %s", message, field.NewPath("spec", "provider", "type"))
@@ -329,7 +328,7 @@ type requiredExtension struct {
 
 type requiredExtensions []requiredExtension
 
-func (r requiredExtensions) areRegistered(kindToTypesMap map[string]sets.String) error {
+func (r requiredExtensions) areRegistered(kindToTypesMap map[string]sets.Set[string]) error {
 	var result error
 
 	for _, requiredExtension := range r {
@@ -343,7 +342,7 @@ func (r requiredExtensions) areRegistered(kindToTypesMap map[string]sets.String)
 
 // isExtensionRegistered takes a map of registered kinds to a set of types and a kind/type to verify. If the provided
 // kind/type combination is registered then it returns nil, otherwise it returns an error with the given message.
-func isExtensionRegistered(kindToTypesMap map[string]sets.String, extensionKind, extensionType, message string) error {
+func isExtensionRegistered(kindToTypesMap map[string]sets.Set[string], extensionKind, extensionType, message string) error {
 	if types, ok := kindToTypesMap[extensionKind]; !ok || !types.Has(extensionType) {
 		return fmt.Errorf("%s (%q)", message, extensionType)
 	}
@@ -352,8 +351,8 @@ func isExtensionRegistered(kindToTypesMap map[string]sets.String, extensionKind,
 
 // computeRegisteredPrimaryExtensionKindTypes computes a map that maps the extension kind to the set of types that are
 // registered (only if primary=true), e.g. {ControlPlane=>{foo,bar,baz}, Network=>{a,b,c}}.
-func computeRegisteredPrimaryExtensionKindTypes(controllerRegistrationList []*gardencorev1beta1.ControllerRegistration) map[string]sets.String {
-	out := map[string]sets.String{}
+func computeRegisteredPrimaryExtensionKindTypes(controllerRegistrationList []*core.ControllerRegistration) map[string]sets.Set[string] {
+	out := map[string]sets.Set[string]{}
 
 	for _, controllerRegistration := range controllerRegistrationList {
 		for _, resource := range controllerRegistration.Spec.Resources {
@@ -362,7 +361,7 @@ func computeRegisteredPrimaryExtensionKindTypes(controllerRegistrationList []*ga
 			}
 
 			if _, ok := out[resource.Kind]; !ok {
-				out[resource.Kind] = sets.NewString()
+				out[resource.Kind] = sets.New[string]()
 			}
 
 			out[resource.Kind].Insert(resource.Type)

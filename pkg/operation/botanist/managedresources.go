@@ -19,13 +19,13 @@ import (
 	"fmt"
 	"time"
 
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	utilerrors "github.com/gardener/gardener/pkg/utils/errors"
-	"github.com/gardener/gardener/pkg/utils/managedresources"
-	"github.com/gardener/gardener/pkg/utils/retry"
-
 	"github.com/hashicorp/go-multierror"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	errorsutils "github.com/gardener/gardener/pkg/utils/errors"
+	"github.com/gardener/gardener/pkg/utils/managedresources"
+	"github.com/gardener/gardener/pkg/utils/retry"
 )
 
 // DeleteManagedResources deletes all managed resources labeled with `origin=gardener` from the Shoot namespace in the Seed.
@@ -52,7 +52,7 @@ func (b *Botanist) WaitUntilShootManagedResourcesDeleted(ctx context.Context) er
 		}
 
 		allErrs := &multierror.Error{
-			ErrorFormat: utilerrors.NewErrorFormatFuncWithPrefix("error while waiting for all shoot managed resources to be deleted: "),
+			ErrorFormat: errorsutils.NewErrorFormatFuncWithPrefix("error while waiting for all shoot managed resources to be deleted: "),
 		}
 		for _, mr := range mrList.Items {
 			if mr.Spec.Class == nil || *mr.Spec.Class == "" {

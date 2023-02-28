@@ -19,15 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	versionutils "github.com/gardener/gardener/pkg/utils/version"
-	"github.com/gardener/gardener/test/framework"
-	"github.com/gardener/gardener/test/utils/shoots/access"
-	"github.com/gardener/gardener/test/utils/shoots/update/highavailability"
-
 	"github.com/Masterminds/semver"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -40,9 +31,19 @@ import (
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	versionutils "github.com/gardener/gardener/pkg/utils/version"
+	"github.com/gardener/gardener/test/framework"
+	"github.com/gardener/gardener/test/utils/shoots/access"
+	"github.com/gardener/gardener/test/utils/shoots/update/highavailability"
 )
 
-func getKubeAPIServerAuthToken(ctx context.Context, seedClient kubernetes.Interface, namespace string) string {
+// GetKubeAPIServerAuthToken returns kube API server auth token for given shoot's control-plane namespace in seed cluster.
+func GetKubeAPIServerAuthToken(ctx context.Context, seedClient kubernetes.Interface, namespace string) string {
 	c := seedClient.Client()
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -66,7 +67,7 @@ func RunTest(
 	newControlPlaneKubernetesVersion *string,
 	newWorkerPoolKubernetesVersion *string,
 ) {
-	By("creating shoot client")
+	By("Create shoot client")
 	var (
 		job *batchv1.Job
 		err error
@@ -75,16 +76,16 @@ func RunTest(
 	shootClient, err := access.CreateShootClientFromAdminKubeconfig(ctx, f.GardenClient, f.Shoot)
 	Expect(err).NotTo(HaveOccurred())
 
-	if gardencorev1beta1helper.IsHAControlPlaneConfigured(f.Shoot) {
+	if v1beta1helper.IsHAControlPlaneConfigured(f.Shoot) {
 		f.Seed, f.SeedClient, err = f.GetSeed(ctx, *f.Shoot.Spec.SeedName)
 		Expect(err).NotTo(HaveOccurred())
 		shootSeedNamespace := f.Shoot.Status.TechnicalID
 
-		By("deploying zero-downtime validator job")
+		By("Deploy zero-downtime validator job")
 		job, err = highavailability.DeployZeroDownTimeValidatorJob(ctx,
-			f.SeedClient.Client(), "update", shootSeedNamespace, getKubeAPIServerAuthToken(ctx, f.SeedClient, shootSeedNamespace))
+			f.SeedClient.Client(), "update", shootSeedNamespace, GetKubeAPIServerAuthToken(ctx, f.SeedClient, shootSeedNamespace))
 		Expect(err).NotTo(HaveOccurred())
-		waitForJobToBeReady(ctx, f.SeedClient.Client(), job)
+		WaitForJobToBeReady(ctx, f.SeedClient.Client(), job)
 	}
 
 	k8sGreaterEqual123, err := versionutils.CheckVersionMeetsConstraint(f.Shoot.Spec.Kubernetes.Version, ">= 1.23")
@@ -95,7 +96,7 @@ func RunTest(
 	if k8sGreaterEqual123 {
 		patch := client.MergeFrom(f.Shoot.DeepCopy())
 		// Disable PodSecurityPolicy in the Shoot spec
-		if !gardencorev1beta1helper.IsPSPDisabled(f.Shoot) {
+		if !v1beta1helper.IsPSPDisabled(f.Shoot) {
 			if f.Shoot.Spec.Kubernetes.KubeAPIServer == nil {
 				f.Shoot.Spec.Kubernetes.KubeAPIServer = &gardencorev1beta1.KubeAPIServerConfig{}
 			}
@@ -105,7 +106,7 @@ func RunTest(
 			})
 		}
 
-		if gardencorev1beta1helper.IsPSPDisabled(f.Shoot) {
+		if v1beta1helper.IsPSPDisabled(f.Shoot) {
 			// This field should not be set for kubernetes v1.25+ or when PSP is disabled in the Shoot spec.
 			f.Shoot.Spec.Kubernetes.AllowPrivilegedContainers = nil
 		}
@@ -124,14 +125,14 @@ func RunTest(
 		}
 	}
 
-	By("verifying the Kubernetes version for all existing nodes matches with the versions defined in the Shoot spec [before update]")
+	By("Verify the Kubernetes version for all existing nodes matches with the versions defined in the Shoot spec [before update]")
 	Expect(verifyKubernetesVersions(ctx, shootClient, f.Shoot)).To(Succeed())
 
-	By("reading CloudProfile")
+	By("Read CloudProfile")
 	cloudProfile, err := f.GetCloudProfile(ctx)
 	Expect(err).NotTo(HaveOccurred())
 
-	By("computing new Kubernetes version for control plane and worker pools")
+	By("Compute new Kubernetes version for control plane and worker pools")
 	controlPlaneVersion, poolNameToKubernetesVersion, err := computeNewKubernetesVersions(cloudProfile, f.Shoot, newControlPlaneKubernetesVersion, newWorkerPoolKubernetesVersion)
 	Expect(err).NotTo(HaveOccurred())
 
@@ -139,12 +140,12 @@ func RunTest(
 		Skip("shoot already has the desired kubernetes versions")
 	}
 
-	By("updating shoot")
+	By("Update shoot")
 	if controlPlaneVersion != "" {
-		By("updating .spec.kubernetes.version to " + controlPlaneVersion)
+		By("Update .spec.kubernetes.version to " + controlPlaneVersion)
 	}
 	for poolName, kubernetesVersion := range poolNameToKubernetesVersion {
-		By("updating .kubernetes.version to " + kubernetesVersion + " for pool " + poolName)
+		By("Update .kubernetes.version to " + kubernetesVersion + " for pool " + poolName)
 	}
 
 	Expect(f.UpdateShoot(ctx, func(shoot *gardencorev1beta1.Shoot) error {
@@ -161,15 +162,15 @@ func RunTest(
 		return nil
 	})).To(Succeed())
 
-	By("re-creating shoot client")
+	By("Re-creating shoot client")
 	shootClient, err = access.CreateShootClientFromAdminKubeconfig(ctx, f.GardenClient, f.Shoot)
 	Expect(err).NotTo(HaveOccurred())
 
-	By("verifying the Kubernetes version for all existing nodes matches with the versions defined in the Shoot spec [after update]")
+	By("Verify the Kubernetes version for all existing nodes matches with the versions defined in the Shoot spec [after update]")
 	Expect(verifyKubernetesVersions(ctx, shootClient, f.Shoot)).To(Succeed())
 
-	if gardencorev1beta1helper.IsHAControlPlaneConfigured(f.Shoot) {
-		By("ensuring there was no downtime while upgrading shoot")
+	if v1beta1helper.IsHAControlPlaneConfigured(f.Shoot) {
+		By("Ensure there was no downtime while upgrading shoot")
 		Expect(f.SeedClient.Client().Get(ctx, client.ObjectKeyFromObject(job), job)).To(Succeed())
 		Expect(job.Status.Failed).Should(BeZero())
 		Expect(client.IgnoreNotFound(
@@ -195,7 +196,7 @@ func verifyKubernetesVersions(ctx context.Context, shootClient kubernetes.Interf
 
 	poolNameToKubernetesVersion := map[string]string{}
 	for _, worker := range shoot.Spec.Provider.Workers {
-		poolKubernetesVersion, err := gardencorev1beta1helper.CalculateEffectiveKubernetesVersion(controlPlaneKubernetesVersion, worker.Kubernetes)
+		poolKubernetesVersion, err := v1beta1helper.CalculateEffectiveKubernetesVersion(controlPlaneKubernetesVersion, worker.Kubernetes)
 		if err != nil {
 			return fmt.Errorf("error when calculating effective Kubernetes version of pool %q: %w", worker.Name, err)
 		}
@@ -282,7 +283,7 @@ func computeNewKubernetesVersions(
 }
 
 func getNextConsecutiveMinorVersion(cloudProfile *gardencorev1beta1.CloudProfile, kubernetesVersion string) (string, error) {
-	consecutiveMinorAvailable, newVersion, err := gardencorev1beta1helper.GetKubernetesVersionForMinorUpdate(cloudProfile, kubernetesVersion)
+	consecutiveMinorAvailable, newVersion, err := v1beta1helper.GetKubernetesVersionForMinorUpdate(cloudProfile, kubernetesVersion)
 	if err != nil {
 		return "", err
 	}
@@ -294,7 +295,8 @@ func getNextConsecutiveMinorVersion(cloudProfile *gardencorev1beta1.CloudProfile
 	return newVersion, nil
 }
 
-func waitForJobToBeReady(ctx context.Context, cl client.Client, job *batchv1.Job) {
+// WaitForJobToBeReady waits until given job's associated pod is ready.
+func WaitForJobToBeReady(ctx context.Context, cl client.Client, job *batchv1.Job) {
 	r, _ := labels.NewRequirement("job-name", selection.Equals, []string{job.Name})
 	opts := &client.ListOptions{
 		LabelSelector: labels.NewSelector().Add(*r),

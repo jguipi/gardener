@@ -19,18 +19,18 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/controllermanager/apis/config"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/controllermanager/apis/config"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 // Reconciler reconciles Shoots and auto-deletes them if they are bound to a Quota with a configured cluster lifetime.
@@ -54,7 +54,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	secretBinding := &gardencorev1beta1.SecretBinding{}
-	if err := r.Client.Get(ctx, kutil.Key(shoot.Namespace, shoot.Spec.SecretBindingName), secretBinding); err != nil {
+	if err := r.Client.Get(ctx, kubernetesutils.Key(shoot.Namespace, shoot.Spec.SecretBindingName), secretBinding); err != nil {
 		return reconcile.Result{}, err
 	}
 
@@ -62,7 +62,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	for _, quotaRef := range secretBinding.Quotas {
 		quota := &gardencorev1beta1.Quota{}
-		if err := r.Client.Get(ctx, kutil.Key(quotaRef.Namespace, quotaRef.Name), quota); err != nil {
+		if err := r.Client.Get(ctx, kubernetesutils.Key(quotaRef.Namespace, quotaRef.Name), quota); err != nil {
 			return reconcile.Result{}, err
 		}
 
@@ -111,7 +111,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		log.Info("Shoot cluster lifetime expired, deleting Shoot", "expirationTime", expirationTime)
 
 		// We have to annotate the Shoot to confirm the deletion.
-		if err := gutil.ConfirmDeletion(ctx, r.Client, shoot); err != nil {
+		if err := gardenerutils.ConfirmDeletion(ctx, r.Client, shoot); err != nil {
 			if apierrors.IsNotFound(err) {
 				return reconcile.Result{}, nil
 			}

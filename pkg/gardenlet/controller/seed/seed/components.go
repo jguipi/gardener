@@ -16,34 +16,6 @@ package seed
 
 import (
 	"context"
-	"fmt"
-	"net"
-
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	"github.com/gardener/gardener/pkg/chartrenderer"
-	"github.com/gardener/gardener/pkg/features"
-	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/dependencywatchdog"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/etcd"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/istio"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/kubestatemetrics"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/networkpolicies"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/nodelocaldns"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/seedsystem"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnauthzserver"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
-	"github.com/gardener/gardener/pkg/operation/common"
-	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
-	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	"github.com/gardener/gardener/pkg/utils/images"
-	"github.com/gardener/gardener/pkg/utils/imagevector"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
 
 	"github.com/Masterminds/semver"
 	restarterapi "github.com/gardener/dependency-watchdog/pkg/restarter/api"
@@ -53,6 +25,31 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	"github.com/gardener/gardener/pkg/chartrenderer"
+	"github.com/gardener/gardener/pkg/features"
+	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
+	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
+	"github.com/gardener/gardener/pkg/operation"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/dependencywatchdog"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/etcd"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/istio"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/kubestatemetrics"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/networkpolicies"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/seedsystem"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnauthzserver"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
+	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
+	"github.com/gardener/gardener/pkg/utils"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/images"
+	"github.com/gardener/gardener/pkg/utils/imagevector"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 func defaultKubeStateMetrics(
@@ -87,6 +84,12 @@ func defaultIstio(
 	component.DeployWaiter,
 	error,
 ) {
+	var (
+		minReplicas *int
+		maxReplicas *int
+		seedObj     = seed.GetInfo()
+	)
+
 	istiodImage, err := imageVector.FindImage(images.ImageNameIstioIstiod)
 	if err != nil {
 		return nil, err
@@ -97,14 +100,31 @@ func defaultIstio(
 		return nil, err
 	}
 
-	defaultIngressGatewayConfig := istio.IngressValues{
-		TrustDomain:     gardencorev1beta1.DefaultDomain,
-		Image:           igwImage.String(),
-		IstiodNamespace: v1beta1constants.IstioSystemNamespace,
-		Annotations:     seed.LoadBalancerServiceAnnotations,
-		Ports:           []corev1.ServicePort{},
-		LoadBalancerIP:  conf.SNI.Ingress.ServiceExternalIP,
-		Labels:          conf.SNI.Ingress.Labels,
+	if len(seedObj.Spec.Provider.Zones) > 1 {
+		// Each availability zone should have at least 2 replicas as on some infrastructures each
+		// zonal load balancer is exposed individually via its own IP address. Therefore, having
+		// just one replica may negatively affect availability.
+		minReplicas = pointer.Int(len(seedObj.Spec.Provider.Zones) * 2)
+		// The default configuration without availability zones has 5 as the maximum amount of
+		// replicas, which apparently works in all known Gardener scenarios. Reducing it to less
+		// per zone gives some room for autoscaling while it is assumed to never reach the maximum.
+		maxReplicas = pointer.Int(len(seedObj.Spec.Provider.Zones) * 4)
+	}
+
+	defaultIngressGatewayConfig := istio.IngressGatewayValues{
+		TrustDomain:           gardencorev1beta1.DefaultDomain,
+		Image:                 igwImage.String(),
+		IstiodNamespace:       v1beta1constants.IstioSystemNamespace,
+		Annotations:           seed.GetLoadBalancerServiceAnnotations(),
+		ExternalTrafficPolicy: seed.GetLoadBalancerServiceExternalTrafficPolicy(),
+		MinReplicas:           minReplicas,
+		MaxReplicas:           maxReplicas,
+		Ports:                 []corev1.ServicePort{},
+		LoadBalancerIP:        conf.SNI.Ingress.ServiceExternalIP,
+		Labels:                operation.GetIstioZoneLabels(conf.SNI.Ingress.Labels, nil),
+		Namespace:             *conf.SNI.Ingress.Namespace,
+		ProxyProtocolEnabled:  gardenletfeatures.FeatureGate.Enabled(features.APIServerSNI),
+		VPNEnabled:            true,
 	}
 
 	// even if SNI is being disabled, the existing ports must stay the same
@@ -118,69 +138,86 @@ func defaultIstio(
 		)
 	}
 
-	istioIngressGateway := []istio.IngressGateway{{
-		Values:    defaultIngressGatewayConfig,
-		Namespace: *conf.SNI.Ingress.Namespace,
-	}}
+	istioIngressGateway := []istio.IngressGatewayValues{
+		defaultIngressGatewayConfig,
+	}
 
-	istioProxyGateway := []istio.ProxyProtocol{{
-		Values: istio.ProxyValues{
-			Labels: conf.SNI.Ingress.Labels,
-		},
-		Namespace: *conf.SNI.Ingress.Namespace,
-	}}
+	// Automatically create ingress gateways for single-zone control planes on multi-zonal seeds
+	if len(seedObj.Spec.Provider.Zones) > 1 {
+		for _, zone := range seedObj.Spec.Provider.Zones {
+			namespace := operation.GetIstioNamespaceForZone(*conf.SNI.Ingress.Namespace, zone)
+
+			istioIngressGateway = append(istioIngressGateway, istio.IngressGatewayValues{
+				TrustDomain:           gardencorev1beta1.DefaultDomain,
+				Image:                 igwImage.String(),
+				IstiodNamespace:       v1beta1constants.IstioSystemNamespace,
+				Annotations:           seed.GetZonalLoadBalancerServiceAnnotations(zone),
+				ExternalTrafficPolicy: seed.GetZonalLoadBalancerServiceExternalTrafficPolicy(zone),
+				Ports:                 defaultIngressGatewayConfig.Ports,
+				// LoadBalancerIP can currently not be provided for automatic ingress gateways
+				Labels:               operation.GetIstioZoneLabels(defaultIngressGatewayConfig.Labels, &zone),
+				Zones:                []string{zone},
+				Namespace:            namespace,
+				ProxyProtocolEnabled: gardenletfeatures.FeatureGate.Enabled(features.APIServerSNI),
+				VPNEnabled:           true,
+			})
+		}
+	}
 
 	// Add for each ExposureClass handler in the config an own Ingress Gateway and Proxy Gateway.
 	for _, handler := range conf.ExposureClassHandlers {
-		istioIngressGateway = append(istioIngressGateway, istio.IngressGateway{
-			Values: istio.IngressValues{
-				TrustDomain:     gardencorev1beta1.DefaultDomain,
-				Image:           igwImage.String(),
-				IstiodNamespace: v1beta1constants.IstioSystemNamespace,
-				Annotations:     utils.MergeStringMaps(seed.LoadBalancerServiceAnnotations, handler.LoadBalancerService.Annotations),
-				Ports:           defaultIngressGatewayConfig.Ports,
-				LoadBalancerIP:  handler.SNI.Ingress.ServiceExternalIP,
-				Labels:          gutil.GetMandatoryExposureClassHandlerSNILabels(handler.SNI.Ingress.Labels, handler.Name),
-			},
-			Namespace: *handler.SNI.Ingress.Namespace,
+		istioIngressGateway = append(istioIngressGateway, istio.IngressGatewayValues{
+			TrustDomain:           gardencorev1beta1.DefaultDomain,
+			Image:                 igwImage.String(),
+			IstiodNamespace:       v1beta1constants.IstioSystemNamespace,
+			Annotations:           utils.MergeStringMaps(seed.GetLoadBalancerServiceAnnotations(), handler.LoadBalancerService.Annotations),
+			ExternalTrafficPolicy: seed.GetLoadBalancerServiceExternalTrafficPolicy(),
+			MinReplicas:           minReplicas,
+			MaxReplicas:           maxReplicas,
+			Ports:                 defaultIngressGatewayConfig.Ports,
+			LoadBalancerIP:        handler.SNI.Ingress.ServiceExternalIP,
+			Labels:                operation.GetIstioZoneLabels(gardenerutils.GetMandatoryExposureClassHandlerSNILabels(handler.SNI.Ingress.Labels, handler.Name), nil),
+			Namespace:             *handler.SNI.Ingress.Namespace,
+			ProxyProtocolEnabled:  gardenletfeatures.FeatureGate.Enabled(features.APIServerSNI),
+			VPNEnabled:            true,
 		})
 
-		istioProxyGateway = append(istioProxyGateway, istio.ProxyProtocol{
-			Values: istio.ProxyValues{
-				Labels: gutil.GetMandatoryExposureClassHandlerSNILabels(handler.SNI.Ingress.Labels, handler.Name),
-			},
-			Namespace: *handler.SNI.Ingress.Namespace,
-		})
-	}
+		// Automatically create ingress gateways for single-zone control planes on multi-zonal seeds
+		if len(seedObj.Spec.Provider.Zones) > 1 {
+			for _, zone := range seedObj.Spec.Provider.Zones {
+				namespace := operation.GetIstioNamespaceForZone(*handler.SNI.Ingress.Namespace, zone)
 
-	if !gardenletfeatures.FeatureGate.Enabled(features.APIServerSNI) {
-		istioProxyGateway = nil
-	}
-
-	gardenSeed := seed.GetInfo()
-	_, seedServiceCIDR, err := net.ParseCIDR(gardenSeed.Spec.Networks.Services)
-	if err != nil {
-		return nil, err
-	}
-
-	seedDNSServerAddress, err := common.ComputeOffsetIP(seedServiceCIDR, 10)
-	if err != nil {
-		return nil, fmt.Errorf("cannot calculate CoreDNS ClusterIP: %w", err)
+				istioIngressGateway = append(istioIngressGateway, istio.IngressGatewayValues{
+					TrustDomain:           gardencorev1beta1.DefaultDomain,
+					Image:                 igwImage.String(),
+					IstiodNamespace:       v1beta1constants.IstioSystemNamespace,
+					Annotations:           utils.MergeStringMaps(handler.LoadBalancerService.Annotations, seed.GetZonalLoadBalancerServiceAnnotations(zone)),
+					ExternalTrafficPolicy: seed.GetZonalLoadBalancerServiceExternalTrafficPolicy(zone),
+					Ports:                 defaultIngressGatewayConfig.Ports,
+					// LoadBalancerIP can currently not be provided for automatic ingress gateways
+					Labels:               operation.GetIstioZoneLabels(gardenerutils.GetMandatoryExposureClassHandlerSNILabels(handler.SNI.Ingress.Labels, handler.Name), &zone),
+					Zones:                []string{zone},
+					Namespace:            namespace,
+					ProxyProtocolEnabled: gardenletfeatures.FeatureGate.Enabled(features.APIServerSNI),
+					VPNEnabled:           true,
+				})
+			}
+		}
 	}
 
 	return istio.NewIstio(
 		seedClient,
 		chartRenderer,
-		istio.IstiodValues{
-			TrustDomain:          gardencorev1beta1.DefaultDomain,
-			Image:                istiodImage.String(),
-			DNSServerAddress:     pointer.String(seedDNSServerAddress.String()),
-			NodeLocalIPVSAddress: pointer.String(nodelocaldns.IPVSAddress),
-			Zones:                gardenSeed.Spec.Provider.Zones,
+		istio.Values{
+			Istiod: istio.IstiodValues{
+				Enabled:     true,
+				Image:       istiodImage.String(),
+				Namespace:   v1beta1constants.IstioSystemNamespace,
+				TrustDomain: gardencorev1beta1.DefaultDomain,
+				Zones:       seedObj.Spec.Provider.Zones,
+			},
+			IngressGateway: istioIngressGateway,
 		},
-		v1beta1constants.IstioSystemNamespace,
-		istioIngressGateway,
-		istioProxyGateway,
 	), nil
 }
 
@@ -193,30 +230,8 @@ func defaultNetworkPolicies(
 	component.DeployWaiter,
 	error,
 ) {
-	networks := []string{seed.Spec.Networks.Pods, seed.Spec.Networks.Services}
-	if v := seed.Spec.Networks.Nodes; v != nil {
-		networks = append(networks, *v)
-	}
-	privateNetworkPeers, err := networkpolicies.ToNetworkPolicyPeersWithExceptions(networkpolicies.AllPrivateNetworkBlocks(), networks...)
-	if err != nil {
-		return nil, err
-	}
-
-	_, seedServiceCIDR, err := net.ParseCIDR(seed.Spec.Networks.Services)
-	if err != nil {
-		return nil, err
-	}
-	seedDNSServerAddress, err := common.ComputeOffsetIP(seedServiceCIDR, 10)
-	if err != nil {
-		return nil, fmt.Errorf("cannot calculate CoreDNS ClusterIP: %v", err)
-	}
-
 	return networkpolicies.NewBootstrapper(c, gardenNamespaceName, networkpolicies.GlobalValues{
-		SNIEnabled:           sniEnabled,
-		DenyAllTraffic:       false,
-		PrivateNetworkPeers:  privateNetworkPeers,
-		NodeLocalIPVSAddress: pointer.String(nodelocaldns.IPVSAddress),
-		DNSServerAddress:     pointer.String(seedDNSServerAddress.String()),
+		SNIEnabled: sniEnabled,
 	}), nil
 }
 
@@ -244,7 +259,7 @@ func defaultDependencyWatchdogs(
 	dwdEndpoint = component.OpDestroyWithoutWait(dependencywatchdog.NewBootstrapper(c, gardenNamespaceName, dwdEndpointValues))
 	dwdProbe = component.OpDestroyWithoutWait(dependencywatchdog.NewBootstrapper(c, gardenNamespaceName, dwdProbeValues))
 
-	if gardencorev1beta1helper.SeedSettingDependencyWatchdogEndpointEnabled(seedSettings) {
+	if v1beta1helper.SeedSettingDependencyWatchdogEndpointEnabled(seedSettings) {
 		// Fetch component-specific dependency-watchdog configuration
 		var (
 			dependencyWatchdogEndpointConfigurationFuncs = []dependencywatchdog.EndpointConfigurationFunc{
@@ -272,7 +287,7 @@ func defaultDependencyWatchdogs(
 		dwdEndpoint = dependencywatchdog.NewBootstrapper(c, gardenNamespaceName, dwdEndpointValues)
 	}
 
-	if gardencorev1beta1helper.SeedSettingDependencyWatchdogProbeEnabled(seedSettings) {
+	if v1beta1helper.SeedSettingDependencyWatchdogProbeEnabled(seedSettings) {
 		// Fetch component-specific dependency-watchdog configuration
 		var (
 			dependencyWatchdogProbeConfigurationFuncs = []dependencywatchdog.ProbeConfigurationFunc{
@@ -324,7 +339,7 @@ func defaultVPNAuthzServer(
 		return vpnAuthzServer, nil
 	}
 
-	hasVPNSeedDeployments, err := kutil.ResourcesExist(ctx, c, appsv1.SchemeGroupVersion.WithKind("DeploymentList"), client.MatchingLabels(map[string]string{v1beta1constants.LabelApp: v1beta1constants.DeploymentNameVPNSeedServer}))
+	hasVPNSeedDeployments, err := kubernetesutils.ResourcesExist(ctx, c, appsv1.SchemeGroupVersion.WithKind("DeploymentList"), client.MatchingLabels(map[string]string{v1beta1constants.LabelApp: v1beta1constants.DeploymentNameVPNSeedServer}))
 	if err != nil {
 		return nil, err
 	}

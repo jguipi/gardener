@@ -19,16 +19,6 @@ import (
 	"strconv"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	. "github.com/gardener/gardener/pkg/operation/botanist/component/nodeproblemdetector"
-	"github.com/gardener/gardener/pkg/utils/retry"
-	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/Masterminds/semver"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -39,6 +29,16 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	. "github.com/gardener/gardener/pkg/operation/botanist/component/nodeproblemdetector"
+	"github.com/gardener/gardener/pkg/utils/retry"
+	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("NodeProblemDetector", func() {
@@ -300,7 +300,7 @@ spec:
           name: kmsg
           readOnly: true
       dnsPolicy: Default
-      priorityClassName: system-cluster-critical
+      priorityClassName: gardener-shoot-system-900
       securityContext:
         seccompProfile:
           type: RuntimeDefault
@@ -308,8 +308,6 @@ spec:
       terminationGracePeriodSeconds: 30
       tolerations:
       - effect: NoSchedule
-        operator: Exists
-      - key: CriticalAddonsOnly
         operator: Exists
       - effect: NoExecute
         operator: Exists
@@ -345,7 +343,6 @@ spec:
     - containerName: '*'
       controlledValues: RequestsOnly
       minAllowed:
-        cpu: 10m
         memory: 20Mi
   targetRef:
     apiVersion: apps/v1
@@ -379,7 +376,7 @@ status: {}
 					SecretRefs: []corev1.LocalObjectReference{{
 						Name: managedResourceSecret.Name,
 					}},
-					KeepObjects: pointer.BoolPtr(false),
+					KeepObjects: pointer.Bool(false),
 				},
 			}))
 

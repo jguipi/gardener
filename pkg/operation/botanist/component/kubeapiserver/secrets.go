@@ -18,8 +18,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 
-	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,25 +33,21 @@ import (
 
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
 	"github.com/gardener/gardener/pkg/utils"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
 	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
 )
 
 const (
-	secretOIDCCABundleNamePrefix   = "kube-apiserver-oidc-cabundle"
-	secretOIDCCABundleDataKeyCaCrt = "ca.crt"
-
-	secretServiceAccountSigningKeyNamePrefix = "kube-apiserver-sa-signing-key"
-	// SecretServiceAccountSigningKeyDataKeySigningKey is a constant for a key in the data map that contains the key
-	// which is used to sign service accounts.
-	SecretServiceAccountSigningKeyDataKeySigningKey = "signing-key"
-
 	// SecretStaticTokenName is a constant for the name of the static-token secret.
 	SecretStaticTokenName = "kube-apiserver-static-token"
 
+	secretOIDCCABundleNamePrefix             = "kube-apiserver-oidc-cabundle"
+	secretOIDCCABundleDataKeyCaCrt           = "ca.crt"
 	secretETCDEncryptionConfigurationDataKey = "encryption-configuration.yaml"
+	secretAdmissionKubeconfigsNamePrefix     = "kube-apiserver-admission-kubeconfigs"
 
 	userNameClusterAdmin = "system:cluster-admin"
 	userNameHealthCheck  = "health-check"
@@ -59,6 +55,23 @@ const (
 
 func (k *kubeAPIServer) emptySecret(name string) *corev1.Secret {
 	return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: k.namespace}}
+}
+
+func (k *kubeAPIServer) reconcileSecretAdmissionKubeconfigs(ctx context.Context, secret *corev1.Secret) error {
+	secret.Data = make(map[string][]byte)
+
+	for _, plugin := range k.values.EnabledAdmissionPlugins {
+		if len(plugin.Kubeconfig) != 0 {
+			secret.Data[admissionPluginsKubeconfigFilename(plugin.Name)] = plugin.Kubeconfig
+		}
+	}
+
+	utilruntime.Must(kubernetesutils.MakeUnique(secret))
+	return client.IgnoreAlreadyExists(k.client.Client().Create(ctx, secret))
+}
+
+func admissionPluginsKubeconfigFilename(name string) string {
+	return strings.ToLower(name) + "-kubeconfig.yaml"
 }
 
 func (k *kubeAPIServer) reconcileSecretOIDCCABundle(ctx context.Context, secret *corev1.Secret) error {
@@ -69,20 +82,7 @@ func (k *kubeAPIServer) reconcileSecretOIDCCABundle(ctx context.Context, secret 
 	}
 
 	secret.Data = map[string][]byte{secretOIDCCABundleDataKeyCaCrt: []byte(*k.values.OIDC.CABundle)}
-	utilruntime.Must(kutil.MakeUnique(secret))
-
-	return client.IgnoreAlreadyExists(k.client.Client().Create(ctx, secret))
-}
-
-func (k *kubeAPIServer) reconcileSecretUserProvidedServiceAccountSigningKey(ctx context.Context, secret *corev1.Secret) error {
-	if k.values.ServiceAccount.SigningKey == nil {
-		// We don't delete the secret here as we don't know its name (as it's unique). Instead, we rely on the usual
-		// garbage collection for unique secrets/configmaps.
-		return nil
-	}
-
-	secret.Data = map[string][]byte{SecretServiceAccountSigningKeyDataKeySigningKey: k.values.ServiceAccount.SigningKey}
-	utilruntime.Must(kutil.MakeUnique(secret))
+	utilruntime.Must(kubernetesutils.MakeUnique(secret))
 
 	return client.IgnoreAlreadyExists(k.client.Client().Create(ctx, secret))
 }
@@ -97,7 +97,7 @@ func (k *kubeAPIServer) reconcileSecretServiceAccountKey(ctx context.Context) (*
 		options = append(options, secretsmanager.IgnoreOldSecrets())
 	}
 
-	secret, err := k.secretsManager.Generate(ctx, &secretutils.RSASecretConfig{
+	secret, err := k.secretsManager.Generate(ctx, &secretsutils.RSASecretConfig{
 		Name: v1beta1constants.SecretNameServiceAccountKey,
 		Bits: 4096,
 	}, options...)
@@ -106,13 +106,13 @@ func (k *kubeAPIServer) reconcileSecretServiceAccountKey(ctx context.Context) (*
 	}
 
 	// TODO(rfranzke): Remove this in a future release.
-	return secret, kutil.DeleteObject(ctx, k.client.Client(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "service-account-key", Namespace: k.namespace}})
+	return secret, kubernetesutils.DeleteObject(ctx, k.client.Client(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "service-account-key", Namespace: k.namespace}})
 }
 
 func (k *kubeAPIServer) reconcileSecretStaticToken(ctx context.Context) (*corev1.Secret, error) {
-	staticTokenSecretConfig := &secretutils.StaticTokenSecretConfig{
+	staticTokenSecretConfig := &secretsutils.StaticTokenSecretConfig{
 		Name: SecretStaticTokenName,
-		Tokens: map[string]secretutils.TokenConfig{
+		Tokens: map[string]secretsutils.TokenConfig{
 			userNameHealthCheck: {
 				Username: userNameHealthCheck,
 				UserID:   userNameHealthCheck,
@@ -121,19 +121,14 @@ func (k *kubeAPIServer) reconcileSecretStaticToken(ctx context.Context) (*corev1
 	}
 
 	if pointer.BoolDeref(k.values.StaticTokenKubeconfigEnabled, true) {
-		staticTokenSecretConfig.Tokens[userNameClusterAdmin] = secretutils.TokenConfig{
+		staticTokenSecretConfig.Tokens[userNameClusterAdmin] = secretsutils.TokenConfig{
 			Username: userNameClusterAdmin,
 			UserID:   userNameClusterAdmin,
 			Groups:   []string{user.SystemPrivilegedGroup},
 		}
 	}
 
-	secret, err := k.secretsManager.Generate(ctx, staticTokenSecretConfig, secretsmanager.Persist(), secretsmanager.Rotate(secretsmanager.InPlace))
-	if err != nil {
-		return nil, err
-	}
-
-	return secret, nil
+	return k.secretsManager.Generate(ctx, staticTokenSecretConfig, secretsmanager.Persist(), secretsmanager.Rotate(secretsmanager.InPlace))
 }
 
 func (k *kubeAPIServer) reconcileSecretUserKubeconfig(ctx context.Context, secretStaticToken *corev1.Secret) error {
@@ -143,9 +138,9 @@ func (k *kubeAPIServer) reconcileSecretUserKubeconfig(ctx context.Context, secre
 	}
 
 	var err error
-	var token *secretutils.Token
+	var token *secretsutils.Token
 	if secretStaticToken != nil {
-		staticToken, err := secretutils.LoadStaticTokenFromCSV(SecretStaticTokenName, secretStaticToken.Data[secretutils.DataKeyStaticTokenCSV])
+		staticToken, err := secretsutils.LoadStaticTokenFromCSV(SecretStaticTokenName, secretStaticToken.Data[secretsutils.DataKeyStaticTokenCSV])
 		if err != nil {
 			return err
 		}
@@ -156,12 +151,12 @@ func (k *kubeAPIServer) reconcileSecretUserKubeconfig(ctx context.Context, secre
 		}
 	}
 
-	_, err = k.secretsManager.Generate(ctx, &secretutils.KubeconfigSecretConfig{
+	_, err = k.secretsManager.Generate(ctx, &secretsutils.KubeconfigSecretConfig{
 		Name:        SecretNameUserKubeconfig,
 		ContextName: k.namespace,
 		Cluster: clientcmdv1.Cluster{
 			Server:                   k.values.ExternalServer,
-			CertificateAuthorityData: caBundleSecret.Data[secretutils.DataKeyCertificateBundle],
+			CertificateAuthorityData: caBundleSecret.Data[secretsutils.DataKeyCertificateBundle],
 		},
 		AuthInfo: clientcmdv1.AuthInfo{
 			Token: token.Token,
@@ -180,7 +175,7 @@ func (k *kubeAPIServer) reconcileSecretETCDEncryptionConfiguration(ctx context.C
 		options = append(options, secretsmanager.IgnoreOldSecrets())
 	}
 
-	keySecret, err := k.secretsManager.Generate(ctx, &secretutils.ETCDEncryptionKeySecretConfig{
+	keySecret, err := k.secretsManager.Generate(ctx, &secretsutils.ETCDEncryptionKeySecretConfig{
 		Name:         v1beta1constants.SecretNameETCDEncryptionKey,
 		SecretLength: 32,
 	}, options...)
@@ -214,9 +209,9 @@ func (k *kubeAPIServer) reconcileSecretETCDEncryptionConfiguration(ctx context.C
 	}
 
 	secret.Labels = map[string]string{v1beta1constants.LabelRole: v1beta1constants.SecretNamePrefixETCDEncryptionConfiguration}
-	desiredLabels := utils.MergeStringMaps(secret.Labels) // copy
 	secret.Data = map[string][]byte{secretETCDEncryptionConfigurationDataKey: data}
-	utilruntime.Must(kutil.MakeUnique(secret))
+	utilruntime.Must(kubernetesutils.MakeUnique(secret))
+	desiredLabels := utils.MergeStringMaps(secret.Labels) // copy
 
 	if err := k.client.Client().Create(ctx, secret); err == nil || !apierrors.IsAlreadyExists(err) {
 		return err
@@ -251,147 +246,130 @@ func (k *kubeAPIServer) etcdEncryptionAESKeys(keySecretCurrent, keySecretOld *co
 
 func aesKeyFromSecretData(data map[string][]byte) apiserverconfigv1.Key {
 	return apiserverconfigv1.Key{
-		Name:   string(data[secretutils.DataKeyEncryptionKeyName]),
-		Secret: string(data[secretutils.DataKeyEncryptionSecret]),
+		Name:   string(data[secretsutils.DataKeyEncryptionKeyName]),
+		Secret: string(data[secretsutils.DataKeyEncryptionSecret]),
 	}
 }
 
 func (k *kubeAPIServer) reconcileSecretServer(ctx context.Context) (*corev1.Secret, error) {
 	var (
-		ipAddresses = append([]net.IP{
-			net.ParseIP("127.0.0.1"),
-		}, k.values.ServerCertificate.ExtraIPAddresses...)
-
-		dnsNames = append([]string{
+		ipAddresses = append([]net.IP{}, k.values.ServerCertificate.ExtraIPAddresses...)
+		dnsNames    = []string{
 			v1beta1constants.DeploymentNameKubeAPIServer,
 			fmt.Sprintf("%s.%s", v1beta1constants.DeploymentNameKubeAPIServer, k.namespace),
 			fmt.Sprintf("%s.%s.svc", v1beta1constants.DeploymentNameKubeAPIServer, k.namespace),
-		}, kutil.DNSNamesForService("kubernetes", metav1.NamespaceDefault)...)
+		}
 	)
 
-	secret, err := k.secretsManager.Generate(ctx, &secretutils.CertificateSecretConfig{
+	if k.values.SNI.PodMutatorEnabled || (k.values.VPN.Enabled && k.values.VPN.HighAvailabilityEnabled) {
+		ipAddresses = append(ipAddresses, net.ParseIP("127.0.0.1"))
+	}
+
+	if !k.values.IsNodeless {
+		dnsNames = append(dnsNames, kubernetesutils.DNSNamesForService("kubernetes", metav1.NamespaceDefault)...)
+	}
+
+	return k.secretsManager.Generate(ctx, &secretsutils.CertificateSecretConfig{
 		Name:                        secretNameServer,
 		CommonName:                  v1beta1constants.DeploymentNameKubeAPIServer,
 		IPAddresses:                 append(ipAddresses, k.values.ServerCertificate.ExtraIPAddresses...),
 		DNSNames:                    append(dnsNames, k.values.ServerCertificate.ExtraDNSNames...),
-		CertType:                    secretutils.ServerCert,
+		CertType:                    secretsutils.ServerCert,
 		SkipPublishingCACertificate: true,
 	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCACluster), secretsmanager.Rotate(secretsmanager.InPlace))
-	if err != nil {
-		return nil, err
-	}
-
-	return secret, nil
 }
 
 func (k *kubeAPIServer) reconcileSecretKubeletClient(ctx context.Context) (*corev1.Secret, error) {
-	secret, err := k.secretsManager.Generate(ctx, &secretutils.CertificateSecretConfig{
-		Name:                        secretNameKubeAPIServerToKubelet,
-		CommonName:                  userName,
-		CertType:                    secretutils.ClientCert,
-		SkipPublishingCACertificate: true,
-	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCAKubelet, secretsmanager.UseOldCA), secretsmanager.Rotate(secretsmanager.InPlace))
-	if err != nil {
-		return nil, err
+	if k.values.IsNodeless {
+		return nil, nil
 	}
 
-	return secret, nil
+	return k.secretsManager.Generate(ctx, &secretsutils.CertificateSecretConfig{
+		Name:                        secretNameKubeAPIServerToKubelet,
+		CommonName:                  userName,
+		CertType:                    secretsutils.ClientCert,
+		SkipPublishingCACertificate: true,
+	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCAKubelet, secretsmanager.UseOldCA), secretsmanager.Rotate(secretsmanager.InPlace))
 }
 
 func (k *kubeAPIServer) reconcileSecretKubeAggregator(ctx context.Context) (*corev1.Secret, error) {
-	secret, err := k.secretsManager.Generate(ctx, &secretutils.CertificateSecretConfig{
+	return k.secretsManager.Generate(ctx, &secretsutils.CertificateSecretConfig{
 		Name:                        secretNameKubeAggregator,
 		CommonName:                  "system:kube-aggregator",
-		CertType:                    secretutils.ClientCert,
+		CertType:                    secretsutils.ClientCert,
 		SkipPublishingCACertificate: true,
 	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCAFrontProxy), secretsmanager.Rotate(secretsmanager.InPlace))
-	if err != nil {
-		return nil, err
-	}
-
-	return secret, nil
 }
 
 func (k *kubeAPIServer) reconcileSecretHTTPProxy(ctx context.Context) (*corev1.Secret, error) {
-	if !k.values.VPN.ReversedVPNEnabled || k.values.VPN.HighAvailabilityEnabled {
+	if !k.values.VPN.Enabled || k.values.VPN.HighAvailabilityEnabled {
 		return nil, nil
 	}
 
-	secret, err := k.secretsManager.Generate(ctx, &secretutils.CertificateSecretConfig{
+	return k.secretsManager.Generate(ctx, &secretsutils.CertificateSecretConfig{
 		Name:                        secretNameHTTPProxy,
 		CommonName:                  "kube-apiserver-http-proxy",
-		CertType:                    secretutils.ClientCert,
+		CertType:                    secretsutils.ClientCert,
 		SkipPublishingCACertificate: true,
 	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCAVPN), secretsmanager.Rotate(secretsmanager.InPlace))
-	if err != nil {
-		return nil, err
-	}
-
-	return secret, nil
-}
-
-func (k *kubeAPIServer) reconcileSecretLegacyVPNSeed(ctx context.Context) (*corev1.Secret, error) {
-	if k.values.VPN.ReversedVPNEnabled {
-		return nil, nil
-	}
-
-	secret, err := k.secretsManager.Generate(ctx, &secretutils.CertificateSecretConfig{
-		Name:                        secretNameLegacyVPNSeed,
-		CommonName:                  UserNameVPNSeed,
-		CertType:                    secretutils.ClientCert,
-		SkipPublishingCACertificate: true,
-	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCAClient), secretsmanager.Rotate(secretsmanager.InPlace))
-	if err != nil {
-		return nil, err
-	}
-
-	return secret, nil
 }
 
 func (k *kubeAPIServer) reconcileSecretHAVPNSeedClient(ctx context.Context) (*corev1.Secret, error) {
-	if !k.values.VPN.HighAvailabilityEnabled {
+	if !k.values.VPN.Enabled || !k.values.VPN.HighAvailabilityEnabled {
 		return nil, nil
 	}
 
-	secret, err := k.secretsManager.Generate(ctx, &secretutils.CertificateSecretConfig{
+	return k.secretsManager.Generate(ctx, &secretsutils.CertificateSecretConfig{
 		Name:                        secretNameHAVPNSeedClient,
 		CommonName:                  UserNameVPNSeedClient,
-		CertType:                    secretutils.ClientCert,
+		CertType:                    secretsutils.ClientCert,
 		SkipPublishingCACertificate: true,
 	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCAVPN), secretsmanager.Rotate(secretsmanager.InPlace))
-	if err != nil {
-		return nil, err
-	}
-
-	return secret, nil
-}
-
-func (k *kubeAPIServer) reconcileSecretLegacyVPNSeedTLSAuth(ctx context.Context) (*corev1.Secret, error) {
-	if k.values.VPN.ReversedVPNEnabled {
-		return nil, nil
-	}
-
-	secret, err := k.secretsManager.Generate(ctx, &secretutils.VPNTLSAuthConfig{
-		Name: SecretNameVPNSeedTLSAuth,
-	}, secretsmanager.Rotate(secretsmanager.InPlace))
-	if err != nil {
-		return nil, err
-	}
-
-	return secret, nil
 }
 
 func (k *kubeAPIServer) reconcileSecretHAVPNSeedClientTLSAuth(ctx context.Context) (*corev1.Secret, error) {
-	if !k.values.VPN.HighAvailabilityEnabled {
+	if !k.values.VPN.Enabled || !k.values.VPN.HighAvailabilityEnabled {
 		return nil, nil
 	}
 
-	secretTLSAuth, err := k.secretsManager.Generate(ctx, &secretutils.VPNTLSAuthConfig{
+	return k.secretsManager.Generate(ctx, &secretsutils.VPNTLSAuthConfig{
 		Name: vpnseedserver.SecretNameTLSAuth,
 	}, secretsmanager.Rotate(secretsmanager.InPlace))
-	if err != nil {
-		return nil, err
+}
+
+type tlsSNISecret struct {
+	secretName     string
+	domainPatterns []string
+}
+
+func (k *kubeAPIServer) reconcileTLSSNISecrets(ctx context.Context) ([]tlsSNISecret, error) {
+	var out []tlsSNISecret
+
+	for i, sni := range k.values.SNI.TLS {
+		switch {
+		case sni.SecretName != nil:
+			out = append(out, tlsSNISecret{secretName: *sni.SecretName, domainPatterns: sni.DomainPatterns})
+
+		case len(sni.Certificate) > 0 && len(sni.PrivateKey) > 0:
+			secret := k.emptySecret(fmt.Sprintf("kube-apiserver-tls-sni-%d", i))
+
+			secret.Data = map[string][]byte{
+				corev1.TLSCertKey:       sni.Certificate,
+				corev1.TLSPrivateKeyKey: sni.PrivateKey,
+			}
+			utilruntime.Must(kubernetesutils.MakeUnique(secret))
+
+			if err := client.IgnoreAlreadyExists(k.client.Client().Create(ctx, secret)); err != nil {
+				return nil, err
+			}
+
+			out = append(out, tlsSNISecret{secretName: secret.Name, domainPatterns: sni.DomainPatterns})
+
+		default:
+			return nil, fmt.Errorf("either the name of an existing secret or both certificate and private key must be provided for TLS SNI config")
+		}
+
 	}
 
-	return secretTLSAuth, nil
+	return out, nil
 }

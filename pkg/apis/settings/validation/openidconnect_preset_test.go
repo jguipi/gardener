@@ -15,14 +15,14 @@
 package validation_test
 
 import (
-	"github.com/gardener/gardener/pkg/apis/settings"
-	settings_validation "github.com/gardener/gardener/pkg/apis/settings/validation"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/validation/field"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+
+	"github.com/gardener/gardener/pkg/apis/settings"
+	settingsvalidation "github.com/gardener/gardener/pkg/apis/settings/validation"
 )
 
 type openIDConnectPresetProvider struct {
@@ -30,7 +30,7 @@ type openIDConnectPresetProvider struct {
 }
 
 func (o *openIDConnectPresetProvider) providerFunc() field.ErrorList {
-	return settings_validation.ValidateOpenIDConnectPreset(o.new)
+	return settingsvalidation.ValidateOpenIDConnectPreset(o.new)
 }
 func (o *openIDConnectPresetProvider) preset() settings.Preset { return o.new }
 
@@ -40,7 +40,7 @@ type openIDConnectPresetUpdateProvider struct {
 }
 
 func (o *openIDConnectPresetUpdateProvider) providerFunc() field.ErrorList {
-	return settings_validation.ValidateOpenIDConnectPresetUpdate(o.new, o.old)
+	return settingsvalidation.ValidateOpenIDConnectPresetUpdate(o.new, o.old)
 }
 func (o *openIDConnectPresetUpdateProvider) preset() settings.Preset { return o.new }
 

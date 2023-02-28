@@ -20,10 +20,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509/pkix"
 
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
-
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -37,6 +33,10 @@ import (
 	certutil "k8s.io/client-go/util/cert"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
 )
 
 var _ = Describe("Reconciler", func() {
@@ -62,7 +62,7 @@ var _ = Describe("Reconciler", func() {
 		fakeClient := fakeclientset.NewSimpleClientset()
 		fakeCertificatesClient = fakeClient.CertificatesV1().CertificateSigningRequests()
 
-		privateKey, _ = secretutils.FakeGenerateKey(rand.Reader, 4096)
+		privateKey, _ = secretsutils.FakeGenerateKey(rand.Reader, 4096)
 		csr = &certificatesv1.CertificateSigningRequest{
 			TypeMeta: metav1.TypeMeta{Kind: "CertificateSigningRequest"},
 			ObjectMeta: metav1.ObjectMeta{

@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Masterminds/semver"
 	"github.com/hashicorp/go-multierror"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -33,7 +34,7 @@ import (
 
 	"github.com/gardener/gardener/pkg/resourcemanager/apis/config"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
-	errorutils "github.com/gardener/gardener/pkg/utils/errors"
+	errorsutils "github.com/gardener/gardener/pkg/utils/errors"
 	versionutils "github.com/gardener/gardener/pkg/utils/version"
 )
 
@@ -41,7 +42,7 @@ import (
 type Reconciler struct {
 	TargetReader            client.Reader
 	TargetWriter            client.Writer
-	TargetKubernetesVersion string
+	TargetKubernetesVersion *semver.Version
 	Config                  config.GarbageCollectorControllerConfig
 	Clock                   clock.Clock
 	MinimumObjectLifetime   *time.Duration
@@ -96,18 +97,11 @@ func (r *Reconciler) Reconcile(reconcileCtx context.Context, _ reconcile.Request
 		}
 	)
 
-	k8sGreater121, err := versionutils.CheckVersionMeetsConstraint(r.TargetKubernetesVersion, ">= 1.21")
-	if err != nil {
-		return reconcile.Result{}, err
-	}
-	k8sLess125, err := versionutils.CheckVersionMeetsConstraint(r.TargetKubernetesVersion, "< 1.25")
-	if err != nil {
-		return reconcile.Result{}, err
-	}
-	if k8sGreater121 {
+	if versionutils.ConstraintK8sGreaterEqual121.Check(r.TargetKubernetesVersion) {
 		groupVersionKinds = append(groupVersionKinds, batchv1.SchemeGroupVersion.WithKind("CronJobList"))
 	}
-	if k8sLess125 {
+
+	if versionutils.ConstraintK8sLess125.Check(r.TargetKubernetesVersion) {
 		groupVersionKinds = append(groupVersionKinds, batchv1beta1.SchemeGroupVersion.WithKind("CronJobList"))
 	}
 
@@ -134,7 +128,7 @@ func (r *Reconciler) Reconcile(reconcileCtx context.Context, _ reconcile.Request
 	var (
 		results   = make(chan error, 1)
 		wg        wait.Group
-		errorList = &multierror.Error{ErrorFormat: errorutils.NewErrorFormatFuncWithPrefix("Could not delete all unused resources")}
+		errorList = &multierror.Error{ErrorFormat: errorsutils.NewErrorFormatFuncWithPrefix("Could not delete all unused resources")}
 	)
 
 	for id := range objectsToGarbageCollect {

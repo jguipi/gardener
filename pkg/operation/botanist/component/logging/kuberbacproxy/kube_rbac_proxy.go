@@ -18,15 +18,15 @@ import (
 	"context"
 	"errors"
 
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/pkg/utils/managedresources"
-
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/managedresources"
 )
 
 const (
@@ -162,18 +162,18 @@ func (k *kubeRBACProxy) Destroy(ctx context.Context) error {
 		return err
 	}
 
-	return kutil.DeleteObjects(ctx, k.client,
+	return kubernetesutils.DeleteObjects(ctx, k.client,
 		k.newKubeRBACProxyShootAccessSecret().Secret,
 		k.newPromtailShootAccessSecret().Secret,
 	)
 }
 
-func (k *kubeRBACProxy) newKubeRBACProxyShootAccessSecret() *gutil.ShootAccessSecret {
-	return gutil.NewShootAccessSecret(kubeRBACProxyName, k.namespace)
+func (k *kubeRBACProxy) newKubeRBACProxyShootAccessSecret() *gardenerutils.ShootAccessSecret {
+	return gardenerutils.NewShootAccessSecret(kubeRBACProxyName, k.namespace)
 }
 
-func (k *kubeRBACProxy) newPromtailShootAccessSecret() *gutil.ShootAccessSecret {
-	return gutil.NewShootAccessSecret("promtail", k.namespace).
+func (k *kubeRBACProxy) newPromtailShootAccessSecret() *gardenerutils.ShootAccessSecret {
+	return gardenerutils.NewShootAccessSecret("promtail", k.namespace).
 		WithServiceAccountName(promtailName).
 		WithTargetSecret(PromtailTokenSecretName, metav1.NamespaceSystem)
 }

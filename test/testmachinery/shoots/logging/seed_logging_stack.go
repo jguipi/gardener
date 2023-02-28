@@ -19,14 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/test/framework"
-	"github.com/gardener/gardener/test/framework/resources/templates"
-
 	"github.com/onsi/ginkgo/v2"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -40,6 +32,14 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/test/framework"
+	"github.com/gardener/gardener/test/framework/resources/templates"
 )
 
 const (
@@ -59,7 +59,7 @@ const (
 	lokiConfigDiskName            = "config"
 	garden                        = "garden"
 	fluentBitClusterRoleName      = "fluent-bit-read"
-	simulatesShootNamespacePrefix = "shoot--logging--test-"
+	simulatedShootNamespacePrefix = "shoot--logging--test-"
 )
 
 var _ = ginkgo.Describe("Seed logging testing", func() {
@@ -84,8 +84,7 @@ var _ = ginkgo.Describe("Seed logging testing", func() {
 		shootLokiPriorityClass = &schedulingv1.PriorityClass{}
 		shootLokiConfMap       = &corev1.ConfigMap{}
 
-		grafanaOperatorsIngress client.Object = &networkingv1.Ingress{}
-		grafanaUsersIngress     client.Object = &networkingv1.Ingress{}
+		grafanaIngress client.Object = &networkingv1.Ingress{}
 		// This shoot is used as seed for this test only
 		shootClient     kubernetes.Interface
 		shootLokiLabels = map[string]string{
@@ -125,10 +124,8 @@ var _ = ginkgo.Describe("Seed logging testing", func() {
 		framework.ExpectNoError(f.SeedClient.Client().Get(ctx, types.NamespacedName{Namespace: f.ShootSeedNamespace(), Name: getConfigMapName(shootLokiSts.Spec.Template.Spec.Volumes, lokiConfigDiskName)}, shootLokiConfMap))
 		shootLokiPriorityClassName := shootLokiSts.Spec.Template.Spec.PriorityClassName
 		framework.ExpectNoError(f.SeedClient.Client().Get(ctx, types.NamespacedName{Namespace: f.ShootSeedNamespace(), Name: shootLokiPriorityClassName}, shootLokiPriorityClass))
-		// Get the grafana-operators Ingress
-		framework.ExpectNoError(f.SeedClient.Client().Get(ctx, types.NamespacedName{Namespace: f.ShootSeedNamespace(), Name: v1beta1constants.DeploymentNameGrafanaOperators}, grafanaOperatorsIngress))
-		// Get the grafana-users Ingress
-		framework.ExpectNoError(f.SeedClient.Client().Get(ctx, types.NamespacedName{Namespace: f.ShootSeedNamespace(), Name: v1beta1constants.DeploymentNameGrafanaUsers}, grafanaUsersIngress))
+		// Get the grafana Ingress
+		framework.ExpectNoError(f.SeedClient.Client().Get(ctx, types.NamespacedName{Namespace: f.ShootSeedNamespace(), Name: v1beta1constants.DeploymentNameGrafana}, grafanaIngress))
 	}, initializationTimeout)
 
 	f.Beta().Serial().CIt("should get container logs from loki for all namespaces", func(ctx context.Context) {
@@ -136,24 +133,16 @@ var _ = ginkgo.Describe("Seed logging testing", func() {
 			emptyDirSize             = "500Mi"
 			lokiPersistentVolumeName = "loki"
 			shootLokiName            = "loki-shoots"
-			userLoggerName           = "kube-apiserver"
-			operatorLoggerName       = "logger"
-			userLoggerRegex          = userLoggerName + "-.*"
-			operatorLoggerRegex      = operatorLoggerName + "-.*"
+			loggerRegex              = loggerName + "-.*"
 		)
 		var (
-			operatorLoggerLabels = labels.SelectorFromSet(map[string]string{
-				"app": operatorLoggerName,
-			})
-
-			shootLoggerLabels = labels.SelectorFromSet(map[string]string{
-				"app": userLoggerName,
+			loggerLabels = labels.SelectorFromSet(map[string]string{
+				"app": loggerName,
 			})
 		)
 
 		ginkgo.By("Get Loki tenant IDs")
-		userID := getXScopeOrgID(grafanaUsersIngress.GetAnnotations())
-		operatorID := getXScopeOrgID(grafanaOperatorsIngress.GetAnnotations())
+		id := getXScopeOrgID(grafanaIngress.GetAnnotations())
 
 		ginkgo.By("Deploy the garden Namespace")
 		framework.ExpectNoError(create(ctx, f.ShootClient.Client(), newGardenNamespace(v1beta1constants.GardenNamespace)))
@@ -184,7 +173,7 @@ var _ = ginkgo.Describe("Seed logging testing", func() {
 		framework.ExpectNoError(create(ctx, f.ShootClient.Client(), fluentBitPriorityClass))
 		framework.ExpectNoError(create(ctx, f.ShootClient.Client(), fluentBitClusterRole))
 		framework.ExpectNoError(create(ctx, f.ShootClient.Client(), fluentBitClusterRoleBinding))
-		if !gardencorev1beta1helper.IsPSPDisabled(f.Shoot) {
+		if !v1beta1helper.IsPSPDisabled(f.Shoot) {
 			framework.ExpectNoError(f.RenderAndDeployTemplate(ctx, f.ShootClient, "fluent-bit-psp-clusterrolebinding.yaml", nil))
 		}
 
@@ -214,21 +203,15 @@ var _ = ginkgo.Describe("Seed logging testing", func() {
 
 			ginkgo.By(fmt.Sprintf("Deploy the logger application in namespace %s", shootNamespace.Name))
 			loggerParams := map[string]interface{}{
-				"LoggerName":          operatorLoggerName,
+				"LoggerName":          loggerName,
 				"HelmDeployNamespace": shootNamespace.Name,
-				"AppLabel":            operatorLoggerName,
+				"AppLabel":            loggerName,
 				"DeltaLogsCount":      deltaLogsCount,
 				"DeltaLogsDuration":   deltaLogsDuration,
 				"LogsCount":           logsCount,
 				"LogsDuration":        logsDuration,
 			}
 
-			// Half of the shoots will produce user and operators logs.
-			// The other half will produce only operator logs
-			if i&1 == 1 {
-				loggerParams["LoggerName"] = userLoggerName
-				loggerParams["AppLabel"] = userLoggerName
-			}
 			// Try to distrubute the loggers even between nodes
 			if len(nodeList.Items) > 0 {
 				loggerParams["NodeName"] = nodeList.Items[i%len(nodeList.Items)].Name
@@ -238,59 +221,44 @@ var _ = ginkgo.Describe("Seed logging testing", func() {
 		}
 
 		for i := 0; i < numberOfSimulatedClusters; i++ {
-			shootNamespace := fmt.Sprintf("%s%v", simulatesShootNamespacePrefix, i)
-			var l labels.Selector
+			shootNamespace := fmt.Sprintf("%s%v", simulatedShootNamespacePrefix, i)
 
-			if i&1 == 1 {
-				l = shootLoggerLabels
-			} else {
-				l = operatorLoggerLabels
-			}
 			ginkgo.By(fmt.Sprintf("Wait until logger application is ready in namespace %s", shootNamespace))
-			framework.ExpectNoError(f.WaitUntilDeploymentsWithLabelsIsReady(ctx, l, shootNamespace, f.ShootClient))
+			framework.ExpectNoError(f.WaitUntilDeploymentsWithLabelsIsReady(ctx, loggerLabels, shootNamespace, f.ShootClient))
 		}
 
-		ginkgo.By("Verify loki received all operator's logs from operator's logger application for all shoot namespaces")
-		framework.ExpectNoError(WaitUntilLokiReceivesLogs(ctx, 30*time.Second, f, shootLokiLabels, operatorID, v1beta1constants.GardenNamespace, "pod_name", operatorLoggerRegex, (logsCount*numberOfSimulatedClusters)/2, numberOfSimulatedClusters/2, f.ShootClient))
-		ginkgo.By("Verify loki received all operator's logs from user's logger application for all shoot namespaces")
-		framework.ExpectNoError(WaitUntilLokiReceivesLogs(ctx, 30*time.Second, f, shootLokiLabels, operatorID, v1beta1constants.GardenNamespace, "pod_name", userLoggerRegex, (logsCount*numberOfSimulatedClusters)/2, numberOfSimulatedClusters/2, f.ShootClient))
-		ginkgo.By("Verify loki received user logger application logs for all shoot namespaces")
-		framework.ExpectNoError(WaitUntilLokiReceivesLogs(ctx, 30*time.Second, f, shootLokiLabels, userID, v1beta1constants.GardenNamespace, "pod_name", userLoggerRegex, (logsCount*numberOfSimulatedClusters)/2, numberOfSimulatedClusters/2, f.ShootClient))
+		ginkgo.By("Verify loki received all operator's logs for all shoot namespaces")
+		framework.ExpectNoError(WaitUntilLokiReceivesLogs(ctx, 30*time.Second, f, shootLokiLabels, id, v1beta1constants.GardenNamespace, "pod_name", loggerRegex, logsCount*numberOfSimulatedClusters, numberOfSimulatedClusters, f.ShootClient))
+
 		ginkgo.By("Verify loki didn't get the logs from the operator's application as user's logs for all shoot namespaces")
-		framework.ExpectNoError(WaitUntilLokiReceivesLogs(ctx, 30*time.Second, f, shootLokiLabels, userID, v1beta1constants.GardenNamespace, "pod_name", operatorLoggerRegex, 0, 0, f.ShootClient))
+		framework.ExpectNoError(WaitUntilLokiReceivesLogs(ctx, 30*time.Second, f, shootLokiLabels, "user", v1beta1constants.GardenNamespace, "pod_name", loggerRegex, 0, 0, f.ShootClient))
 
 		ginkgo.By("Verify loki received logger application logs for garden namespace")
-		framework.ExpectNoError(WaitUntilLokiReceivesLogs(ctx, 30*time.Second, f, gardenLokiLabels, "", v1beta1constants.GardenNamespace, "pod_name", operatorLoggerRegex, (logsCount*numberOfSimulatedClusters)/2, numberOfSimulatedClusters/2, f.ShootClient))
-		ginkgo.By("Verify loki received user application logs for garden namespace")
-		framework.ExpectNoError(WaitUntilLokiReceivesLogs(ctx, 30*time.Second, f, gardenLokiLabels, "", v1beta1constants.GardenNamespace, "pod_name", userLoggerRegex, (logsCount*numberOfSimulatedClusters)/2, numberOfSimulatedClusters/2, f.ShootClient))
+		framework.ExpectNoError(WaitUntilLokiReceivesLogs(ctx, 30*time.Second, f, gardenLokiLabels, "", v1beta1constants.GardenNamespace, "pod_name", loggerRegex, logsCount*numberOfSimulatedClusters, numberOfSimulatedClusters, f.ShootClient))
 
 	}, getLogsFromLokiTimeout, framework.WithCAfterTest(func(ctx context.Context) {
-		ginkgo.By("Cleaning up logger app resources")
+		ginkgo.By("Cleanup logger app resources")
 		for i := 0; i < numberOfSimulatedClusters; i++ {
 			shootNamespace := getShootNamesapce(i)
-			loggerName := operatorLoggerName
-			if i&1 == 1 {
-				loggerName = userLoggerName
 
-			}
 			loggerDeploymentToDelete := &appsv1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: shootNamespace.Name,
 					Name:      loggerName,
 				},
 			}
-			framework.ExpectNoError(kutil.DeleteObject(ctx, f.ShootClient.Client(), loggerDeploymentToDelete))
+			framework.ExpectNoError(kubernetesutils.DeleteObject(ctx, f.ShootClient.Client(), loggerDeploymentToDelete))
 
 			cluster := getCluster(i)
-			framework.ExpectNoError(kutil.DeleteObject(ctx, shootClient.Client(), cluster))
+			framework.ExpectNoError(kubernetesutils.DeleteObject(ctx, shootClient.Client(), cluster))
 
 			lokiShootService := getLokiShootService(i)
-			framework.ExpectNoError(kutil.DeleteObject(ctx, f.ShootClient.Client(), lokiShootService))
+			framework.ExpectNoError(kubernetesutils.DeleteObject(ctx, f.ShootClient.Client(), lokiShootService))
 
-			framework.ExpectNoError(kutil.DeleteObject(ctx, f.ShootClient.Client(), shootNamespace))
+			framework.ExpectNoError(kubernetesutils.DeleteObject(ctx, f.ShootClient.Client(), shootNamespace))
 		}
 
-		ginkgo.By("Cleaning up garden namespace")
+		ginkgo.By("Cleanup garden namespace")
 		objectsToDelete := []client.Object{
 			fluentBit,
 			fluentBitConfMap,
@@ -311,7 +279,7 @@ var _ = ginkgo.Describe("Seed logging testing", func() {
 			newGardenNamespace(v1beta1constants.GardenNamespace),
 		}
 		for _, object := range objectsToDelete {
-			framework.ExpectNoError(kutil.DeleteObject(ctx, f.ShootClient.Client(), object))
+			framework.ExpectNoError(kubernetesutils.DeleteObject(ctx, f.ShootClient.Client(), object))
 		}
 	}, loggerDeploymentCleanupTimeout))
 })
@@ -424,6 +392,6 @@ func prepareClusterCRD(crd *apiextensionsv1.CustomResourceDefinition) *apiextens
 }
 
 func prepareFluentBitServiceAccount(serviceAccount *corev1.ServiceAccount) *corev1.ServiceAccount {
-	serviceAccount.AutomountServiceAccountToken = pointer.BoolPtr(true)
+	serviceAccount.AutomountServiceAccountToken = pointer.Bool(true)
 	return serviceAccount
 }

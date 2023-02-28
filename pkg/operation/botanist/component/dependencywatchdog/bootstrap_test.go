@@ -19,6 +19,15 @@ import (
 	"fmt"
 
 	"github.com/Masterminds/semver"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/utils/pointer"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
@@ -30,16 +39,6 @@ import (
 	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
 	"github.com/gardener/gardener/pkg/utils/test"
 	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/utils/pointer"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 var _ = Describe("DependencyWatchdog", func() {
@@ -283,7 +282,7 @@ spec:
 					if role == RoleEndpoint {
 						out += `
         networking.gardener.cloud/to-dns: allowed
-        networking.gardener.cloud/to-seed-apiserver: allowed`
+        networking.gardener.cloud/to-runtime-apiserver: allowed`
 					}
 
 					if role == RoleProbe {
@@ -292,7 +291,7 @@ spec:
         networking.gardener.cloud/to-dns: allowed
         networking.gardener.cloud/to-private-networks: allowed
         networking.gardener.cloud/to-public-networks: allowed
-        networking.gardener.cloud/to-seed-apiserver: allowed`
+        networking.gardener.cloud/to-runtime-apiserver: allowed`
 					}
 
 					out += `
@@ -363,7 +362,6 @@ spec:
     containerPolicies:
     - containerName: '*'
       minAllowed:
-        cpu: 25m
 `
 
 					if role == RoleEndpoint {
@@ -445,11 +443,11 @@ status:
 						ResourceVersion: "1",
 					},
 					Spec: resourcesv1alpha1.ManagedResourceSpec{
-						Class: pointer.StringPtr("seed"),
+						Class: pointer.String("seed"),
 						SecretRefs: []corev1.LocalObjectReference{{
 							Name: managedResourceSecret.Name,
 						}},
-						KeepObjects: pointer.BoolPtr(false),
+						KeepObjects: pointer.Bool(false),
 					},
 				}))
 

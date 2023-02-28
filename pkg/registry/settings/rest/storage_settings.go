@@ -15,15 +15,16 @@
 package rest
 
 import (
-	"github.com/gardener/gardener/pkg/api"
-	"github.com/gardener/gardener/pkg/apis/settings"
-	settingsv1alpha1 "github.com/gardener/gardener/pkg/apis/settings/v1alpha1"
-	clusteroidcpresetstore "github.com/gardener/gardener/pkg/registry/settings/clusteropenidconnectpreset/storage"
-	oidcpresetstore "github.com/gardener/gardener/pkg/registry/settings/openidconnectpreset/storage"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/registry/rest"
 	genericapiserver "k8s.io/apiserver/pkg/server"
+
+	"github.com/gardener/gardener/pkg/api"
+	"github.com/gardener/gardener/pkg/apis/settings"
+	settingsv1alpha1 "github.com/gardener/gardener/pkg/apis/settings/v1alpha1"
+	clusteropenidconnectpresetstore "github.com/gardener/gardener/pkg/registry/settings/clusteropenidconnectpreset/storage"
+	openidconnectpresetstore "github.com/gardener/gardener/pkg/registry/settings/openidconnectpreset/storage"
 )
 
 // StorageProvider is an empty struct.
@@ -44,8 +45,8 @@ func (p StorageProvider) GroupName() string {
 func (p StorageProvider) v1alpha1Storage(restOptionsGetter generic.RESTOptionsGetter) map[string]rest.Storage {
 	storage := map[string]rest.Storage{}
 
-	oidcPresetStorage := oidcpresetstore.NewStorage(restOptionsGetter)
-	clusterOIDCStorage := clusteroidcpresetstore.NewStorage(restOptionsGetter)
+	oidcPresetStorage := openidconnectpresetstore.NewStorage(restOptionsGetter)
+	clusterOIDCStorage := clusteropenidconnectpresetstore.NewStorage(restOptionsGetter)
 
 	storage["openidconnectpresets"] = oidcPresetStorage.OpenIDConnectPreset
 	storage["clusteropenidconnectpresets"] = clusterOIDCStorage.ClusterOpenIDConnectPreset

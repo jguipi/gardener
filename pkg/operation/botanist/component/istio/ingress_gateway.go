@@ -19,14 +19,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	"github.com/gardener/gardener/pkg/chartrenderer"
-
-	corev1 "k8s.io/api/core/v1"
-)
-
-const (
-	istioIngressGatewayServicePortNameStatus = "status-port"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
 )
 
 var (
@@ -35,47 +32,61 @@ var (
 	chartPathIngress = filepath.Join("charts", "istio", "istio-ingress")
 )
 
-// IngressGateway is a set of configuration values for the istio-ingress chart.
-type IngressGateway struct {
-	Values    IngressValues
-	Namespace string
-}
-
-// IngressValues holds values for the istio-ingress chart.
+// IngressGatewayValues holds values for the istio-ingress chart.
 // The only opened port is 15021.
-type IngressValues struct {
-	TrustDomain     string            `json:"trustDomain,omitempty"`
-	Image           string            `json:"image,omitempty"`
-	Annotations     map[string]string `json:"annotations,omitempty"`
-	IstiodNamespace string            `json:"istiodNamespace,omitempty"`
-	LoadBalancerIP  *string           `json:"loadBalancerIP,omitempty"`
-	Labels          map[string]string `json:"labels,omitempty"`
+type IngressGatewayValues struct {
+	Annotations           map[string]string
+	Labels                map[string]string
+	ExternalTrafficPolicy *corev1.ServiceExternalTrafficPolicyType
+	Image                 string
+	IstiodNamespace       string
+	LoadBalancerIP        *string
+	MaxReplicas           *int
+	MinReplicas           *int
+	Namespace             string
+	TrustDomain           string
+	ProxyProtocolEnabled  bool
+	VPNEnabled            bool
+	Zones                 []string
+
 	// Ports is a list of all Ports the istio-ingress gateways is listening on.
 	// Port 15021 and 15000 cannot be used.
-	Ports []corev1.ServicePort `json:"ports,omitempty"`
+	Ports []corev1.ServicePort
 }
 
 func (i *istiod) generateIstioIngressGatewayChart() (*chartrenderer.RenderedChart, error) {
 	renderedChart := &chartrenderer.RenderedChart{}
 
-	for _, istioIngressGateway := range i.istioIngressGatewayValues {
+	for _, istioIngressGateway := range i.values.IngressGateway {
 		values := map[string]interface{}{
-			"trustDomain":       istioIngressGateway.Values.TrustDomain,
-			"labels":            istioIngressGateway.Values.Labels,
-			"annotations":       istioIngressGateway.Values.Annotations,
-			"deployNamespace":   false,
-			"priorityClassName": "istio-ingressgateway",
-			"ports":             istioIngressGateway.Values.Ports,
-			"image":             istioIngressGateway.Values.Image,
-			"istiodNamespace":   istioIngressGateway.Values.IstiodNamespace,
-			"loadBalancerIP":    istioIngressGateway.Values.LoadBalancerIP,
-			"serviceName":       v1beta1constants.DefaultSNIIngressServiceName,
-			"portsNames": map[string]interface{}{
-				"status": istioIngressGatewayServicePortNameStatus,
+			"trustDomain":           istioIngressGateway.TrustDomain,
+			"labels":                istioIngressGateway.Labels,
+			"annotations":           istioIngressGateway.Annotations,
+			"externalTrafficPolicy": istioIngressGateway.ExternalTrafficPolicy,
+			"deployNamespace":       false,
+			"priorityClassName":     "istio-ingressgateway",
+			"ports":                 istioIngressGateway.Ports,
+			"image":                 istioIngressGateway.Image,
+			"istiodNamespace":       istioIngressGateway.IstiodNamespace,
+			"loadBalancerIP":        istioIngressGateway.LoadBalancerIP,
+			"serviceName":           v1beta1constants.DefaultSNIIngressServiceName,
+			"proxyProtocolEnabled":  istioIngressGateway.ProxyProtocolEnabled,
+			"vpn": map[string]interface{}{
+				"enabled": istioIngressGateway.VPNEnabled,
+				// Always pass replicas here since every seed can potentially host shoot clusters with
+				// highly available control-planes.
+				"highAvailabilityReplicas": vpnseedserver.HighAvailabilityReplicaCount,
 			},
 		}
 
-		renderedIngressChart, err := i.chartRenderer.RenderEmbeddedFS(chartIngress, chartPathIngress, ManagedResourceControlName, istioIngressGateway.Namespace, values)
+		if istioIngressGateway.MinReplicas != nil {
+			values["minReplicas"] = *istioIngressGateway.MinReplicas
+		}
+		if istioIngressGateway.MaxReplicas != nil {
+			values["maxReplicas"] = *istioIngressGateway.MaxReplicas
+		}
+
+		renderedIngressChart, err := i.chartRenderer.RenderEmbeddedFS(chartIngress, chartPathIngress, releaseName, istioIngressGateway.Namespace, values)
 		if err != nil {
 			return nil, err
 		}

@@ -28,6 +28,7 @@ import (
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	autoscalingv2beta1 "k8s.io/api/autoscaling/v2beta1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	policyv1beta1 "k8s.io/api/policy/v1beta1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -45,9 +46,10 @@ import (
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/controllerutils"
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	kubeapiserverconstants "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/constants"
 	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	"github.com/gardener/gardener/pkg/utils/managedresources"
 	"github.com/gardener/gardener/pkg/utils/secrets"
 	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
@@ -148,7 +150,7 @@ func (k *kubeControllerManager) Deploy(ctx context.Context) error {
 	serverSecret, err := k.secretsManager.Generate(ctx, &secrets.CertificateSecretConfig{
 		Name:                        secretNameServer,
 		CommonName:                  v1beta1constants.DeploymentNameKubeControllerManager,
-		DNSNames:                    kutil.DNSNamesForService(serviceName, k.namespace),
+		DNSNames:                    kubernetesutils.DNSNamesForService(serviceName, k.namespace),
 		CertType:                    secrets.ServerCert,
 		SkipPublishingCACertificate: true,
 	}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCACluster), secretsmanager.Rotate(secretsmanager.InPlace))
@@ -198,7 +200,6 @@ func (k *kubeControllerManager) Deploy(ctx context.Context) error {
 			ContainerPolicies: []vpaautoscalingv1.ContainerResourcePolicy{{
 				ContainerName: containerName,
 				MinAllowed: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("100m"),
 					corev1.ResourceMemory: resource.MustParse("100Mi"),
 				},
 				MaxAllowed: corev1.ResourceList{
@@ -212,7 +213,6 @@ func (k *kubeControllerManager) Deploy(ctx context.Context) error {
 			ContainerPolicies: []vpaautoscalingv1.ContainerResourcePolicy{{
 				ContainerName: containerName,
 				MinAllowed: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("100m"),
 					corev1.ResourceMemory: resource.MustParse("100Mi"),
 				},
 				MaxAllowed: corev1.ResourceList{
@@ -231,6 +231,12 @@ func (k *kubeControllerManager) Deploy(ctx context.Context) error {
 
 	if _, err := controllerutils.GetAndCreateOrMergePatch(ctx, k.seedClient.Client(), service, func() error {
 		service.Labels = getLabels()
+
+		utilruntime.Must(gardenerutils.InjectNetworkPolicyAnnotationsForScrapeTargets(service, networkingv1.NetworkPolicyPort{
+			Port:     utils.IntStrPtrFromInt(int(port)),
+			Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+		}))
+
 		service.Spec.Selector = getLabels()
 		service.Spec.Type = corev1.ServiceTypeClusterIP
 		service.Spec.ClusterIP = corev1.ClusterIPNone
@@ -241,7 +247,7 @@ func (k *kubeControllerManager) Deploy(ctx context.Context) error {
 				Port:     port,
 			},
 		}
-		service.Spec.Ports = kutil.ReconcileServicePorts(service.Spec.Ports, desiredPorts, corev1.ServiceTypeClusterIP)
+		service.Spec.Ports = kubernetesutils.ReconcileServicePorts(service.Spec.Ports, desiredPorts, corev1.ServiceTypeClusterIP)
 		return nil
 	}); err != nil {
 		return err
@@ -262,11 +268,10 @@ func (k *kubeControllerManager) Deploy(ctx context.Context) error {
 		deployment.Spec.Template = corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{
 				Labels: utils.MergeStringMaps(getLabels(), map[string]string{
-					v1beta1constants.GardenRole:                         v1beta1constants.GardenRoleControlPlane,
-					v1beta1constants.LabelPodMaintenanceRestart:         "true",
-					v1beta1constants.LabelNetworkPolicyToDNS:            v1beta1constants.LabelNetworkPolicyAllowed,
-					v1beta1constants.LabelNetworkPolicyToShootAPIServer: v1beta1constants.LabelNetworkPolicyAllowed,
-					v1beta1constants.LabelNetworkPolicyFromPrometheus:   v1beta1constants.LabelNetworkPolicyAllowed,
+					v1beta1constants.GardenRole:                 v1beta1constants.GardenRoleControlPlane,
+					v1beta1constants.LabelPodMaintenanceRestart: "true",
+					v1beta1constants.LabelNetworkPolicyToDNS:    v1beta1constants.LabelNetworkPolicyAllowed,
+					gardenerutils.NetworkPolicyLabel(v1beta1constants.DeploymentNameKubeAPIServer, kubeapiserverconstants.Port): v1beta1constants.LabelNetworkPolicyAllowed,
 				}),
 			},
 			Spec: corev1.PodSpec{
@@ -369,7 +374,7 @@ func (k *kubeControllerManager) Deploy(ctx context.Context) error {
 			},
 		}
 
-		utilruntime.Must(gutil.InjectGenericKubeconfig(deployment, genericTokenKubeconfigSecret.Name, shootAccessSecret.Secret.Name))
+		utilruntime.Must(gardenerutils.InjectGenericKubeconfig(deployment, genericTokenKubeconfigSecret.Name, shootAccessSecret.Secret.Name))
 		return nil
 	}); err != nil {
 		return err
@@ -396,7 +401,7 @@ func (k *kubeControllerManager) Deploy(ctx context.Context) error {
 	}
 
 	if k.hvpaConfig != nil && k.hvpaConfig.Enabled {
-		if err := kutil.DeleteObject(ctx, k.seedClient.Client(), vpa); err != nil {
+		if err := kubernetesutils.DeleteObject(ctx, k.seedClient.Client(), vpa); err != nil {
 			return err
 		}
 
@@ -411,7 +416,13 @@ func (k *kubeControllerManager) Deploy(ctx context.Context) error {
 		}
 
 		if _, err := controllerutils.GetAndCreateOrMergePatch(ctx, k.seedClient.Client(), hvpa, func() error {
-			hvpa.Labels = getLabels()
+			hvpa.Labels = utils.MergeStringMaps(
+				hvpa.Labels,
+				getLabels(),
+				map[string]string{
+					resourcesv1alpha1.HighAvailabilityConfigType: resourcesv1alpha1.HighAvailabilityConfigTypeController,
+				},
+			)
 			hvpa.Spec.Replicas = pointer.Int32(1)
 			hvpa.Spec.Hpa = hvpav1alpha1.HpaSpec{
 				Deploy:   false,
@@ -465,7 +476,7 @@ func (k *kubeControllerManager) Deploy(ctx context.Context) error {
 			return err
 		}
 	} else {
-		if err := kutil.DeleteObject(ctx, k.seedClient.Client(), hvpa); err != nil {
+		if err := kubernetesutils.DeleteObject(ctx, k.seedClient.Client(), hvpa); err != nil {
 			return err
 		}
 
@@ -519,8 +530,8 @@ func (k *kubeControllerManager) emptyPodDisruptionBudget() client.Object {
 	return &policyv1beta1.PodDisruptionBudget{ObjectMeta: objectMeta}
 }
 
-func (k *kubeControllerManager) newShootAccessSecret() *gutil.ShootAccessSecret {
-	return gutil.NewShootAccessSecret(v1beta1constants.DeploymentNameKubeControllerManager, k.namespace)
+func (k *kubeControllerManager) newShootAccessSecret() *gardenerutils.ShootAccessSecret {
+	return gardenerutils.NewShootAccessSecret(v1beta1constants.DeploymentNameKubeControllerManager, k.namespace)
 }
 
 func (k *kubeControllerManager) emptyManagedResource() *resourcesv1alpha1.ManagedResource {
@@ -549,9 +560,9 @@ func (k *kubeControllerManager) computeCommand(port int32) []string {
 		"--allocate-node-cidrs=true",
 		"--attach-detach-reconcile-sync-period=1m0s",
 		"--controllers=*,bootstrapsigner,tokencleaner",
-		"--authentication-kubeconfig="+gutil.PathGenericKubeconfig,
-		"--authorization-kubeconfig="+gutil.PathGenericKubeconfig,
-		"--kubeconfig="+gutil.PathGenericKubeconfig,
+		"--authentication-kubeconfig="+gardenerutils.PathGenericKubeconfig,
+		"--authorization-kubeconfig="+gardenerutils.PathGenericKubeconfig,
+		"--kubeconfig="+gardenerutils.PathGenericKubeconfig,
 	)
 
 	if k.config.NodeCIDRMaskSize != nil {
@@ -585,7 +596,7 @@ func (k *kubeControllerManager) computeCommand(port int32) []string {
 	)
 
 	if len(k.config.FeatureGates) > 0 {
-		command = append(command, kutil.FeatureGatesToCommandLineParameter(k.config.FeatureGates))
+		command = append(command, kubernetesutils.FeatureGatesToCommandLineParameter(k.config.FeatureGates))
 	}
 
 	podEvictionTimeout := metav1.Duration{Duration: 2 * time.Minute}
@@ -621,7 +632,7 @@ func (k *kubeControllerManager) computeCommand(port int32) []string {
 		fmt.Sprintf("--horizontal-pod-autoscaler-cpu-initialization-period=%s", defaultHorizontalPodAutoscalerConfig.CPUInitializationPeriod.Duration.String()),
 		fmt.Sprintf("--tls-cert-file=%s/%s", volumeMountPathServer, secrets.DataKeyCertificate),
 		fmt.Sprintf("--tls-private-key-file=%s/%s", volumeMountPathServer, secrets.DataKeyPrivateKey),
-		fmt.Sprintf("--tls-cipher-suites=%s", strings.Join(kutil.TLSCipherSuites(k.version), ",")),
+		fmt.Sprintf("--tls-cipher-suites=%s", strings.Join(kubernetesutils.TLSCipherSuites(k.version), ",")),
 		"--use-service-account-credentials=true",
 		"--v=2",
 	)

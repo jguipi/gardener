@@ -20,16 +20,15 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	"github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
-	externalcoreinformers "github.com/gardener/gardener/pkg/client/core/informers/externalversions"
-	corev1alphalisters "github.com/gardener/gardener/pkg/client/core/listers/core/v1alpha1"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/admission"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	gardencorelisters "github.com/gardener/gardener/pkg/client/core/listers/core/internalversion"
 )
 
 const (
@@ -48,12 +47,12 @@ func Register(plugins *admission.Plugins) {
 type ExposureClass struct {
 	*admission.Handler
 
-	exposureClassLister corev1alphalisters.ExposureClassLister
+	exposureClassLister gardencorelisters.ExposureClassLister
 	readyFunc           admission.ReadyFunc
 }
 
 var (
-	_ = admissioninitializer.WantsExternalCoreInformerFactory(&ExposureClass{})
+	_ = admissioninitializer.WantsInternalCoreInformerFactory(&ExposureClass{})
 
 	readyFuncs []admission.ReadyFunc
 )
@@ -71,9 +70,9 @@ func (e *ExposureClass) AssignReadyFunc(f admission.ReadyFunc) {
 	e.SetReadyFunc(f)
 }
 
-// SetExternalCoreInformerFactory sets the external garden core informer factory.
-func (e *ExposureClass) SetExternalCoreInformerFactory(f externalcoreinformers.SharedInformerFactory) {
-	exposureClassInformer := f.Core().V1alpha1().ExposureClasses()
+// SetInternalCoreInformerFactory sets the external garden core informer factory.
+func (e *ExposureClass) SetInternalCoreInformerFactory(f gardencoreinformers.SharedInformerFactory) {
+	exposureClassInformer := f.Core().InternalVersion().ExposureClasses()
 	e.exposureClassLister = exposureClassInformer.Lister()
 
 	readyFuncs = append(readyFuncs, exposureClassInformer.Informer().HasSynced)
@@ -164,7 +163,7 @@ func (e *ExposureClass) admitShoot(shoot *core.Shoot) error {
 	return nil
 }
 
-func uniteSeedSelectors(shootSeedSelector *core.SeedSelector, exposureClassSeedSelector *v1alpha1.SeedSelector) (*core.SeedSelector, error) {
+func uniteSeedSelectors(shootSeedSelector *core.SeedSelector, exposureClassSeedSelector *core.SeedSelector) (*core.SeedSelector, error) {
 	if exposureClassSeedSelector == nil {
 		return shootSeedSelector, nil
 	}
@@ -183,14 +182,14 @@ func uniteSeedSelectors(shootSeedSelector *core.SeedSelector, exposureClassSeedS
 	shootSeedSelector.MatchExpressions = append(shootSeedSelector.MatchExpressions, exposureClassSeedSelector.MatchExpressions...)
 
 	// Unite provider types.
-	shootProviderTypes := sets.NewString().Insert(shootSeedSelector.ProviderTypes...)
-	exposureclasssProviderTypes := sets.NewString().Insert(exposureClassSeedSelector.ProviderTypes...)
-	shootSeedSelector.ProviderTypes = shootProviderTypes.Union(exposureclasssProviderTypes).List()
+	shootProviderTypes := sets.New[string]().Insert(shootSeedSelector.ProviderTypes...)
+	exposureclasssProviderTypes := sets.New[string]().Insert(exposureClassSeedSelector.ProviderTypes...)
+	shootSeedSelector.ProviderTypes = sets.List(shootProviderTypes.Union(exposureclasssProviderTypes))
 
 	return shootSeedSelector, nil
 }
 
-func uniteTolerations(shootTolerations []core.Toleration, exposureClassTolerations []v1alpha1.Toleration) ([]core.Toleration, error) {
+func uniteTolerations(shootTolerations []core.Toleration, exposureClassTolerations []core.Toleration) ([]core.Toleration, error) {
 	shootTolerationsKeys := sets.NewString()
 	for _, toleration := range shootTolerations {
 		shootTolerationsKeys.Insert(toleration.Key)

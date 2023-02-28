@@ -17,23 +17,24 @@ package bastion_test
 import (
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	operationsv1alpha1 "github.com/gardener/gardener/pkg/apis/operations/v1alpha1"
-	bastionstrategy "github.com/gardener/gardener/pkg/registry/operations/bastion"
-	"github.com/gardener/gardener/pkg/utils"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gbytes"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	operationsv1alpha1 "github.com/gardener/gardener/pkg/apis/operations/v1alpha1"
+	bastionregistry "github.com/gardener/gardener/pkg/registry/operations/bastion"
+	"github.com/gardener/gardener/pkg/utils"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("Bastion controller tests", func() {
@@ -48,14 +49,14 @@ var _ = Describe("Bastion controller tests", func() {
 	BeforeEach(func() {
 		fakeClock.SetTime(time.Now())
 
-		resourceName = "test-" + utils.ComputeSHA256Hex([]byte(CurrentSpecReport().LeafNodeLocation.String()))[:8]
+		resourceName = "test-" + utils.ComputeSHA256Hex([]byte(uuid.NewUUID()))[:8]
 		objectKey = client.ObjectKey{Namespace: testNamespace.Name, Name: resourceName}
 
 		providerType := "foo-provider"
 		seedName := "foo"
 
 		shoot = &gardencorev1beta1.Shoot{
-			ObjectMeta: kutil.ObjectMetaFromKey(objectKey),
+			ObjectMeta: kubernetesutils.ObjectMetaFromKey(objectKey),
 			Spec: gardencorev1beta1.ShootSpec{
 				SecretBindingName: "my-provider-account",
 				CloudProfileName:  "test-cloudprofile",
@@ -83,7 +84,7 @@ var _ = Describe("Bastion controller tests", func() {
 			},
 		}
 		bastion = &operationsv1alpha1.Bastion{
-			ObjectMeta: kutil.ObjectMetaFromKey(objectKey),
+			ObjectMeta: kubernetesutils.ObjectMetaFromKey(objectKey),
 			Spec: operationsv1alpha1.BastionSpec{
 				ShootRef: corev1.LocalObjectReference{
 					Name: shoot.Name,
@@ -178,7 +179,7 @@ var _ = Describe("Bastion controller tests", func() {
 
 			By("Change Shoot's .spec.seedName")
 			shoot.Spec.SeedName = pointer.String("another-seed")
-			shoot, err = testCoreClient.CoreV1beta1().Shoots(shoot.GetNamespace()).UpdateBinding(ctx, shoot.GetName(), shoot, metav1.UpdateOptions{})
+			err = testClient.SubResource("binding").Update(ctx, shoot)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -205,13 +206,13 @@ var _ = Describe("Bastion controller tests", func() {
 				// Increasing maxLifetime would require creating a dedicated manager per case, because we can't test the other
 				// cases anymore with the same manager.
 				patch := client.MergeFrom(bastion.DeepCopy())
-				t := metav1.NewTime(fakeClock.Now().Add(-bastionstrategy.TimeToLive))
+				t := metav1.NewTime(fakeClock.Now().Add(-bastionregistry.TimeToLive))
 				bastion.Status.LastHeartbeatTimestamp = &t // this basically sets status.expirationTimestamp to time.Now()
 				Expect(testClient.Status().Patch(ctx, bastion, patch)).To(Succeed())
 			})
 
 			It("should delete Bastion if its expiration timestamp has passed", func() {
-				By("stepping the clock to pass expirationTimeStamp")
+				By("Step the clock to pass expirationTimeStamp")
 				fakeClock.SetTime(bastion.Status.ExpirationTimestamp.Time.Add(time.Second))
 				patch := client.MergeFrom(bastion.DeepCopy())
 				metav1.SetMetaDataAnnotation(&bastion.ObjectMeta, v1beta1constants.GardenerOperation, v1beta1constants.GardenerOperationReconcile)
@@ -229,12 +230,12 @@ var _ = Describe("Bastion controller tests", func() {
 				metav1.SetMetaDataAnnotation(&bastion.ObjectMeta, v1beta1constants.GardenerOperation, v1beta1constants.GardenerOperationReconcile)
 				Expect(testClient.Patch(ctx, bastion, patch)).To(Succeed())
 
-				By("Ensuring Bastion is not gone yet")
+				By("Ensure Bastion is not gone yet")
 				Consistently(func() error {
 					return testClient.Get(ctx, objectKey, bastion)
 				}).Should(Succeed())
 
-				By("Ensuring Bastion is deleted")
+				By("Ensure Bastion is deleted")
 				fakeClock.SetTime(bastion.Status.ExpirationTimestamp.Time.Add(time.Second))
 				Eventually(logBuffer).Should(gbytes.Say("Deleting expired bastion"))
 
@@ -246,7 +247,7 @@ var _ = Describe("Bastion controller tests", func() {
 
 		Describe("maxLifetime", func() {
 			It("should delete Bastion if it's older than maxLifetime", func() {
-				By("stepping the clock to pass maxLifeTime")
+				By("Step the clock to pass maxLifeTime")
 				fakeClock.Step(maxLifeTime + 2*time.Second)
 				patch := client.MergeFrom(bastion.DeepCopy())
 				metav1.SetMetaDataAnnotation(&bastion.ObjectMeta, v1beta1constants.GardenerOperation, v1beta1constants.GardenerOperationReconcile)
@@ -264,12 +265,12 @@ var _ = Describe("Bastion controller tests", func() {
 				metav1.SetMetaDataAnnotation(&bastion.ObjectMeta, v1beta1constants.GardenerOperation, v1beta1constants.GardenerOperationReconcile)
 				Expect(testClient.Patch(ctx, bastion, patch)).To(Succeed())
 
-				By("Ensuring Bastion is not gone yet")
+				By("Ensure Bastion is not gone yet")
 				Consistently(func() error {
 					return testClient.Get(ctx, objectKey, bastion)
 				}).Should(Succeed())
 
-				By("Ensuring Bastion is deleted")
+				By("Ensure Bastion is deleted")
 				// we just need to pass the maxLifeTime
 				fakeClock.Step(4 * time.Second)
 				Eventually(logBuffer).Should(gbytes.Say("Deleting bastion because it reached its maximum lifetime"))

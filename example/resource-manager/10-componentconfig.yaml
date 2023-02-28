@@ -40,24 +40,30 @@ debugging:
 controllers:
 # clusterID: foo
 # resourceClass: bar
-  kubeletCSRApprover:
-    enabled: true
-    concurrentSyncs: 1
   garbageCollector:
     enabled: true
     syncPeriod: 1h
   health:
     concurrentSyncs: 5
     syncPeriod: 1m
+  kubeletCSRApprover:
+    enabled: true
+    concurrentSyncs: 1
   managedResources:
     concurrentSyncs: 5
     syncPeriod: 1m
     alwaysUpdate: false
     managedByLabelValue: gardener
-  rootCAPublisher:
-    enabled: false
+  networkPolicy:
+    enabled: true
     concurrentSyncs: 5
-#   rootCAFile: path/to/root/ca.crt
+  # namespaceSelectors:
+  # - matchLabels:
+  #     kubernetes.io/metadata.name: default
+  node:
+    enabled: true
+    concurrentSyncs: 5
+    backoff: 10s
   secret:
     concurrentSyncs: 5
   tokenInvalidator:
@@ -83,5 +89,17 @@ webhooks:
     expirationSeconds: 43200
   seccompProfile:
     enabled: true
+  systemComponentsConfig:
+    enabled: true
+    nodeSelector:
+      worker.gardener.cloud/system-components: "true"
+    podNodeSelector:
+      worker.gardener.cloud/system-components: "true"
+    podTolerations:
+  # - key: someKey
+  #   operator: Equal
+  #   value: someValue
+  #   effect: NoSchedule
+  #   tolerationSeconds: 300
   tokenInvalidator:
     enabled: true

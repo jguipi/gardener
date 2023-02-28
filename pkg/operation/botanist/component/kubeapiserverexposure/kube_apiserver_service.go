@@ -19,31 +19,45 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 	"github.com/gardener/gardener/pkg/controllerutils"
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	kubeapiserverconstants "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/constants"
+	"github.com/gardener/gardener/pkg/utils"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	"github.com/gardener/gardener/pkg/utils/retry"
+)
 
-	"github.com/go-logr/logr"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+var (
+	// DefaultInterval is the default interval for retry operations.
+	DefaultInterval = 5 * time.Second
+	// DefaultTimeout is the default timeout and defines how long Gardener should wait
+	// for a successful reconciliation of the service resource.
+	DefaultTimeout = 10 * time.Minute
 )
 
 // ServiceValues configure the kube-apiserver service.
 type ServiceValues struct {
-	Annotations map[string]string
-	SNIPhase    component.Phase
+	AnnotationsFunc func() map[string]string
+	SNIPhase        component.Phase
 }
 
 // serviceValues configure the kube-apiserver service.
 // this one is not exposed as not all values should be configured
 // from the outside.
 type serviceValues struct {
-	annotations     map[string]string
+	annotationsFunc func() map[string]string
 	serviceType     corev1.ServiceType
 	enableSNI       bool
 	gardenerManaged bool
@@ -55,8 +69,8 @@ func NewService(
 	log logr.Logger,
 	crclient client.Client,
 	values *ServiceValues,
-	serviceKey client.ObjectKey,
-	sniServiceKey client.ObjectKey,
+	serviceKeyFunc func() client.ObjectKey,
+	sniServiceKeyFunc func() client.ObjectKey,
 	waiter retry.Ops,
 	clusterIPFunc func(clusterIP string),
 	ingressFunc func(ingressIP string),
@@ -74,8 +88,10 @@ func NewService(
 	}
 
 	var (
-		internalValues         = &serviceValues{}
-		loadBalancerServiceKey client.ObjectKey
+		internalValues = &serviceValues{
+			annotationsFunc: func() map[string]string { return map[string]string{} },
+		}
+		loadBalancerServiceKeyFunc func() client.ObjectKey
 	)
 
 	if values != nil {
@@ -84,60 +100,65 @@ func NewService(
 			internalValues.serviceType = corev1.ServiceTypeClusterIP
 			internalValues.enableSNI = true
 			internalValues.gardenerManaged = true
-			loadBalancerServiceKey = sniServiceKey
+			loadBalancerServiceKeyFunc = sniServiceKeyFunc
 		case component.PhaseEnabling:
 			// existing traffic must still access the old loadbalancer
 			// IP (due to DNS cache).
 			internalValues.serviceType = corev1.ServiceTypeLoadBalancer
 			internalValues.enableSNI = true
 			internalValues.gardenerManaged = false
-			loadBalancerServiceKey = sniServiceKey
+			loadBalancerServiceKeyFunc = sniServiceKeyFunc
 		case component.PhaseDisabling:
 			internalValues.serviceType = corev1.ServiceTypeLoadBalancer
 			internalValues.enableSNI = true
 			internalValues.gardenerManaged = true
-			loadBalancerServiceKey = serviceKey
+			loadBalancerServiceKeyFunc = serviceKeyFunc
 		default:
 			internalValues.serviceType = corev1.ServiceTypeLoadBalancer
 			internalValues.enableSNI = false
 			internalValues.gardenerManaged = false
-			loadBalancerServiceKey = serviceKey
+			loadBalancerServiceKeyFunc = serviceKeyFunc
 		}
 
-		internalValues.annotations = values.Annotations
+		internalValues.annotationsFunc = values.AnnotationsFunc
 	}
 
 	return &service{
-		log:                    log,
-		client:                 crclient,
-		values:                 internalValues,
-		serviceKey:             serviceKey,
-		loadBalancerServiceKey: loadBalancerServiceKey,
-		waiter:                 waiter,
-		clusterIPFunc:          clusterIPFunc,
-		ingressFunc:            ingressFunc,
+		log:                        log,
+		client:                     crclient,
+		values:                     internalValues,
+		serviceKeyFunc:             serviceKeyFunc,
+		loadBalancerServiceKeyFunc: loadBalancerServiceKeyFunc,
+		waiter:                     waiter,
+		clusterIPFunc:              clusterIPFunc,
+		ingressFunc:                ingressFunc,
 	}
 }
 
 type service struct {
-	log                    logr.Logger
-	client                 client.Client
-	values                 *serviceValues
-	serviceKey             client.ObjectKey
-	loadBalancerServiceKey client.ObjectKey
-	waiter                 retry.Ops
-	clusterIPFunc          func(clusterIP string)
-	ingressFunc            func(ingressIP string)
+	log                        logr.Logger
+	client                     client.Client
+	values                     *serviceValues
+	serviceKeyFunc             func() client.ObjectKey
+	loadBalancerServiceKeyFunc func() client.ObjectKey
+	waiter                     retry.Ops
+	clusterIPFunc              func(clusterIP string)
+	ingressFunc                func(ingressIP string)
 }
 
 func (s *service) Deploy(ctx context.Context) error {
 	obj := s.emptyService()
 
 	if _, err := controllerutils.GetAndCreateOrMergePatch(ctx, s.client, obj, func() error {
-		obj.Annotations = s.values.annotations
+		obj.Annotations = utils.MergeStringMaps(obj.Annotations, s.values.annotationsFunc())
 		if s.values.enableSNI {
 			metav1.SetMetaDataAnnotation(&obj.ObjectMeta, "networking.istio.io/exportTo", "*")
 		}
+		utilruntime.Must(gardenerutils.InjectNetworkPolicyAnnotationsForScrapeTargets(obj, networkingv1.NetworkPolicyPort{Port: utils.IntStrPtrFromInt(kubeapiserverconstants.Port), Protocol: utils.ProtocolPtr(corev1.ProtocolTCP)}))
+		// TODO(rfranzke): Drop this annotation once the APIServerSNI feature gate is dropped (then API servers are only
+		//  exposed indirectly via Istio) and the NetworkPolicy controller in gardener-resource-manager is enabled for
+		//  all relevant namespaces in the seed cluster.
+		metav1.SetMetaDataAnnotation(&obj.ObjectMeta, resourcesv1alpha1.NetworkingFromWorldToPorts, fmt.Sprintf(`[{"protocol":"TCP","port":%d}]`, kubeapiserverconstants.Port))
 
 		obj.Labels = getLabels()
 		if s.values.gardenerManaged {
@@ -146,12 +167,12 @@ func (s *service) Deploy(ctx context.Context) error {
 
 		obj.Spec.Type = s.values.serviceType
 		obj.Spec.Selector = getLabels()
-		obj.Spec.Ports = kutil.ReconcileServicePorts(obj.Spec.Ports, []corev1.ServicePort{
+		obj.Spec.Ports = kubernetesutils.ReconcileServicePorts(obj.Spec.Ports, []corev1.ServicePort{
 			{
 				Name:       kubeapiserver.ServicePortName,
 				Protocol:   corev1.ProtocolTCP,
-				Port:       kubeapiserver.Port,
-				TargetPort: intstr.FromInt(kubeapiserver.Port),
+				Port:       kubeapiserverconstants.Port,
+				TargetPort: intstr.FromInt(kubeapiserverconstants.Port),
 			},
 		}, s.values.serviceType)
 
@@ -169,19 +190,19 @@ func (s *service) Destroy(ctx context.Context) error {
 }
 
 func (s *service) Wait(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
 	defer cancel()
 
-	return s.waiter.Until(ctx, 5*time.Second, func(ctx context.Context) (done bool, err error) {
+	return s.waiter.Until(ctx, DefaultInterval, func(ctx context.Context) (done bool, err error) {
 		// this ingress can be either the kube-apiserver's service or istio's IGW loadbalancer.
 		svc := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      s.loadBalancerServiceKey.Name,
-				Namespace: s.loadBalancerServiceKey.Namespace,
+				Name:      s.loadBalancerServiceKeyFunc().Name,
+				Namespace: s.loadBalancerServiceKeyFunc().Namespace,
 			},
 		}
 
-		loadBalancerIngress, err := kutil.GetLoadBalancerIngress(ctx, s.client, svc)
+		loadBalancerIngress, err := kubernetesutils.GetLoadBalancerIngress(ctx, s.client, svc)
 		if err != nil {
 			s.log.Info("Waiting until the kube-apiserver ingress LoadBalancer deployed in the Seed cluster is ready", "service", client.ObjectKeyFromObject(svc))
 			return retry.MinorError(fmt.Errorf("KubeAPI Server ingress LoadBalancer deployed in the Seed cluster is ready: %v", err))
@@ -193,11 +214,11 @@ func (s *service) Wait(ctx context.Context) error {
 }
 
 func (s *service) WaitCleanup(ctx context.Context) error {
-	return kutil.WaitUntilResourceDeleted(ctx, s.client, s.emptyService(), 5*time.Second)
+	return kubernetesutils.WaitUntilResourceDeleted(ctx, s.client, s.emptyService(), 2*time.Second)
 }
 
 func (s *service) emptyService() *corev1.Service {
-	return &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: s.serviceKey.Name, Namespace: s.serviceKey.Namespace}}
+	return &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: s.serviceKeyFunc().Name, Namespace: s.serviceKeyFunc().Namespace}}
 }
 
 func getLabels() map[string]string {

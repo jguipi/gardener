@@ -20,18 +20,6 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	. "github.com/gardener/gardener/pkg/extensions"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
-	"github.com/gardener/gardener/pkg/utils/retry"
-	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
-	"github.com/gardener/gardener/pkg/utils/test"
-
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
@@ -42,6 +30,17 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	. "github.com/gardener/gardener/pkg/extensions"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
+	"github.com/gardener/gardener/pkg/utils/retry"
+	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
+	"github.com/gardener/gardener/pkg/utils/test"
 )
 
 var _ = Describe("extensions", func() {
@@ -239,7 +238,7 @@ var _ = Describe("extensions", func() {
 
 		It("should return error if ready func returns error", func() {
 			fakeError := &specialWrappingError{
-				error: gardencorev1beta1helper.NewErrorWithCodes(errors.New("foo"), gardencorev1beta1.ErrorInfraUnauthorized),
+				error: v1beta1helper.NewErrorWithCodes(errors.New("foo"), gardencorev1beta1.ErrorInfraUnauthorized),
 			}
 
 			Expect(c.Create(ctx, expected)).ToNot(HaveOccurred(), "creating worker succeeds")
@@ -259,7 +258,7 @@ var _ = Describe("extensions", func() {
 				Special()
 			}
 			Expect(errors.As(err, &specialError)).To(BeTrue(), "should properly wrap the error returned by the health func")
-			Expect(gardencorev1beta1helper.ExtractErrorCodes(err)).To(ConsistOf(gardencorev1beta1.ErrorInfraUnauthorized), "should be able to extract error codes from wrapped error")
+			Expect(v1beta1helper.ExtractErrorCodes(err)).To(ConsistOf(gardencorev1beta1.ErrorInfraUnauthorized), "should be able to extract error codes from wrapped error")
 		})
 
 		It("should return error if client has not observed latest timestamp annotation", func() {
@@ -526,7 +525,7 @@ var _ = Describe("extensions", func() {
 			Expect(err).To(HaveOccurred())
 
 			// ensure, that errors are properly wrapped
-			Expect(gardencorev1beta1helper.ExtractErrorCodes(err)).To(ConsistOf(gardencorev1beta1.ErrorInfraUnauthorized), "should be able to extract error codes from wrapped error")
+			Expect(v1beta1helper.ExtractErrorCodes(err)).To(ConsistOf(gardencorev1beta1.ErrorInfraUnauthorized), "should be able to extract error codes from wrapped error")
 		})
 
 		It("should return success if extensions CRs gets deleted", func() {
@@ -540,15 +539,15 @@ var _ = Describe("extensions", func() {
 	Context("restoring extension object state", func() {
 		var (
 			expectedState *runtime.RawExtension
-			shootState    *gardencorev1alpha1.ShootState
+			shootState    *gardencorev1beta1.ShootState
 		)
 
 		BeforeEach(func() {
 			expectedState = &runtime.RawExtension{Raw: []byte(`{"data":"value"}`)}
 
-			shootState = &gardencorev1alpha1.ShootState{
-				Spec: gardencorev1alpha1.ShootStateSpec{
-					Extensions: []gardencorev1alpha1.ExtensionResourceState{
+			shootState = &gardencorev1beta1.ShootState{
+				Spec: gardencorev1beta1.ShootStateSpec{
+					Extensions: []gardencorev1beta1.ExtensionResourceState{
 						{
 							Name:  &name,
 							Kind:  extensionsv1alpha1.WorkerResource,

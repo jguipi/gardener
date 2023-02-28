@@ -19,35 +19,6 @@ import (
 	"net"
 	"path/filepath"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	cr "github.com/gardener/gardener/pkg/chartrenderer"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/client/kubernetes/fake"
-	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	"github.com/gardener/gardener/pkg/operation"
-	. "github.com/gardener/gardener/pkg/operation/botanist"
-	mockcoredns "github.com/gardener/gardener/pkg/operation/botanist/component/coredns/mock"
-	mocketcd "github.com/gardener/gardener/pkg/operation/botanist/component/etcd/mock"
-	mockhvpa "github.com/gardener/gardener/pkg/operation/botanist/component/hvpa/mock"
-	mockkubeapiserver "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/mock"
-	mockkubecontrollermanager "github.com/gardener/gardener/pkg/operation/botanist/component/kubecontrollermanager/mock"
-	mockkubeproxy "github.com/gardener/gardener/pkg/operation/botanist/component/kubeproxy/mock"
-	mockkubescheduler "github.com/gardener/gardener/pkg/operation/botanist/component/kubescheduler/mock"
-	mockkubestatemetrics "github.com/gardener/gardener/pkg/operation/botanist/component/kubestatemetrics/mock"
-	mockresourcemanager "github.com/gardener/gardener/pkg/operation/botanist/component/resourcemanager/mock"
-	mockvpa "github.com/gardener/gardener/pkg/operation/botanist/component/vpa/mock"
-	mockvpnseedserver "github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver/mock"
-	mockvpnshoot "github.com/gardener/gardener/pkg/operation/botanist/component/vpnshoot/mock"
-	gardenpkg "github.com/gardener/gardener/pkg/operation/garden"
-	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
-	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
-	"github.com/gardener/gardener/pkg/utils/imagevector"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -61,6 +32,34 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	"github.com/gardener/gardener/pkg/chartrenderer"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
+	"github.com/gardener/gardener/pkg/operation"
+	. "github.com/gardener/gardener/pkg/operation/botanist"
+	mockcoredns "github.com/gardener/gardener/pkg/operation/botanist/component/coredns/mock"
+	mocketcd "github.com/gardener/gardener/pkg/operation/botanist/component/etcd/mock"
+	mockkubeapiserver "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/mock"
+	mockkubecontrollermanager "github.com/gardener/gardener/pkg/operation/botanist/component/kubecontrollermanager/mock"
+	mockkubeproxy "github.com/gardener/gardener/pkg/operation/botanist/component/kubeproxy/mock"
+	mockkubescheduler "github.com/gardener/gardener/pkg/operation/botanist/component/kubescheduler/mock"
+	mockkubestatemetrics "github.com/gardener/gardener/pkg/operation/botanist/component/kubestatemetrics/mock"
+	mockresourcemanager "github.com/gardener/gardener/pkg/operation/botanist/component/resourcemanager/mock"
+	mockvpa "github.com/gardener/gardener/pkg/operation/botanist/component/vpa/mock"
+	mockvpnseedserver "github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver/mock"
+	mockvpnshoot "github.com/gardener/gardener/pkg/operation/botanist/component/vpnshoot/mock"
+	"github.com/gardener/gardener/pkg/operation/garden"
+	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
+	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
+	"github.com/gardener/gardener/pkg/utils/imagevector"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
+	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("Monitoring", func() {
@@ -74,7 +73,6 @@ var _ = Describe("Monitoring", func() {
 		chartApplier kubernetes.ChartApplier
 		sm           secretsmanager.Interface
 
-		mockHVPA                  *mockhvpa.MockInterface
 		mockEtcdMain              *mocketcd.MockInterface
 		mockEtcdEvents            *mocketcd.MockInterface
 		mockKubeAPIServer         *mockkubeapiserver.MockInterface
@@ -106,7 +104,7 @@ var _ = Describe("Monitoring", func() {
 		seedClient = fakeclient.NewClientBuilder().WithScheme(kubernetes.SeedScheme).Build()
 
 		mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{corev1.SchemeGroupVersion, appsv1.SchemeGroupVersion})
-		renderer := cr.NewWithServerVersion(&version.Info{GitVersion: "1.2.3"})
+		renderer := chartrenderer.NewWithServerVersion(&version.Info{GitVersion: "1.2.3"})
 		chartApplier = kubernetes.NewChartApplier(renderer, kubernetes.NewApplier(seedClient, mapper))
 
 		seedClientSet = fake.NewClientSetBuilder().
@@ -116,7 +114,6 @@ var _ = Describe("Monitoring", func() {
 			Build()
 		sm = fakesecretsmanager.New(seedClient, seedNamespace)
 
-		mockHVPA = mockhvpa.NewMockInterface(ctrl)
 		mockEtcdMain = mocketcd.NewMockInterface(ctrl)
 		mockEtcdEvents = mocketcd.NewMockInterface(ctrl)
 		mockKubeAPIServer = mockkubeapiserver.NewMockInterface(ctrl)
@@ -136,7 +133,7 @@ var _ = Describe("Monitoring", func() {
 				SeedClientSet:  seedClientSet,
 				SecretsManager: sm,
 				Config:         &config.GardenletConfiguration{},
-				Garden: &gardenpkg.Garden{
+				Garden: &garden.Garden{
 					Project: &gardencorev1beta1.Project{},
 				},
 				Seed:                &seedpkg.Seed{},
@@ -164,9 +161,7 @@ var _ = Describe("Monitoring", func() {
 							KubeProxy: mockKubeProxy,
 							VPNShoot:  mockVPNShoot,
 						},
-						HVPA: mockHVPA,
 					},
-					ReversedVPNEnabled: true,
 				},
 				ImageVector: imagevector.ImageVector{
 					{Name: "grafana"},
@@ -210,13 +205,6 @@ var _ = Describe("Monitoring", func() {
 
 			secretList := &corev1.SecretList{}
 			Expect(seedClient.List(ctx, secretList, client.InNamespace(seedNamespace), client.MatchingLabels{
-				"name":       "observability-ingress",
-				"managed-by": "secrets-manager",
-			})).To(Succeed())
-			Expect(secretList.Items).To(HaveLen(1))
-			Expect(secretList.Items[0].Labels).To(HaveKeyWithValue("persist", "true"))
-
-			Expect(seedClient.List(ctx, secretList, client.InNamespace(seedNamespace), client.MatchingLabels{
 				"name":       "observability-ingress-users",
 				"managed-by": "secrets-manager",
 			})).To(Succeed())
@@ -227,30 +215,30 @@ var _ = Describe("Monitoring", func() {
 		It("should sync the ingress credentials for the users observability to the garden project namespace", func() {
 			defer test.WithVar(&ChartsPath, filepath.Join("..", "..", "..", "charts"))()
 
-			Expect(gardenClient.Get(ctx, kutil.Key(projectNamespace, shootName+".monitoring"), &corev1.Secret{})).To(BeNotFoundError())
+			Expect(gardenClient.Get(ctx, kubernetesutils.Key(projectNamespace, shootName+".monitoring"), &corev1.Secret{})).To(BeNotFoundError())
 
 			Expect(botanist.DeploySeedGrafana(ctx)).To(Succeed())
 
 			secret := &corev1.Secret{}
-			Expect(gardenClient.Get(ctx, kutil.Key(projectNamespace, shootName+".monitoring"), secret)).To(Succeed())
+			Expect(gardenClient.Get(ctx, kubernetesutils.Key(projectNamespace, shootName+".monitoring"), secret)).To(Succeed())
 			Expect(secret.Annotations).To(HaveKeyWithValue("url", "https://gu-foo--bar."))
 			Expect(secret.Labels).To(HaveKeyWithValue("gardener.cloud/role", "monitoring"))
-			Expect(secret.Data).To(And(HaveKey("username"), HaveKey("password"), HaveKey("auth"), HaveKey("basic_auth.csv")))
+			Expect(secret.Data).To(And(HaveKey("username"), HaveKey("password"), HaveKey("auth")))
 		})
 
 		It("should cleanup the secrets when shoot purpose is changed", func() {
 			defer test.WithVar(&ChartsPath, filepath.Join("..", "..", "..", "charts"))()
 
-			Expect(gardenClient.Get(ctx, kutil.Key(projectNamespace, shootName+".monitoring"), &corev1.Secret{})).To(BeNotFoundError())
+			Expect(gardenClient.Get(ctx, kubernetesutils.Key(projectNamespace, shootName+".monitoring"), &corev1.Secret{})).To(BeNotFoundError())
 
 			Expect(botanist.DeploySeedGrafana(ctx)).To(Succeed())
-			Expect(gardenClient.Get(ctx, kutil.Key(projectNamespace, shootName+".monitoring"), &corev1.Secret{})).To(Succeed())
+			Expect(gardenClient.Get(ctx, kubernetesutils.Key(projectNamespace, shootName+".monitoring"), &corev1.Secret{})).To(Succeed())
 			Expect(*botanist.Shoot.GetInfo().Spec.Purpose == shootPurposeEvaluation).To(BeTrue())
 
 			botanist.Shoot.Purpose = shootPurposeTesting
 			Expect(botanist.DeploySeedGrafana(ctx)).To(Succeed())
 
-			Expect(gardenClient.Get(ctx, kutil.Key(projectNamespace, shootName+".monitoring"), &corev1.Secret{})).To(BeNotFoundError())
+			Expect(gardenClient.Get(ctx, kubernetesutils.Key(projectNamespace, shootName+".monitoring"), &corev1.Secret{})).To(BeNotFoundError())
 		})
 	})
 })

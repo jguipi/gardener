@@ -33,7 +33,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/selection"
+	"k8s.io/apimachinery/pkg/util/sets"
 	vpaautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	"k8s.io/utils/clock"
 	"k8s.io/utils/pointer"
@@ -51,6 +54,7 @@ import (
 	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
 	gardenlethelper "github.com/gardener/gardener/pkg/gardenlet/apis/config/helper"
 	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
+	"github.com/gardener/gardener/pkg/operation"
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/clusterautoscaler"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/clusteridentity"
@@ -65,6 +69,7 @@ import (
 	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserverexposure"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/kubecontrollermanager"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeproxy"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/kubernetesdashboard"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/kubescheduler"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/kubestatemetrics"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/logging/eventlogger"
@@ -77,15 +82,14 @@ import (
 	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnshoot"
 	"github.com/gardener/gardener/pkg/operation/common"
-	"github.com/gardener/gardener/pkg/operation/garden"
 	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
 	"github.com/gardener/gardener/pkg/utils"
 	"github.com/gardener/gardener/pkg/utils/flow"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 	"github.com/gardener/gardener/pkg/utils/images"
 	"github.com/gardener/gardener/pkg/utils/imagevector"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
 	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
 	"github.com/gardener/gardener/pkg/utils/timewindow"
 	versionutils "github.com/gardener/gardener/pkg/utils/version"
@@ -102,7 +106,7 @@ func (r *Reconciler) reconcile(
 ) {
 	var (
 		seed                      = seedObj.GetInfo()
-		conditionSeedBootstrapped = v1beta1helper.GetOrInitCondition(seedObj.GetInfo().Status.Conditions, gardencorev1beta1.SeedBootstrapped)
+		conditionSeedBootstrapped = v1beta1helper.GetOrInitConditionWithClock(r.Clock, seedObj.GetInfo().Status.Conditions, gardencorev1beta1.SeedBootstrapped)
 	)
 
 	// Initialize capacity and allocatable
@@ -133,7 +137,7 @@ func (r *Reconciler) reconcile(
 	// Add the Gardener finalizer to the referenced Seed secret to protect it from deletion as long as the Seed resource
 	// does exist.
 	if seed.Spec.SecretRef != nil {
-		secret, err := kutil.GetSecretByReference(ctx, r.GardenClient, seed.Spec.SecretRef)
+		secret, err := kubernetesutils.GetSecretByReference(ctx, r.GardenClient, seed.Spec.SecretRef)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
@@ -149,30 +153,30 @@ func (r *Reconciler) reconcile(
 	// Check whether the Kubernetes version of the Seed cluster fulfills the minimal requirements.
 	seedKubernetesVersion, err := r.checkMinimumK8SVersion(r.SeedClientSet.Version())
 	if err != nil {
-		conditionSeedBootstrapped = v1beta1helper.UpdatedCondition(conditionSeedBootstrapped, gardencorev1beta1.ConditionFalse, "K8SVersionTooOld", err.Error())
+		conditionSeedBootstrapped = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionSeedBootstrapped, gardencorev1beta1.ConditionFalse, "K8SVersionTooOld", err.Error())
 		if err := r.patchSeedStatus(ctx, r.GardenClient, seed, "<unknown>", capacity, allocatable, conditionSeedBootstrapped); err != nil {
 			return reconcile.Result{}, fmt.Errorf("could not patch seed status after check for minimum Kubernetes version failed: %w", err)
 		}
 		return reconcile.Result{}, err
 	}
 
-	gardenSecrets, err := garden.ReadGardenSecrets(ctx, log, r.GardenClient, gutil.ComputeGardenNamespace(seed.Name), true)
+	gardenSecrets, err := gardenerutils.ReadGardenSecrets(ctx, log, r.GardenClient, gardenerutils.ComputeGardenNamespace(seed.Name), true)
 	if err != nil {
-		conditionSeedBootstrapped = v1beta1helper.UpdatedCondition(conditionSeedBootstrapped, gardencorev1beta1.ConditionFalse, "GardenSecretsError", err.Error())
+		conditionSeedBootstrapped = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionSeedBootstrapped, gardencorev1beta1.ConditionFalse, "GardenSecretsError", err.Error())
 		if err := r.patchSeedStatus(ctx, r.GardenClient, seed, "<unknown>", capacity, allocatable, conditionSeedBootstrapped); err != nil {
 			return reconcile.Result{}, fmt.Errorf("could not patch seed status after reading garden secrets failed: %w", err)
 		}
 		return reconcile.Result{}, err
 	}
 
-	conditionSeedBootstrapped = v1beta1helper.UpdatedCondition(conditionSeedBootstrapped, gardencorev1beta1.ConditionProgressing, "BootstrapProgressing", "Seed cluster is currently being bootstrapped.")
+	conditionSeedBootstrapped = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionSeedBootstrapped, gardencorev1beta1.ConditionProgressing, "BootstrapProgressing", "Seed cluster is currently being bootstrapped.")
 	if err = r.patchSeedStatus(ctx, r.GardenClient, seed, seedKubernetesVersion, capacity, allocatable, conditionSeedBootstrapped); err != nil {
 		return reconcile.Result{}, fmt.Errorf("could not update status of %s condition to %s: %w", conditionSeedBootstrapped.Type, gardencorev1beta1.ConditionProgressing, err)
 	}
 
 	// Bootstrap the Seed cluster.
 	if err := r.runReconcileSeedFlow(ctx, log, seedObj, seedIsGarden, gardenSecrets); err != nil {
-		conditionSeedBootstrapped = v1beta1helper.UpdatedCondition(conditionSeedBootstrapped, gardencorev1beta1.ConditionFalse, "BootstrappingFailed", err.Error())
+		conditionSeedBootstrapped = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionSeedBootstrapped, gardencorev1beta1.ConditionFalse, "BootstrappingFailed", err.Error())
 		if err := r.patchSeedStatus(ctx, r.GardenClient, seed, "<unknown>", capacity, allocatable, conditionSeedBootstrapped); err != nil {
 			return reconcile.Result{}, fmt.Errorf("could not patch seed status after reconciliation flow failed: %w", err)
 		}
@@ -183,9 +187,9 @@ func (r *Reconciler) reconcile(
 	// after being successfully bootstrapped in case the system components got updated. The SeedSystemComponentsHealthy condition
 	// will be set to either True, False or Progressing by the seed care reconciler depending on the health of the system components
 	// after the necessary checks are completed.
-	conditionSeedSystemComponentsHealthy := v1beta1helper.GetOrInitCondition(seed.Status.Conditions, gardencorev1beta1.SeedSystemComponentsHealthy)
-	conditionSeedSystemComponentsHealthy = v1beta1helper.UpdatedCondition(conditionSeedSystemComponentsHealthy, gardencorev1beta1.ConditionProgressing, "SystemComponentsCheckProgressing", "Pending health check of system components after successful bootstrap of seed cluster.")
-	conditionSeedBootstrapped = v1beta1helper.UpdatedCondition(conditionSeedBootstrapped, gardencorev1beta1.ConditionTrue, "BootstrappingSucceeded", "Seed cluster has been bootstrapped successfully.")
+	conditionSeedSystemComponentsHealthy := v1beta1helper.GetOrInitConditionWithClock(r.Clock, seed.Status.Conditions, gardencorev1beta1.SeedSystemComponentsHealthy)
+	conditionSeedSystemComponentsHealthy = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionSeedSystemComponentsHealthy, gardencorev1beta1.ConditionProgressing, "SystemComponentsCheckProgressing", "Pending health check of system components after successful bootstrap of seed cluster.")
+	conditionSeedBootstrapped = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionSeedBootstrapped, gardencorev1beta1.ConditionTrue, "BootstrappingSucceeded", "Seed cluster has been bootstrapped successfully.")
 	if err = r.patchSeedStatus(ctx, r.GardenClient, seed, seedKubernetesVersion, capacity, allocatable, conditionSeedBootstrapped, conditionSeedSystemComponentsHealthy); err != nil {
 		return reconcile.Result{}, fmt.Errorf("could not update status of %s condition to %s and %s conditions to %s: %w", conditionSeedBootstrapped.Type, gardencorev1beta1.ConditionTrue, conditionSeedSystemComponentsHealthy.Type, gardencorev1beta1.ConditionProgressing, err)
 	}
@@ -198,8 +202,8 @@ func (r *Reconciler) reconcile(
 		}
 	}
 
-	// TODO (kris94): remove after a couple of releases
-	if err := CleanupLegacyPriorityClasses(ctx, r.SeedClientSet.Client()); err != nil {
+	// TODO(ialidzhikov): Remove the cleanup logic in 1.66.
+	if err := CleanupLegacyLokiPriorityClass(ctx, r.SeedClientSet.Client()); err != nil {
 		return reconcile.Result{}, err
 	}
 
@@ -256,16 +260,16 @@ func (r *Reconciler) runReconcileSeedFlow(
 
 	// Deploy dedicated CA certificate for seed cluster, auto-rotate it roughly once a month and drop the old CA 24 hours
 	// after rotation.
-	if _, err := secretsManager.Generate(ctx, &secretutils.CertificateSecretConfig{
+	if _, err := secretsManager.Generate(ctx, &secretsutils.CertificateSecretConfig{
 		Name:       v1beta1constants.SecretNameCASeed,
 		CommonName: "kubernetes",
-		CertType:   secretutils.CACert,
+		CertType:   secretsutils.CACert,
 		Validity:   pointer.Duration(30 * 24 * time.Hour),
 	}, secretsmanager.Rotate(secretsmanager.KeepOld), secretsmanager.IgnoreOldSecretsAfter(24*time.Hour)); err != nil {
 		return err
 	}
 
-	kubernetesVersion, err := semver.NewVersion(versionutils.Normalize(r.SeedClientSet.Version()))
+	kubernetesVersion, err := semver.NewVersion(r.SeedClientSet.Version())
 	if err != nil {
 		return err
 	}
@@ -337,8 +341,8 @@ func (r *Reconciler) runReconcileSeedFlow(
 		globalMonitoringSecretSeed.Data = globalMonitoringSecretGarden.Data
 		globalMonitoringSecretSeed.Immutable = globalMonitoringSecretGarden.Immutable
 
-		if _, ok := globalMonitoringSecretSeed.Data[secretutils.DataKeySHA1Auth]; !ok {
-			globalMonitoringSecretSeed.Data[secretutils.DataKeySHA1Auth] = utils.CreateSHA1Secret(globalMonitoringSecretGarden.Data[secretutils.DataKeyUserName], globalMonitoringSecretGarden.Data[secretutils.DataKeyPassword])
+		if _, ok := globalMonitoringSecretSeed.Data[secretsutils.DataKeySHA1Auth]; !ok {
+			globalMonitoringSecretSeed.Data[secretsutils.DataKeySHA1Auth] = utils.CreateSHA1Secret(globalMonitoringSecretGarden.Data[secretsutils.DataKeyUserName], globalMonitoringSecretGarden.Data[secretsutils.DataKeyPassword])
 		}
 
 		return nil
@@ -370,7 +374,7 @@ func (r *Reconciler) runReconcileSeedFlow(
 	log.Info("Deploying custom resource definitions")
 
 	if hvpaEnabled {
-		if err := kutil.DeleteObjects(ctx, seedClient,
+		if err := kubernetesutils.DeleteObjects(ctx, seedClient,
 			&vpaautoscalingv1.VerticalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{Name: "prometheus-vpa", Namespace: r.GardenNamespace}},
 			&vpaautoscalingv1.VerticalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{Name: "aggregate-prometheus-vpa", Namespace: r.GardenNamespace}},
 		); err != nil {
@@ -383,7 +387,7 @@ func (r *Reconciler) runReconcileSeedFlow(
 	}
 
 	if gardenletfeatures.FeatureGate.Enabled(features.ManagedIstio) {
-		istioCRDs := istio.NewIstioCRD(chartApplier, seedClient)
+		istioCRDs := istio.NewCRD(chartApplier, seedClient)
 		if err := istioCRDs.Deploy(ctx); err != nil {
 			return err
 		}
@@ -502,7 +506,7 @@ func (r *Reconciler) runReconcileSeedFlow(
 				shootInfo := &corev1.ConfigMap{}
 				maintenanceBegin := "220000-0000"
 				maintenanceEnd := "230000-0000"
-				if err := seedClient.Get(ctx, kutil.Key(metav1.NamespaceSystem, v1beta1constants.ConfigMapNameShootInfo), shootInfo); err != nil {
+				if err := seedClient.Get(ctx, kubernetesutils.Key(metav1.NamespaceSystem, v1beta1constants.ConfigMapNameShootInfo), shootInfo); err != nil {
 					if !apierrors.IsNotFound(err) {
 						return err
 					}
@@ -528,7 +532,7 @@ func (r *Reconciler) runReconcileSeedFlow(
 					},
 				}
 
-				currentResources, err := kutil.GetContainerResourcesInStatefulSet(ctx, seedClient, kutil.Key(r.GardenNamespace, v1beta1constants.StatefulSetNameLoki))
+				currentResources, err := kubernetesutils.GetContainerResourcesInStatefulSet(ctx, seedClient, kubernetesutils.Key(r.GardenNamespace, v1beta1constants.StatefulSetNameLoki))
 				if err != nil {
 					return err
 				}
@@ -565,6 +569,8 @@ func (r *Reconciler) runReconcileSeedFlow(
 			metricsserver.CentralLoggingConfiguration,
 			nodeproblemdetector.CentralLoggingConfiguration,
 			vpnshoot.CentralLoggingConfiguration,
+			// shoot addon components
+			kubernetesdashboard.CentralLoggingConfiguration,
 		}
 
 		if gardenlethelper.IsEventLoggingEnabled(&r.Config) {
@@ -603,7 +609,7 @@ func (r *Reconciler) runReconcileSeedFlow(
 		}
 
 		// Need stable order before passing the dashboards to Grafana config to avoid unnecessary changes
-		kutil.ByName().Sort(existingConfigMaps)
+		kubernetesutils.ByName().Sort(existingConfigMaps)
 		modifyFilter := `
     Name          modify
     Match         kubernetes.*
@@ -666,7 +672,7 @@ func (r *Reconciler) runReconcileSeedFlow(
 
 	if hvpaEnabled {
 		for resource := range monitoringResources {
-			currentResources, err := kutil.GetContainerResourcesInStatefulSet(ctx, seedClient, kutil.Key(r.GardenNamespace, resource))
+			currentResources, err := kubernetesutils.GetContainerResourcesInStatefulSet(ctx, seedClient, kubernetesutils.Key(r.GardenNamespace, resource))
 			if err != nil {
 				return err
 			}
@@ -715,7 +721,7 @@ func (r *Reconciler) runReconcileSeedFlow(
 	applierOptions[hvpaGK] = retainStatusInformation
 	applierOptions[issuerGK] = retainStatusInformation
 
-	wildcardCert, err := gutil.GetWildcardCertificate(ctx, seedClient)
+	wildcardCert, err := gardenerutils.GetWildcardCertificate(ctx, seedClient)
 	if err != nil {
 		return err
 	}
@@ -729,12 +735,12 @@ func (r *Reconciler) runReconcileSeedFlow(
 		grafanaIngressTLSSecretName = wildcardCert.GetName()
 		prometheusIngressTLSSecretName = wildcardCert.GetName()
 	} else {
-		grafanaIngressTLSSecret, err := secretsManager.Generate(ctx, &secretutils.CertificateSecretConfig{
+		grafanaIngressTLSSecret, err := secretsManager.Generate(ctx, &secretsutils.CertificateSecretConfig{
 			Name:                        "grafana-tls",
 			CommonName:                  "grafana",
 			Organization:                []string{"gardener.cloud:monitoring:ingress"},
 			DNSNames:                    []string{seed.GetIngressFQDN(grafanaPrefix)},
-			CertType:                    secretutils.ServerCert,
+			CertType:                    secretsutils.ServerCert,
 			Validity:                    pointer.Duration(ingressTLSCertificateValidity),
 			SkipPublishingCACertificate: true,
 		}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCASeed))
@@ -742,12 +748,12 @@ func (r *Reconciler) runReconcileSeedFlow(
 			return err
 		}
 
-		prometheusIngressTLSSecret, err := secretsManager.Generate(ctx, &secretutils.CertificateSecretConfig{
+		prometheusIngressTLSSecret, err := secretsManager.Generate(ctx, &secretsutils.CertificateSecretConfig{
 			Name:                        "aggregate-prometheus-tls",
 			CommonName:                  "prometheus",
 			Organization:                []string{"gardener.cloud:monitoring:ingress"},
 			DNSNames:                    []string{seed.GetIngressFQDN(prometheusPrefix)},
-			CertType:                    secretutils.ServerCert,
+			CertType:                    secretsutils.ServerCert,
 			Validity:                    pointer.Duration(ingressTLSCertificateValidity),
 			SkipPublishingCACertificate: true,
 		}, secretsmanager.SignedByCA(v1beta1constants.SecretNameCASeed))
@@ -770,11 +776,16 @@ func (r *Reconciler) runReconcileSeedFlow(
 	}
 	sniEnabledOrInUse := anySNIInUse || gardenletfeatures.FeatureGate.Enabled(features.APIServerSNI)
 
-	if err := cleanupOrphanExposureClassHandlerResources(ctx, log, seedClient, r.Config.ExposureClassHandlers); err != nil {
+	seedIsOriginOfClusterIdentity, err := clusteridentity.IsClusterIdentityEmptyOrFromOrigin(ctx, seedClient, v1beta1constants.ClusterIdentityOriginSeed)
+	if err != nil {
 		return err
 	}
 
-	ingressClass, err := gutil.ComputeNginxIngressClassForSeed(seed.GetInfo(), seed.GetInfo().Status.KubernetesVersion)
+	if err := cleanupOrphanExposureClassHandlerResources(ctx, log, seedClient, r.Config.ExposureClassHandlers, seed.GetInfo().Spec.Provider.Zones); err != nil {
+		return err
+	}
+
+	ingressClass, err := gardenerutils.ComputeNginxIngressClassForSeed(seed.GetInfo(), seed.GetInfo().Status.KubernetesVersion)
 	if err != nil {
 		return err
 	}
@@ -877,7 +888,7 @@ func (r *Reconciler) runReconcileSeedFlow(
 
 	// TODO(rfranzke): Delete this in a future version.
 	{
-		if err := kutil.DeleteObjects(ctx, seedClient,
+		if err := kubernetesutils.DeleteObjects(ctx, seedClient,
 			&resourcesv1alpha1.ManagedResource{ObjectMeta: metav1.ObjectMeta{Name: "gardener-seed-admission-controller", Namespace: r.GardenNamespace}},
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "managedresource-gardener-seed-admission-controller", Namespace: r.GardenNamespace}},
 		); err != nil {
@@ -913,10 +924,6 @@ func (r *Reconciler) runReconcileSeedFlow(
 			Dependencies: flow.NewTaskIDs(nginxLBReady),
 		})
 		_ = g.Add(flow.Task{
-			Name: "Deploying cluster-identity",
-			Fn:   clusteridentity.NewForSeed(seedClient, r.GardenNamespace, *seed.GetInfo().Status.ClusterIdentity).Deploy,
-		})
-		_ = g.Add(flow.Task{
 			Name: "Deploying cluster-autoscaler",
 			Fn:   clusterautoscaler.NewBootstrapper(seedClient, r.GardenNamespace).Deploy,
 		})
@@ -941,6 +948,26 @@ func (r *Reconciler) runReconcileSeedFlow(
 			Fn:   systemResources.Deploy,
 		})
 	)
+
+	// Use the managed resource for cluster-identity only if there is no cluster-identity config map in kube-system namespace from a different origin than seed.
+	// This prevents gardenlet from deleting the config map accidentally on seed deletion when it was created by a different party (gardener-apiserver or shoot).
+	if seedIsOriginOfClusterIdentity {
+		_ = g.Add(flow.Task{
+			Name: "Deploying cluster-identity",
+			Fn:   clusteridentity.NewForSeed(seedClient, r.GardenNamespace, *seed.GetInfo().Status.ClusterIdentity).Deploy,
+		})
+	} else {
+		// This is the migration scenario for the "cluster-identity" managed resource.
+		// In the first step the "cluster-identity" config map is annotated with "resources.gardener.cloud/mode: Ignore"
+		// In the second step (next release) the migration managed resource will be destroyed.
+		// In the last step the migration scenario will be removed entirely.
+		// TODO(oliver-goetz): Remove this migration scenario in a future release.
+		clusterIdentity := clusteridentity.NewIgnoredManagedResourceForSeed(seedClient, r.GardenNamespace, "")
+		_ = g.Add(flow.Task{
+			Name: "Destroying cluster-identity migration",
+			Fn:   component.OpDestroyAndWait(clusterIdentity).Destroy,
+		})
+	}
 
 	// When the seed is the garden cluster then the VPA is reconciled by the gardener-operator
 	if !seedIsGarden {
@@ -1048,7 +1075,7 @@ func deployBackupBucketInGarden(ctx context.Context, k8sGardenClient client.Clie
 func ResizeOrDeleteLokiDataVolumeIfStorageNotTheSame(ctx context.Context, log logr.Logger, k8sClient client.Client, newStorageQuantity resource.Quantity) error {
 	// Check if we need resizing
 	pvc := &corev1.PersistentVolumeClaim{}
-	if err := k8sClient.Get(ctx, kutil.Key(v1beta1constants.GardenNamespace, "loki-loki-0"), pvc); err != nil {
+	if err := k8sClient.Get(ctx, kubernetesutils.Key(v1beta1constants.GardenNamespace, "loki-loki-0"), pvc); err != nil {
 		return client.IgnoreNotFound(err)
 	}
 
@@ -1091,61 +1118,126 @@ func cleanupOrphanExposureClassHandlerResources(
 	log logr.Logger,
 	c client.Client,
 	exposureClassHandlers []config.ExposureClassHandler,
+	zones []string,
 ) error {
+	// Remove ordinary, orphaned istio exposure class namespaces
 	exposureClassHandlerNamespaces := &corev1.NamespaceList{}
 	if err := c.List(ctx, exposureClassHandlerNamespaces, client.MatchingLabels{v1beta1constants.GardenRole: v1beta1constants.GardenRoleExposureClassHandler}); err != nil {
 		return err
 	}
 
 	for _, namespace := range exposureClassHandlerNamespaces.Items {
-		log = log.WithValues("namespace", client.ObjectKeyFromObject(&namespace))
-
-		var exposureClassHandlerExists bool
-		for _, handler := range exposureClassHandlers {
-			if *handler.SNI.Ingress.Namespace == namespace.Name {
-				exposureClassHandlerExists = true
-				break
+		if err := cleanupOrphanIstioNamespace(ctx, log, c, namespace, true, func() bool {
+			for _, handler := range exposureClassHandlers {
+				if *handler.SNI.Ingress.Namespace == namespace.Name {
+					return true
+				}
 			}
-		}
-		if exposureClassHandlerExists {
-			continue
-		}
-		log.Info("Namespace is orphan as there is no ExposureClass handler in the gardenlet configuration anymore")
-
-		// Determine the corresponding handler name to the ExposureClass handler resources.
-		handlerName, ok := namespace.Labels[v1beta1constants.LabelExposureClassHandlerName]
-		if !ok {
-			log.Info("Cannot delete ExposureClass handler resources as the corresponging handler is unknown and it is not save to remove them")
-			continue
-		}
-
-		gatewayList := &istiov1beta1.GatewayList{}
-		if err := c.List(ctx, gatewayList); err != nil {
+			return false
+		}); err != nil {
 			return err
 		}
+	}
 
-		var exposureClassHandlerInUse bool
-		for _, gateway := range gatewayList.Items {
-			if gateway.Name != v1beta1constants.DeploymentNameKubeAPIServer && gateway.Name != v1beta1constants.DeploymentNameVPNSeedServer {
-				continue
+	// Remove zonal, orphaned istio exposure class namespaces
+	zonalExposureClassHandlerNamespaces := &corev1.NamespaceList{}
+	if err := c.List(ctx, zonalExposureClassHandlerNamespaces, client.MatchingLabelsSelector{
+		Selector: labels.NewSelector().Add(utils.MustNewRequirement(v1beta1constants.GardenRole, selection.Exists)).Add(utils.MustNewRequirement(v1beta1constants.LabelExposureClassHandlerName, selection.Exists)),
+	}); err != nil {
+		return err
+	}
+
+	zoneSet := sets.New[string](zones...)
+	for _, namespace := range zonalExposureClassHandlerNamespaces.Items {
+		if ok, zone := operation.IsZonalIstioExtension(namespace.Labels); ok {
+			if err := cleanupOrphanIstioNamespace(ctx, log, c, namespace, true, func() bool {
+				if !zoneSet.Has(zone) {
+					return false
+				}
+				for _, handler := range exposureClassHandlers {
+					if handler.Name == namespace.Labels[v1beta1constants.LabelExposureClassHandlerName] {
+						return true
+					}
+				}
+				return false
+			}); err != nil {
+				return err
 			}
+		}
+	}
+
+	// Remove zonal, orphaned istio default namespaces
+	zonalIstioNamespaces := &corev1.NamespaceList{}
+	if err := c.List(ctx, zonalIstioNamespaces, client.MatchingLabelsSelector{
+		Selector: labels.NewSelector().Add(utils.MustNewRequirement(operation.IstioDefaultZoneKey, selection.Exists)),
+	}); err != nil {
+		return err
+	}
+
+	for _, namespace := range zonalIstioNamespaces.Items {
+		if ok, zone := operation.IsZonalIstioExtension(namespace.Labels); ok {
+			if err := cleanupOrphanIstioNamespace(ctx, log, c, namespace, false, func() bool {
+				return zoneSet.Has(zone)
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func cleanupOrphanIstioNamespace(
+	ctx context.Context,
+	log logr.Logger,
+	c client.Client,
+	namespace corev1.Namespace,
+	needsHandler bool,
+	isAliveFunc func() bool,
+) error {
+	log = log.WithValues("namespace", client.ObjectKeyFromObject(&namespace))
+
+	if isAlive := isAliveFunc(); isAlive {
+		return nil
+	}
+	log.Info("Namespace is orphan as there is no ExposureClass handler in the gardenlet configuration anymore or the zone was removed")
+
+	// Determine the corresponding handler name to the ExposureClass handler resources.
+	handlerName, ok := namespace.Labels[v1beta1constants.LabelExposureClassHandlerName]
+	if !ok && needsHandler {
+		log.Info("Cannot delete ExposureClass handler resources as the corresponding handler is unknown and it is not save to remove them")
+		return nil
+	}
+
+	gatewayList := &istiov1beta1.GatewayList{}
+	if err := c.List(ctx, gatewayList); err != nil {
+		return err
+	}
+
+	for _, gateway := range gatewayList.Items {
+		if gateway.Name != v1beta1constants.DeploymentNameKubeAPIServer && gateway.Name != v1beta1constants.DeploymentNameVPNSeedServer {
+			continue
+		}
+		if needsHandler {
 			// Check if the gateway still selects the ExposureClass handler ingress gateway.
 			if value, ok := gateway.Spec.Selector[v1beta1constants.LabelExposureClassHandlerName]; ok && value == handlerName {
-				exposureClassHandlerInUse = true
-				break
+				log.Info("Resources of ExposureClass handler cannot be deleted as they are still in use", "exposureClassHandler", handlerName)
+				return nil
+			}
+		} else {
+			_, zone := operation.IsZonalIstioExtension(namespace.Labels)
+			if value, ok := gateway.Spec.Selector[operation.IstioDefaultZoneKey]; ok && strings.HasSuffix(value, zone) {
+				log.Info("Resources of default zonal istio handler cannot be deleted as they are still in use", "zone", zone)
+				return nil
 			}
 		}
-		if exposureClassHandlerInUse {
-			log.Info("Resources of ExposureClass handler cannot be deleted as they are still in use", "exposureClassHandler", handlerName)
-			continue
-		}
+	}
 
-		// ExposureClass handler is orphan and not used by any Shoots anymore
-		// therefore it is save to clean it up.
-		log.Info("Delete orphan ExposureClass handler namespace")
-		if err := c.Delete(ctx, &namespace); client.IgnoreNotFound(err) != nil {
-			return err
-		}
+	// ExposureClass handler is orphan and not used by any Shoots anymore
+	// therefore it is save to clean it up.
+	log.Info("Delete orphan ExposureClass handler namespace")
+	if err := c.Delete(ctx, &namespace); client.IgnoreNotFound(err) != nil {
+		return err
 	}
 
 	return nil
@@ -1185,7 +1277,7 @@ func waitForNginxIngressServiceAndGetDNSComponent(
 			return nil, err
 		}
 
-		ingressLoadBalancerAddress, err = kutil.WaitUntilLoadBalancerIsReady(
+		ingressLoadBalancerAddress, err = kubernetesutils.WaitUntilLoadBalancerIsReady(
 			ctx,
 			log,
 			seedClient,
@@ -1201,19 +1293,13 @@ func waitForNginxIngressServiceAndGetDNSComponent(
 	return getManagedIngressDNSRecord(log, seedClient, gardenNamespaceName, seed.GetInfo().Spec.DNS, secretData, seed.GetIngressFQDN("*"), ingressLoadBalancerAddress), nil
 }
 
-// CleanupLegacyPriorityClasses deletes reversed-vpn-auth-server and fluent-bit priority classes.
-func CleanupLegacyPriorityClasses(ctx context.Context, seedClient client.Client) error {
-	// TODO(ialidzhikov): Clean up the loki PriorityClass as well in a future release.
-	for _, name := range []string{"reversed-vpn-auth-server", "fluent-bit"} {
-		priorityClass := &schedulingv1.PriorityClass{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: name,
-			},
-		}
-		if err := client.IgnoreNotFound(seedClient.Delete(ctx, priorityClass)); err != nil {
-			return err
-		}
+// CleanupLegacyLokiPriorityClass deletes the loki priority class.
+func CleanupLegacyLokiPriorityClass(ctx context.Context, seedClient client.Client) error {
+	priorityClass := &schedulingv1.PriorityClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "loki",
+		},
 	}
 
-	return nil
+	return client.IgnoreNotFound(seedClient.Delete(ctx, priorityClass))
 }

@@ -33,8 +33,8 @@ import (
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/gardenlet/bootstrap/certificate"
-	bootstraputil "github.com/gardener/gardener/pkg/gardenlet/bootstrap/util"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	gardenletbootstraputil "github.com/gardener/gardener/pkg/gardenlet/bootstrap/util"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 // RequestKubeconfigWithBootstrapClient creates a kubeconfig with a signed certificate using the given bootstrap client
@@ -64,13 +64,13 @@ func RequestKubeconfigWithBootstrapClient(
 	}
 
 	log.Info("Storing kubeconfig with bootstrapped certificate in kubeconfig secret on target cluster")
-	kubeconfig, err := bootstraputil.UpdateGardenKubeconfigSecret(ctx, bootstrapClientSet.RESTConfig(), certData, privateKeyData, seedClient, kubeconfigKey)
+	kubeconfig, err := gardenletbootstraputil.UpdateGardenKubeconfigSecret(ctx, bootstrapClientSet.RESTConfig(), certData, privateKeyData, seedClient, kubeconfigKey)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("unable to update secret %q with bootstrapped kubeconfig: %w", kubeconfigKey.String(), err)
 	}
 
 	log.Info("Deleting boostrap kubeconfig secret from target cluster")
-	if err := kutil.DeleteObject(ctx, seedClient, &corev1.Secret{
+	if err := kubernetesutils.DeleteObject(ctx, seedClient, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      bootstrapKubeconfigKey.Name,
 			Namespace: bootstrapKubeconfigKey.Namespace,
@@ -86,7 +86,7 @@ func RequestKubeconfigWithBootstrapClient(
 // also deletes the corresponding ClusterRoleBinding.
 func DeleteBootstrapAuth(ctx context.Context, reader client.Reader, writer client.Writer, csrName, seedName string) error {
 	csr := &certificatesv1.CertificateSigningRequest{}
-	if err := reader.Get(ctx, kutil.Key(csrName), csr); err != nil {
+	if err := reader.Get(ctx, kubernetesutils.Key(csrName), csr); err != nil {
 		return err
 	}
 
@@ -104,7 +104,7 @@ func DeleteBootstrapAuth(ctx context.Context, reader client.Reader, writer clien
 		)
 
 	case strings.HasPrefix(csr.Spec.Username, serviceaccount.ServiceAccountUsernamePrefix):
-		namespace, name, err := serviceaccount.SplitUsername(csr.Spec.Username)
+		serviceAccountNamespace, serviceAccountName, err := serviceaccount.SplitUsername(csr.Spec.Username)
 		if err != nil {
 			return err
 		}
@@ -112,17 +112,17 @@ func DeleteBootstrapAuth(ctx context.Context, reader client.Reader, writer clien
 		resourcesToDelete = append(resourcesToDelete,
 			&corev1.ServiceAccount{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      name,
-					Namespace: namespace,
+					Name:      serviceAccountName,
+					Namespace: serviceAccountNamespace,
 				},
 			},
 			&rbacv1.ClusterRoleBinding{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: bootstraputil.ClusterRoleBindingName(v1beta1constants.GardenNamespace, seedName),
+					Name: gardenletbootstraputil.ClusterRoleBindingName(serviceAccountNamespace, serviceAccountName),
 				},
 			},
 		)
 	}
 
-	return kutil.DeleteObjects(ctx, writer, resourcesToDelete...)
+	return kubernetesutils.DeleteObjects(ctx, writer, resourcesToDelete...)
 }

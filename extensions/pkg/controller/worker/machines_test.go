@@ -17,11 +17,6 @@ package worker_test
 import (
 	"time"
 
-	extensionscontroller "github.com/gardener/gardener/extensions/pkg/controller"
-	. "github.com/gardener/gardener/extensions/pkg/controller/worker"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/types"
@@ -30,6 +25,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/pointer"
+
+	extensionscontroller "github.com/gardener/gardener/extensions/pkg/controller"
+	. "github.com/gardener/gardener/extensions/pkg/controller/worker"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 )
 
 var _ = Describe("Machines", func() {
@@ -115,7 +115,7 @@ var _ = Describe("Machines", func() {
 					Status: gardencorev1beta1.ShootStatus{
 						Credentials: &gardencorev1beta1.ShootCredentials{
 							Rotation: &gardencorev1beta1.ShootCredentialsRotation{
-								CertificateAuthorities: &gardencorev1beta1.ShootCARotation{
+								CertificateAuthorities: &gardencorev1beta1.CARotation{
 									LastInitiationTime: &lastCARotationInitiation,
 								},
 								ServiceAccountKey: &gardencorev1beta1.ShootServiceAccountKeyRotation{

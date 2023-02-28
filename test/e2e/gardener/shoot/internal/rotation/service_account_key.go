@@ -26,14 +26,15 @@ import (
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
 	"github.com/gardener/gardener/test/framework"
+	"github.com/gardener/gardener/test/utils/rotation"
 )
 
 // ServiceAccountKeyVerifier verifies the service account key rotation.
 type ServiceAccountKeyVerifier struct {
 	*framework.ShootCreationFramework
 
-	secretsBefore   secretConfigNamesToSecrets
-	secretsPrepared secretConfigNamesToSecrets
+	secretsBefore   rotation.SecretConfigNamesToSecrets
+	secretsPrepared rotation.SecretConfigNamesToSecrets
 }
 
 const (
@@ -45,12 +46,12 @@ const (
 func (v *ServiceAccountKeyVerifier) Before(ctx context.Context) {
 	seedClient := v.ShootFramework.SeedClient.Client()
 
-	By("Verifying old service account key secret")
+	By("Verify old service account key secret")
 	Eventually(func(g Gomega) {
 		secretList := &corev1.SecretList{}
 		g.Expect(seedClient.List(ctx, secretList, client.InNamespace(v.Shoot.Status.TechnicalID), managedByGardenletSecretsManager)).To(Succeed())
 
-		grouped := groupByName(secretList.Items)
+		grouped := rotation.GroupByName(secretList.Items)
 		g.Expect(grouped[serviceAccountKey]).To(HaveLen(1), "service account key secret should get created, but not rotated yet")
 		g.Expect(grouped[serviceAccountKeyBundle]).To(HaveLen(1), "service account key bundle secret should get created, but not rotated yet")
 		v.secretsBefore = grouped
@@ -61,6 +62,8 @@ func (v *ServiceAccountKeyVerifier) Before(ctx context.Context) {
 func (v *ServiceAccountKeyVerifier) ExpectPreparingStatus(g Gomega) {
 	g.Expect(v1beta1helper.GetShootServiceAccountKeyRotationPhase(v.Shoot.Status.Credentials)).To(Equal(gardencorev1beta1.RotationPreparing))
 	g.Expect(time.Now().UTC().Sub(v.Shoot.Status.Credentials.Rotation.ServiceAccountKey.LastInitiationTime.Time.UTC())).To(BeNumerically("<=", time.Minute))
+	g.Expect(v.Shoot.Status.Credentials.Rotation.ServiceAccountKey.LastInitiationFinishedTime).To(BeNil())
+	g.Expect(v.Shoot.Status.Credentials.Rotation.ServiceAccountKey.LastCompletionTriggeredTime).To(BeNil())
 }
 
 // AfterPrepared is called when the Shoot is in Prepared status.
@@ -68,13 +71,15 @@ func (v *ServiceAccountKeyVerifier) AfterPrepared(ctx context.Context) {
 	seedClient := v.ShootFramework.SeedClient.Client()
 
 	Expect(v.Shoot.Status.Credentials.Rotation.ServiceAccountKey.Phase).To(Equal(gardencorev1beta1.RotationPrepared), "rotation phase should be 'Prepared'")
+	Expect(v.Shoot.Status.Credentials.Rotation.ServiceAccountKey.LastInitiationFinishedTime).NotTo(BeNil())
+	Expect(v.Shoot.Status.Credentials.Rotation.ServiceAccountKey.LastInitiationFinishedTime.After(v.Shoot.Status.Credentials.Rotation.ServiceAccountKey.LastInitiationTime.Time)).To(BeTrue())
 
-	By("Verifying service account key bundle secret")
+	By("Verify service account key bundle secret")
 	Eventually(func(g Gomega) {
 		secretList := &corev1.SecretList{}
 		g.Expect(seedClient.List(ctx, secretList, client.InNamespace(v.Shoot.Status.TechnicalID), managedByGardenletSecretsManager)).To(Succeed())
 
-		grouped := groupByName(secretList.Items)
+		grouped := rotation.GroupByName(secretList.Items)
 		g.Expect(grouped[serviceAccountKey]).To(HaveLen(2), "service account key secret should get rotated, but old service account key is kept")
 		g.Expect(grouped[serviceAccountKeyBundle]).To(HaveLen(1))
 
@@ -87,6 +92,9 @@ func (v *ServiceAccountKeyVerifier) AfterPrepared(ctx context.Context) {
 // ExpectCompletingStatus is called while waiting for the Completing status.
 func (v *ServiceAccountKeyVerifier) ExpectCompletingStatus(g Gomega) {
 	g.Expect(v1beta1helper.GetShootServiceAccountKeyRotationPhase(v.Shoot.Status.Credentials)).To(Equal(gardencorev1beta1.RotationCompleting))
+	Expect(v.Shoot.Status.Credentials.Rotation.ServiceAccountKey.LastCompletionTriggeredTime).NotTo(BeNil())
+	Expect(v.Shoot.Status.Credentials.Rotation.ServiceAccountKey.LastCompletionTriggeredTime.Time.Equal(v.Shoot.Status.Credentials.Rotation.ServiceAccountKey.LastInitiationFinishedTime.Time) ||
+		v.Shoot.Status.Credentials.Rotation.ServiceAccountKey.LastCompletionTriggeredTime.After(v.Shoot.Status.Credentials.Rotation.ServiceAccountKey.LastInitiationFinishedTime.Time)).To(BeTrue())
 }
 
 // AfterCompleted is called when the Shoot is in Completed status.
@@ -96,13 +104,15 @@ func (v *ServiceAccountKeyVerifier) AfterCompleted(ctx context.Context) {
 	serviceAccountKeyRotation := v.Shoot.Status.Credentials.Rotation.ServiceAccountKey
 	Expect(v1beta1helper.GetShootServiceAccountKeyRotationPhase(v.Shoot.Status.Credentials)).To(Equal(gardencorev1beta1.RotationCompleted))
 	Expect(serviceAccountKeyRotation.LastCompletionTime.Time.UTC().After(serviceAccountKeyRotation.LastInitiationTime.Time.UTC())).To(BeTrue())
+	Expect(serviceAccountKeyRotation.LastInitiationFinishedTime).To(BeNil())
+	Expect(serviceAccountKeyRotation.LastCompletionTriggeredTime).To(BeNil())
 
-	By("Verifying new service account key secret")
+	By("Verify new service account key secret")
 	Eventually(func(g Gomega) {
 		secretList := &corev1.SecretList{}
 		g.Expect(seedClient.List(ctx, secretList, client.InNamespace(v.Shoot.Status.TechnicalID), managedByGardenletSecretsManager)).To(Succeed())
 
-		grouped := groupByName(secretList.Items)
+		grouped := rotation.GroupByName(secretList.Items)
 		g.Expect(grouped[serviceAccountKey]).To(HaveLen(1), "old service account key secret should get cleaned up")
 		g.Expect(grouped[serviceAccountKeyBundle]).To(HaveLen(1))
 

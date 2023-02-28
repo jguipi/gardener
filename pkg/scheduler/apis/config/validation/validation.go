@@ -15,27 +15,27 @@
 package validation
 
 import (
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/gardener/gardener/pkg/logger"
-	schedulerapi "github.com/gardener/gardener/pkg/scheduler/apis/config"
-	"k8s.io/apimachinery/pkg/util/sets"
+	schedulerconfig "github.com/gardener/gardener/pkg/scheduler/apis/config"
 )
 
 // ValidateConfiguration validates the configuration.
-func ValidateConfiguration(config *schedulerapi.SchedulerConfiguration) field.ErrorList {
+func ValidateConfiguration(config *schedulerconfig.SchedulerConfiguration) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	allErrs = append(allErrs, validateStrategy(config.Schedulers.Shoot.Strategy, field.NewPath("schedulers", "shoot", "strategy"))...)
 
 	if config.LogLevel != "" {
-		if !sets.NewString(logger.AllLogLevels...).Has(config.LogLevel) {
+		if !sets.New[string](logger.AllLogLevels...).Has(config.LogLevel) {
 			allErrs = append(allErrs, field.NotSupported(field.NewPath("logLevel"), config.LogLevel, logger.AllLogLevels))
 		}
 	}
 
 	if config.LogFormat != "" {
-		if !sets.NewString(logger.AllLogFormats...).Has(config.LogFormat) {
+		if !sets.New[string](logger.AllLogFormats...).Has(config.LogFormat) {
 			allErrs = append(allErrs, field.NotSupported(field.NewPath("logFormat"), config.LogFormat, logger.AllLogFormats))
 		}
 	}
@@ -43,13 +43,13 @@ func ValidateConfiguration(config *schedulerapi.SchedulerConfiguration) field.Er
 	return allErrs
 }
 
-func validateStrategy(strategy schedulerapi.CandidateDeterminationStrategy, fldPath *field.Path) field.ErrorList {
+func validateStrategy(strategy schedulerconfig.CandidateDeterminationStrategy, fldPath *field.Path) field.ErrorList {
 	var (
 		allErrs             = field.ErrorList{}
 		supportedStrategies []string
 	)
 
-	for _, s := range schedulerapi.Strategies {
+	for _, s := range schedulerconfig.Strategies {
 		supportedStrategies = append(supportedStrategies, string(s))
 		if s == strategy {
 			return allErrs

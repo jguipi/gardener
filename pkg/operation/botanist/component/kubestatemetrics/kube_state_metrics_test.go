@@ -17,20 +17,6 @@ package kubestatemetrics_test
 import (
 	"context"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	. "github.com/gardener/gardener/pkg/operation/botanist/component/kubestatemetrics"
-	componenttest "github.com/gardener/gardener/pkg/operation/botanist/component/test"
-	"github.com/gardener/gardener/pkg/utils/retry"
-	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -44,6 +30,20 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	. "github.com/gardener/gardener/pkg/operation/botanist/component/kubestatemetrics"
+	componenttest "github.com/gardener/gardener/pkg/operation/botanist/component/test"
+	"github.com/gardener/gardener/pkg/utils/retry"
+	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
+	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("KubeStateMetrics", func() {
@@ -171,7 +171,7 @@ var _ = Describe("KubeStateMetrics", func() {
 			return obj
 		}
 		serviceFor = func(clusterType component.ClusterType) *corev1.Service {
-			return &corev1.Service{
+			obj := &corev1.Service{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "v1",
 					Kind:       "Service",
@@ -198,6 +198,15 @@ var _ = Describe("KubeStateMetrics", func() {
 					}},
 				},
 			}
+
+			if clusterType == component.ClusterTypeShoot {
+				obj.Annotations = map[string]string{
+					"networking.resources.gardener.cloud/from-policy-pod-label-selector": "all-scrape-targets",
+					"networking.resources.gardener.cloud/from-policy-allowed-ports":      `[{"protocol":"TCP","port":8080}]`,
+				}
+			}
+
+			return obj
 		}
 		deploymentFor = func(clusterType component.ClusterType) *appsv1.Deployment {
 			var (
@@ -228,8 +237,7 @@ var _ = Describe("KubeStateMetrics", func() {
 					"type":                             string(clusterType),
 					"role":                             "monitoring",
 					"networking.gardener.cloud/to-dns": "allowed",
-					"networking.gardener.cloud/from-prometheus":   "allowed",
-					"networking.gardener.cloud/to-seed-apiserver": "allowed",
+					"networking.gardener.cloud/to-runtime-apiserver": "allowed",
 				}
 				args = []string{
 					"--port=8080",
@@ -253,8 +261,7 @@ var _ = Describe("KubeStateMetrics", func() {
 					"type":                             string(clusterType),
 					"gardener.cloud/role":              "monitoring",
 					"networking.gardener.cloud/to-dns": "allowed",
-					"networking.gardener.cloud/from-prometheus":    "allowed",
-					"networking.gardener.cloud/to-shoot-apiserver": "allowed",
+					"networking.resources.gardener.cloud/to-kube-apiserver-tcp-443": "allowed",
 				}
 				args = []string{
 					"--port=8080",
@@ -390,7 +397,7 @@ var _ = Describe("KubeStateMetrics", func() {
 		ksm = New(c, namespace, sm, values)
 		managedResourceName = ""
 
-		By("creating secrets managed outside of this package for whose secretsmanager.Get() will be called")
+		By("Create secrets managed outside of this package for whose secretsmanager.Get() will be called")
 		Expect(c.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "generic-token-kubeconfig", Namespace: namespace}})).To(Succeed())
 
 		serviceAccount = &corev1.ServiceAccount{
@@ -448,7 +455,6 @@ var _ = Describe("KubeStateMetrics", func() {
 							ContainerName:    "*",
 							ControlledValues: &vpaControlledValues,
 							MinAllowed: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("10m"),
 								corev1.ResourceMemory: resource.MustParse("32Mi"),
 							},
 						},

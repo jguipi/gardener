@@ -18,13 +18,13 @@ import (
 	"context"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	"github.com/gardener/gardener/pkg/controllermanager/apis/config"
-
 	"github.com/go-logr/logr"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	"github.com/gardener/gardener/pkg/controllermanager/apis/config"
 )
 
 // GetThresholdForCondition returns the threshold duration from the configuration for the provided condition type.
@@ -72,30 +72,30 @@ func setToProgressingIfWithinThreshold(
 	switch condition.Status {
 	case gardencorev1beta1.ConditionTrue:
 		if conditionThreshold == 0 {
-			return gardencorev1beta1helper.UpdatedConditionWithClock(clock, condition, eventualConditionStatus, reason, message, codes...)
+			return v1beta1helper.UpdatedConditionWithClock(clock, condition, eventualConditionStatus, reason, message, codes...)
 		}
-		return gardencorev1beta1helper.UpdatedConditionWithClock(clock, condition, gardencorev1beta1.ConditionProgressing, reason, message, codes...)
+		return v1beta1helper.UpdatedConditionWithClock(clock, condition, gardencorev1beta1.ConditionProgressing, reason, message, codes...)
 
 	case gardencorev1beta1.ConditionProgressing:
 		if conditionThreshold == 0 {
-			return gardencorev1beta1helper.UpdatedConditionWithClock(clock, condition, eventualConditionStatus, reason, message, codes...)
+			return v1beta1helper.UpdatedConditionWithClock(clock, condition, eventualConditionStatus, reason, message, codes...)
 		}
 
 		if delta := clock.Now().UTC().Sub(condition.LastTransitionTime.Time.UTC()); delta <= conditionThreshold {
-			return gardencorev1beta1helper.UpdatedConditionWithClock(clock, condition, gardencorev1beta1.ConditionProgressing, reason, message, codes...)
+			return v1beta1helper.UpdatedConditionWithClock(clock, condition, gardencorev1beta1.ConditionProgressing, reason, message, codes...)
 		}
-		return gardencorev1beta1helper.UpdatedConditionWithClock(clock, condition, eventualConditionStatus, reason, message, codes...)
+		return v1beta1helper.UpdatedConditionWithClock(clock, condition, eventualConditionStatus, reason, message, codes...)
 	}
 
-	return gardencorev1beta1helper.UpdatedConditionWithClock(clock, condition, eventualConditionStatus, reason, message, codes...)
+	return v1beta1helper.UpdatedConditionWithClock(clock, condition, eventualConditionStatus, reason, message, codes...)
 }
 
 // PatchSeedCondition patches the seed conditions in case they need to be updated.
 func PatchSeedCondition(ctx context.Context, log logr.Logger, c client.StatusWriter, seed *gardencorev1beta1.Seed, condition gardencorev1beta1.Condition) error {
 	patch := client.StrategicMergeFrom(seed.DeepCopy())
 
-	conditions := gardencorev1beta1helper.MergeConditions(seed.Status.Conditions, condition)
-	if !gardencorev1beta1helper.ConditionsNeedUpdate(seed.Status.Conditions, conditions) {
+	conditions := v1beta1helper.MergeConditions(seed.Status.Conditions, condition)
+	if !v1beta1helper.ConditionsNeedUpdate(seed.Status.Conditions, conditions) {
 		return nil
 	}
 

@@ -22,6 +22,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/clock"
+	testclock "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -31,7 +33,7 @@ import (
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
 	. "github.com/gardener/gardener/pkg/gardenlet/controller/seed/care"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	"github.com/gardener/gardener/pkg/utils/test"
 )
 
@@ -47,6 +49,7 @@ var _ = Describe("Seed Care Control", func() {
 		reconciler       *Reconciler
 		controllerConfig config.SeedCareControllerConfiguration
 		seed             *gardencorev1beta1.Seed
+		fakeClock        *testclock.FakeClock
 	)
 
 	BeforeEach(func() {
@@ -60,13 +63,15 @@ var _ = Describe("Seed Care Control", func() {
 				Name: seedName,
 			},
 		}
+
+		fakeClock = testclock.NewFakeClock(time.Now())
 	})
 
 	Describe("#Care", func() {
 		var req reconcile.Request
 
 		BeforeEach(func() {
-			req = reconcile.Request{NamespacedName: kutil.Key(seedName)}
+			req = reconcile.Request{NamespacedName: kubernetesutils.Key(seedName)}
 
 			controllerConfig = config.SeedCareControllerConfiguration{
 				SyncPeriod: &metav1.Duration{Duration: careSyncPeriod},
@@ -79,16 +84,16 @@ var _ = Describe("Seed Care Control", func() {
 
 		Context("when seed no longer exists", func() {
 			It("should stop reconciling and not requeue", func() {
-				reconciler = &Reconciler{GardenClient: gardenClient, Config: controllerConfig}
+				reconciler = &Reconciler{GardenClient: gardenClient, Config: controllerConfig, Clock: fakeClock}
 
-				req = reconcile.Request{NamespacedName: kutil.Key("some-other-seed")}
+				req = reconcile.Request{NamespacedName: kubernetesutils.Key("some-other-seed")}
 				Expect(reconciler.Reconcile(ctx, req)).To(Equal(reconcile.Result{}))
 			})
 		})
 
 		Context("when health check setup is successful", func() {
 			JustBeforeEach(func() {
-				reconciler = &Reconciler{GardenClient: gardenClient, Config: controllerConfig}
+				reconciler = &Reconciler{GardenClient: gardenClient, Config: controllerConfig, Clock: fakeClock}
 			})
 
 			Context("when no conditions are returned", func() {
@@ -193,7 +198,7 @@ var _ = Describe("Seed Care Control", func() {
 type resultingConditionFunc func(cond []gardencorev1beta1.Condition) []gardencorev1beta1.Condition
 
 func healthCheckFunc(fn resultingConditionFunc) NewHealthCheckFunc {
-	return func(*gardencorev1beta1.Seed, client.Client, *string) HealthCheck {
+	return func(*gardencorev1beta1.Seed, client.Client, clock.Clock, *string) HealthCheck {
 		return fn
 	}
 }

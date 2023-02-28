@@ -24,7 +24,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	. "github.com/gardener/gardener/pkg/utils/test/matchers"
@@ -33,28 +32,28 @@ import (
 var _ = Describe("ShootState Extensions controller tests", func() {
 	var (
 		testNamespace  *corev1.Namespace
-		shootState     *gardencorev1alpha1.ShootState
+		shootState     *gardencorev1beta1.ShootState
 		cluster        *extensionsv1alpha1.Cluster
 		infrastructure *extensionsv1alpha1.Infrastructure
 	)
 
 	BeforeEach(func() {
-		By("creating test namespace")
+		By("Create test Namespace")
 		testNamespace = &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				// create dedicated namespace for each test run, so that we can run multiple tests concurrently for stress tests
 				GenerateName: "garden-",
 			},
 		}
-		Expect(testClient.Create(ctx, testNamespace)).To(Or(Succeed(), BeAlreadyExistsError()))
+		Expect(testClient.Create(ctx, testNamespace)).To(Succeed())
 		log.Info("Created Namespace for test", "namespaceName", testNamespace.Name)
 
 		DeferCleanup(func() {
-			By("deleting test namespace")
+			By("Delete test Namespace")
 			Expect(testClient.Delete(ctx, testNamespace)).To(Or(Succeed(), BeNotFoundError()))
 		})
 
-		shootState = &gardencorev1alpha1.ShootState{
+		shootState = &gardencorev1beta1.ShootState{
 			ObjectMeta: metav1.ObjectMeta{
 				GenerateName: "shoot-",
 				Namespace:    testNamespace.Name,
@@ -149,7 +148,7 @@ var _ = Describe("ShootState Extensions controller tests", func() {
 			By("Wait for ShootState to reflect new status")
 			Eventually(func(g Gomega) {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shootState), shootState)).To(Succeed())
-				g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1alpha1.ExtensionResourceState{
+				g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1beta1.ExtensionResourceState{
 					Kind:  "Infrastructure",
 					Name:  &infrastructure.Name,
 					State: infrastructure.Status.State,
@@ -199,12 +198,12 @@ var _ = Describe("ShootState Extensions controller tests", func() {
 			By("Wait for ShootState to reflect new status")
 			Eventually(func(g Gomega) {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shootState), shootState)).To(Succeed())
-				g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1alpha1.ExtensionResourceState{
+				g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1beta1.ExtensionResourceState{
 					Kind:      "Infrastructure",
 					Name:      &infrastructure.Name,
 					Resources: infrastructure.Status.Resources,
 				}))
-				g.Expect(shootState.Spec.Resources).To(ConsistOf(gardencorev1alpha1.ResourceData{
+				g.Expect(shootState.Spec.Resources).To(ConsistOf(gardencorev1beta1.ResourceData{
 					CrossVersionObjectReference: infrastructure.Status.Resources[0].ResourceRef,
 					Data:                        runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1","data":{"foo":"YmFy"},"kind":"Secret","metadata":{"labels":{"` + testID + `":"` + testRunID + `"},"name":"` + secret.Name + `","namespace":"` + secret.Namespace + `"},"type":"Opaque"}`)},
 				}))
@@ -230,17 +229,17 @@ var _ = Describe("ShootState Extensions controller tests", func() {
 			By("Wait for ShootState to reflect new status")
 			Eventually(func(g Gomega) {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shootState), shootState)).To(Succeed())
-				g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1alpha1.ExtensionResourceState{
+				g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1beta1.ExtensionResourceState{
 					Kind:      "Infrastructure",
 					Name:      &infrastructure.Name,
 					Resources: infrastructure.Status.Resources,
 				}))
 				g.Expect(shootState.Spec.Resources).To(ConsistOf(
-					gardencorev1alpha1.ResourceData{
+					gardencorev1beta1.ResourceData{
 						CrossVersionObjectReference: infrastructure.Status.Resources[0].ResourceRef,
 						Data:                        runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1","data":{"foo":"YmF6"},"kind":"Secret","metadata":{"labels":{"` + testID + `":"` + testRunID + `"},"name":"` + secret.Name + `","namespace":"` + secret.Namespace + `"},"type":"Opaque"}`)},
 					},
-					gardencorev1alpha1.ResourceData{
+					gardencorev1beta1.ResourceData{
 						CrossVersionObjectReference: infrastructure.Status.Resources[1].ResourceRef,
 						Data:                        runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1","data":{"foo":"bar"},"kind":"ConfigMap","metadata":{"labels":{"` + testID + `":"` + testRunID + `"},"name":"` + configMap.Name + `","namespace":"` + configMap.Namespace + `"}}`)},
 					},
@@ -269,19 +268,19 @@ var _ = Describe("ShootState Extensions controller tests", func() {
 			By("Wait for ShootState to reflect new status")
 			Eventually(func(g Gomega) {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shootState), shootState)).To(Succeed())
-				g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1alpha1.ExtensionResourceState{
+				g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1beta1.ExtensionResourceState{
 					Kind:  "Infrastructure",
 					Name:  &infrastructure.Name,
 					State: infrastructure.Status.State,
 				}))
 			}).Should(Succeed())
 
-			By("Adding fake finalizer to Infrastructure to prolong deletion")
+			By("Add fake finalizer to Infrastructure to prolong deletion")
 			patch = client.MergeFrom(infrastructure.DeepCopy())
 			Expect(controllerutil.AddFinalizer(infrastructure, "foo.com/bar")).To(BeTrue())
 			Expect(testClient.Patch(ctx, infrastructure, patch)).To(Succeed())
 
-			By("Deleting Infrastructure")
+			By("Delete Infrastructure")
 			Expect(testClient.Delete(ctx, infrastructure)).To(Succeed())
 
 			By("Patch status.state in Infrastructure to some new information")
@@ -320,14 +319,14 @@ var _ = Describe("ShootState Extensions controller tests", func() {
 				By("Wait for ShootState to reflect new status")
 				Eventually(func(g Gomega) {
 					g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shootState), shootState)).To(Succeed())
-					g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1alpha1.ExtensionResourceState{
+					g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1beta1.ExtensionResourceState{
 						Kind:  "Infrastructure",
 						Name:  &infrastructure.Name,
 						State: &state,
 					}))
 				}).Should(Succeed())
 
-				By("Adding operation annotation")
+				By("Add operation annotation")
 				patch = client.MergeFrom(infrastructure.DeepCopy())
 				metav1.SetMetaDataAnnotation(&infrastructure.ObjectMeta, "gardener.cloud/operation", operationAnnotation)
 				Expect(testClient.Patch(ctx, infrastructure, patch)).To(Succeed())
@@ -340,7 +339,7 @@ var _ = Describe("ShootState Extensions controller tests", func() {
 				By("Ensure that ShootState was not updated")
 				Consistently(func(g Gomega) {
 					g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shootState), shootState)).To(Succeed())
-					g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1alpha1.ExtensionResourceState{
+					g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1beta1.ExtensionResourceState{
 						Kind:  "Infrastructure",
 						Name:  &infrastructure.Name,
 						State: &state,
@@ -355,7 +354,7 @@ var _ = Describe("ShootState Extensions controller tests", func() {
 				By("Wait for ShootState to reflect new status")
 				Eventually(func(g Gomega) {
 					g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shootState), shootState)).To(Succeed())
-					g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1alpha1.ExtensionResourceState{
+					g.Expect(shootState.Spec.Extensions).To(ConsistOf(gardencorev1beta1.ExtensionResourceState{
 						Kind:  "Infrastructure",
 						Name:  &infrastructure.Name,
 						State: infrastructure.Status.State,

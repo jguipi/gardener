@@ -17,17 +17,18 @@ package kubelet_test
 import (
 	"time"
 
+	"github.com/Masterminds/semver"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kubeletconfigv1beta1 "k8s.io/kubelet/config/v1beta1"
+	"k8s.io/utils/pointer"
+
 	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/operatingsystemconfig/original/components"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/operatingsystemconfig/original/components/kubelet"
 	"github.com/gardener/gardener/pkg/utils"
 	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
-	"github.com/Masterminds/semver"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kubeletconfigv1beta1 "k8s.io/kubelet/config/v1beta1"
-	"k8s.io/utils/pointer"
 )
 
 var _ = Describe("Config", func() {
@@ -138,12 +139,15 @@ var _ = Describe("Config", func() {
 				"cpu":    "80m",
 				"memory": "1Gi",
 			},
-			MaxOpenFiles:                   1000000,
-			MaxPods:                        110,
-			NodeStatusUpdateFrequency:      metav1.Duration{Duration: 10 * time.Second},
-			PodsPerCore:                    0,
-			ReadOnlyPort:                   0,
-			ResolverConfig:                 pointer.String("/etc/resolv.conf"),
+			MaxOpenFiles:   1000000,
+			MaxPods:        110,
+			PodsPerCore:    0,
+			ReadOnlyPort:   0,
+			ResolverConfig: pointer.String("/etc/resolv.conf"),
+			RegisterWithTaints: []corev1.Taint{{
+				Key:    "node.gardener.cloud/critical-components-not-ready",
+				Effect: corev1.TaintEffectNoSchedule,
+			}},
 			RuntimeRequestTimeout:          metav1.Duration{Duration: 2 * time.Minute},
 			SerializeImagePulls:            pointer.Bool(true),
 			ServerTLSBootstrap:             true,
@@ -226,22 +230,25 @@ var _ = Describe("Config", func() {
 			KubeReserved:                     utils.MergeStringMaps(params.KubeReserved, map[string]string{"memory": "1Gi"}),
 			MaxOpenFiles:                     1000000,
 			MaxPods:                          *params.MaxPods,
-			NodeStatusUpdateFrequency:        metav1.Duration{Duration: 10 * time.Second},
 			PodsPerCore:                      0,
 			PodPidsLimit:                     params.PodPidsLimit,
 			ProtectKernelDefaults:            true,
 			ReadOnlyPort:                     0,
-			RegistryBurst:                    20,
-			RegistryPullQPS:                  pointer.Int32(10),
-			ResolverConfig:                   pointer.String("/etc/resolv.conf"),
-			RuntimeRequestTimeout:            metav1.Duration{Duration: 2 * time.Minute},
-			SerializeImagePulls:              params.SerializeImagePulls,
-			SeccompDefault:                   params.SeccompDefault,
-			ServerTLSBootstrap:               true,
-			SyncFrequency:                    metav1.Duration{Duration: time.Minute},
-			SystemReserved:                   params.SystemReserved,
-			StreamingConnectionIdleTimeout:   metav1.Duration{Duration: time.Minute * 12},
-			VolumeStatsAggPeriod:             metav1.Duration{Duration: time.Minute},
+			RegisterWithTaints: []corev1.Taint{{
+				Key:    "node.gardener.cloud/critical-components-not-ready",
+				Effect: corev1.TaintEffectNoSchedule,
+			}},
+			RegistryBurst:                  20,
+			RegistryPullQPS:                pointer.Int32(10),
+			ResolverConfig:                 pointer.String("/etc/resolv.conf"),
+			RuntimeRequestTimeout:          metav1.Duration{Duration: 2 * time.Minute},
+			SerializeImagePulls:            params.SerializeImagePulls,
+			SeccompDefault:                 params.SeccompDefault,
+			ServerTLSBootstrap:             true,
+			SyncFrequency:                  metav1.Duration{Duration: time.Minute},
+			SystemReserved:                 params.SystemReserved,
+			StreamingConnectionIdleTimeout: metav1.Duration{Duration: time.Minute * 12},
+			VolumeStatsAggPeriod:           metav1.Duration{Duration: time.Minute},
 		}
 	)
 

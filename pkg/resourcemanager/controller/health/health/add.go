@@ -22,7 +22,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/utils/clock"
 	"k8s.io/utils/pointer"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -36,7 +38,7 @@ import (
 	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 	"github.com/gardener/gardener/pkg/controllerutils/mapper"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/health/utils"
-	managerpredicate "github.com/gardener/gardener/pkg/resourcemanager/predicate"
+	resourcemanagerpredicate "github.com/gardener/gardener/pkg/resourcemanager/predicate"
 )
 
 // ControllerName is the name of the controller.
@@ -53,18 +55,31 @@ func (r *Reconciler) AddToManager(mgr manager.Manager, sourceCluster, targetClus
 	if r.TargetScheme == nil {
 		r.TargetScheme = targetCluster.GetScheme()
 	}
+	if r.Clock == nil {
+		r.Clock = clock.RealClock{}
+	}
 
-	// It's not possible to overwrite the event handler when using the controller builder. Hence, we have to build up
-	// the controller manually.
-	c, err := controller.New(
-		ControllerName,
-		mgr,
-		controller.Options{
-			Reconciler:              r,
+	c, err := builder.
+		ControllerManagedBy(mgr).
+		Named(ControllerName).
+		WithOptions(controller.Options{
 			MaxConcurrentReconciles: pointer.IntDeref(r.Config.ConcurrentSyncs, 0),
-			RecoverPanic:            true,
-		},
-	)
+		}).
+		Watches(
+			&source.Kind{Type: &resourcesv1alpha1.ManagedResource{}},
+			r.EnqueueCreateAndUpdate(),
+			builder.WithPredicates(
+				predicate.Or(
+					resourcemanagerpredicate.ClassChangedPredicate(),
+					// start health checks immediately after MR has been reconciled
+					resourcemanagerpredicate.ConditionStatusChanged(resourcesv1alpha1.ResourcesApplied, resourcemanagerpredicate.DefaultConditionChange),
+					resourcemanagerpredicate.NoLongerIgnored(),
+				),
+				resourcemanagerpredicate.NotIgnored(),
+				r.ClassFilter,
+			),
+		).
+		Build(r)
 	if err != nil {
 		return err
 	}
@@ -110,18 +125,7 @@ func (r *Reconciler) AddToManager(mgr manager.Manager, sourceCluster, targetClus
 		}
 	}
 
-	return c.Watch(
-		&source.Kind{Type: &resourcesv1alpha1.ManagedResource{}},
-		r.EnqueueCreateAndUpdate(),
-		predicate.Or(
-			managerpredicate.ClassChangedPredicate(),
-			// start health checks immediately after MR has been reconciled
-			managerpredicate.ConditionStatusChanged(resourcesv1alpha1.ResourcesApplied, managerpredicate.DefaultConditionChange),
-			managerpredicate.NoLongerIgnored(),
-		),
-		managerpredicate.NotIgnored(),
-		r.ClassFilter,
-	)
+	return nil
 }
 
 // EnqueueCreateAndUpdate returns an event handler which only enqueues create and update events.

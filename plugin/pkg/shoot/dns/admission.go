@@ -24,16 +24,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	"github.com/gardener/gardener/pkg/apis/core/helper"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
-	coreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
-	corelisters "github.com/gardener/gardener/pkg/client/core/listers/core/internalversion"
-	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	admissionutils "github.com/gardener/gardener/plugin/pkg/utils"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -41,6 +31,16 @@ import (
 	kubeinformers "k8s.io/client-go/informers"
 	kubecorev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/utils/pointer"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	"github.com/gardener/gardener/pkg/apis/core/helper"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	gardencorelisters "github.com/gardener/gardener/pkg/client/core/listers/core/internalversion"
+	"github.com/gardener/gardener/pkg/utils"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	admissionutils "github.com/gardener/gardener/plugin/pkg/utils"
 )
 
 const (
@@ -59,8 +59,8 @@ func Register(plugins *admission.Plugins) {
 type DNS struct {
 	*admission.Handler
 	secretLister  kubecorev1listers.SecretLister
-	projectLister corelisters.ProjectLister
-	seedLister    corelisters.SeedLister
+	projectLister gardencorelisters.ProjectLister
+	seedLister    gardencorelisters.SeedLister
 	readyFunc     admission.ReadyFunc
 }
 
@@ -85,7 +85,7 @@ func (d *DNS) AssignReadyFunc(f admission.ReadyFunc) {
 }
 
 // SetInternalCoreInformerFactory gets Lister from SharedInformerFactory.
-func (d *DNS) SetInternalCoreInformerFactory(f coreinformers.SharedInformerFactory) {
+func (d *DNS) SetInternalCoreInformerFactory(f gardencoreinformers.SharedInformerFactory) {
 	projectInformer := f.Core().InternalVersion().Projects()
 	d.projectLister = projectInformer.Lister()
 
@@ -209,45 +209,21 @@ func (d *DNS) Admit(ctx context.Context, a admission.Attributes, o admission.Obj
 			return nil
 		}
 
-		if oldShoot.Spec.SeedName != nil {
-			if *oldShoot.Spec.SeedName != *shoot.Spec.SeedName {
-				if err := checkIfShootMigrationIsPossible(a, d.seedLister, oldShoot, shoot); err != nil {
-					return err
-				}
-				if shoot.Spec.DNS != nil {
-					return checkFunctionlessDNSProviders(a, shoot)
-				}
-				return nil
-			}
-			if shoot.Spec.DNS != nil {
-				return checkFunctionlessDNSProviders(a, shoot)
-			}
+		if oldShoot.Spec.SeedName != nil && shoot.Spec.DNS != nil {
+			return checkFunctionlessDNSProviders(a, shoot)
 		}
 	}
 
 	specPath := field.NewPath("spec")
 
-	dnsDisabled, err := seedDisablesDNS(d.seedLister, *shoot.Spec.SeedName)
-	if err != nil {
-		return apierrors.NewInternalError(fmt.Errorf("could not get referenced seed: %+v", err.Error()))
-	}
-	if dnsDisabled {
-		if shoot.Spec.DNS != nil {
-			fieldErr := field.Invalid(specPath.Child("dns"), shoot.Spec.DNS, "shoot's .spec.dns section must be nil if seed with disabled DNS is chosen")
-			return apierrors.NewInvalid(a.GetKind().GroupKind(), shoot.Name, field.ErrorList{fieldErr})
-		}
-		return nil
-	}
-
-	// Generate a Shoot domain if none is configured (at this point in time we know that the chosen seed does
-	// not disable DNS.
+	// Generate a Shoot domain if none is configured.
 	if !helper.ShootUsesUnmanagedDNS(shoot) {
 		if err := assignDefaultDomainIfNeeded(a, shoot, d.projectLister, defaultDomains); err != nil {
 			return err
 		}
 
 		if !isShootDomainSet(shoot) {
-			fieldErr := field.Required(specPath.Child("DNS"), fmt.Sprintf("shoot domain field .spec.dns.domain must be set if provider != %s and assigned to a seed which does not disable DNS", core.DNSUnmanaged))
+			fieldErr := field.Required(specPath.Child("DNS"), fmt.Sprintf("shoot domain field .spec.dns.domain must be set if provider != %s", core.DNSUnmanaged))
 			return apierrors.NewInvalid(a.GetKind().GroupKind(), shoot.Name, field.ErrorList{fieldErr})
 		}
 	}
@@ -270,20 +246,6 @@ func checkFunctionlessDNSProviders(a admission.Attributes, shoot *core.Shoot) er
 		if !pointer.BoolDeref(provider.Primary, false) && (provider.Type == nil || provider.SecretName == nil) {
 			fieldErr := field.Required(field.NewPath("spec", "dns", "providers"), "non-primary DNS providers in .spec.dns.providers must specify a `type` and `secretName`")
 			return apierrors.NewInvalid(a.GetKind().GroupKind(), shoot.Name, field.ErrorList{fieldErr})
-		}
-	}
-	return nil
-}
-
-func checkIfShootMigrationIsPossible(a admission.Attributes, seedLister corelisters.SeedLister, oldShoot, newShoot *core.Shoot) error {
-	for _, seedName := range []string{*oldShoot.Spec.SeedName, *newShoot.Spec.SeedName} {
-		seedDNSDisabled, err := seedDisablesDNS(seedLister, seedName)
-		if err != nil {
-			return apierrors.NewInternalError(fmt.Errorf("could not get referenced seed: %+v", err.Error()))
-		}
-		if seedDNSDisabled {
-			fieldErr := field.Invalid(field.NewPath("spec", "settings", "shootDNS", "enabled"), seedName, "source and destination seeds must enable DNS so that the shoot can be migrated")
-			return apierrors.NewInvalid(a.GetKind().GroupKind(), seedName, field.ErrorList{fieldErr})
 		}
 	}
 	return nil
@@ -341,18 +303,10 @@ func setPrimaryDNSProvider(a admission.Attributes, shoot *core.Shoot, defaultDom
 	return nil
 }
 
-func seedDisablesDNS(seedLister corelisters.SeedLister, seedName string) (bool, error) {
-	seed, err := seedLister.Get(seedName)
-	if err != nil {
-		return false, err
-	}
-	return !seed.Spec.Settings.ShootDNS.Enabled, nil
-}
-
 // assignDefaultDomainIfNeeded generates a domain <shoot-name>.<project-name>.<default-domain>
 // and sets it in the shoot resource in the `spec.dns.domain` field.
 // If for any reason no domain can be generated, no domain is assigned to the Shoot.
-func assignDefaultDomainIfNeeded(a admission.Attributes, shoot *core.Shoot, projectLister corelisters.ProjectLister, defaultDomains []string) error {
+func assignDefaultDomainIfNeeded(a admission.Attributes, shoot *core.Shoot, projectLister gardencorelisters.ProjectLister, defaultDomains []string) error {
 	project, err := admissionutils.ProjectForNamespaceFromInternalLister(projectLister, shoot.Namespace)
 	if err != nil {
 		return apierrors.NewInternalError(err)
@@ -379,7 +333,7 @@ func assignDefaultDomainIfNeeded(a admission.Attributes, shoot *core.Shoot, proj
 	return nil
 }
 
-func checkDefaultDomainFormat(a admission.Attributes, shoot *core.Shoot, projectLister corelisters.ProjectLister, defaultDomains []string) error {
+func checkDefaultDomainFormat(a admission.Attributes, shoot *core.Shoot, projectLister gardencorelisters.ProjectLister, defaultDomains []string) error {
 	project, err := admissionutils.ProjectForNamespaceFromInternalLister(projectLister, shoot.Namespace)
 	if err != nil {
 		return apierrors.NewInternalError(err)
@@ -427,7 +381,7 @@ func getDefaultDomains(secretLister kubecorev1listers.SecretLister) ([]string, e
 		jAnnotations := domainSecrets[j].GetAnnotations()
 		var iPriority, jPriority int
 		if iAnnotations != nil {
-			if domainPriority, ok := iAnnotations[gutil.DNSDefaultDomainPriority]; ok {
+			if domainPriority, ok := iAnnotations[gardenerutils.DNSDefaultDomainPriority]; ok {
 				iPriority, err = strconv.Atoi(domainPriority)
 				if err != nil {
 					iPriority = 0
@@ -435,7 +389,7 @@ func getDefaultDomains(secretLister kubecorev1listers.SecretLister) ([]string, e
 			}
 		}
 		if jAnnotations != nil {
-			if domainPriority, ok := jAnnotations[gutil.DNSDefaultDomainPriority]; ok {
+			if domainPriority, ok := jAnnotations[gardenerutils.DNSDefaultDomainPriority]; ok {
 				jPriority, err = strconv.Atoi(domainPriority)
 				if err != nil {
 					jPriority = 0
@@ -447,7 +401,7 @@ func getDefaultDomains(secretLister kubecorev1listers.SecretLister) ([]string, e
 
 	var defaultDomains []string
 	for _, domainSecret := range domainSecrets {
-		_, domain, _, _, _, err := gutil.GetDomainInfoFromAnnotations(domainSecret.GetAnnotations())
+		_, domain, _, _, _, err := gardenerutils.GetDomainInfoFromAnnotations(domainSecret.GetAnnotations())
 		if err != nil {
 			return nil, err
 		}

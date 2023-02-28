@@ -19,11 +19,20 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
+	"github.com/golang/mock/gomock"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	gomegatypes "github.com/onsi/gomega/types"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
-	mockkubernetes "github.com/gardener/gardener/pkg/client/kubernetes/mock"
+	kubernetesmock "github.com/gardener/gardener/pkg/client/kubernetes/mock"
 	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
 	"github.com/gardener/gardener/pkg/operation"
 	. "github.com/gardener/gardener/pkg/operation/botanist"
@@ -35,16 +44,6 @@ import (
 	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
 	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
 	"github.com/gardener/gardener/pkg/utils/test"
-
-	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	gomegatypes "github.com/onsi/gomega/types"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 var _ = Describe("Worker", func() {
@@ -61,7 +60,7 @@ var _ = Describe("Worker", func() {
 		ctx                                   = context.TODO()
 		namespace                             = "namespace"
 		fakeErr                               = fmt.Errorf("fake")
-		shootState                            = &gardencorev1alpha1.ShootState{}
+		shootState                            = &gardencorev1beta1.ShootState{}
 		infrastructureProviderStatus          = &runtime.RawExtension{Raw: []byte("infrastatus")}
 		workerNameToOperatingSystemConfigMaps = map[string]*operatingsystemconfig.OperatingSystemConfigs{"foo": {}}
 		cloudConfigSecretListOptions          = []client.ListOption{
@@ -76,7 +75,7 @@ var _ = Describe("Worker", func() {
 		fakeClient = fakeclient.NewClientBuilder().WithScheme(kubernetes.SeedScheme).Build()
 		sm = fakesecretsmanager.New(fakeClient, namespace)
 
-		By("creating secrets managed outside of this function for whose secretsmanager.Get() will be called")
+		By("Create secrets managed outside of this function for whose secretsmanager.Get() will be called")
 		Expect(fakeClient.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ssh-keypair", Namespace: namespace}})).To(Succeed())
 
 		worker = mockworker.NewMockInterface(ctrl)
@@ -343,9 +342,9 @@ var _ = Describe("Worker", func() {
 
 	Describe("#WaitUntilCloudConfigUpdatedForAllWorkerPools", func() {
 		var (
-			seedInterface  *mockkubernetes.MockInterface
+			seedInterface  *kubernetesmock.MockInterface
 			seedClient     *mockclient.MockClient
-			shootInterface *mockkubernetes.MockInterface
+			shootInterface *kubernetesmock.MockInterface
 			shootClient    *mockclient.MockClient
 
 			namespace = "shoot--foo--bar"
@@ -359,11 +358,11 @@ var _ = Describe("Worker", func() {
 				},
 			}}
 
-			seedInterface = mockkubernetes.NewMockInterface(ctrl)
+			seedInterface = kubernetesmock.NewMockInterface(ctrl)
 			seedClient = mockclient.NewMockClient(ctrl)
 			botanist.SeedClientSet = seedInterface
 
-			shootInterface = mockkubernetes.NewMockInterface(ctrl)
+			shootInterface = kubernetesmock.NewMockInterface(ctrl)
 			shootClient = mockclient.NewMockClient(ctrl)
 			botanist.ShootClientSet = shootInterface
 		})

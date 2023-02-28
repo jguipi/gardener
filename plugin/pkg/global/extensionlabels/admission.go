@@ -21,21 +21,20 @@ import (
 	"io"
 	"strings"
 
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/pointer"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/admission"
+	"k8s.io/utils/pointer"
 
 	"github.com/gardener/gardener/pkg/apis/core"
 	gardencorehelper "github.com/gardener/gardener/pkg/apis/core/helper"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
-	internalcoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
-	corelisters "github.com/gardener/gardener/pkg/client/core/listers/core/internalversion"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	gardencorelisters "github.com/gardener/gardener/pkg/client/core/listers/core/internalversion"
 )
 
 const (
@@ -56,8 +55,8 @@ func NewFactory(config io.Reader) (admission.Interface, error) {
 // ExtensionLabels contains the admission handler
 type ExtensionLabels struct {
 	*admission.Handler
-	backupBucketLister           corelisters.BackupBucketLister
-	controllerRegistrationLister corelisters.ControllerRegistrationLister
+	backupBucketLister           gardencorelisters.BackupBucketLister
+	controllerRegistrationLister gardencorelisters.ControllerRegistrationLister
 	readyFunc                    admission.ReadyFunc
 }
 
@@ -80,7 +79,7 @@ func (e *ExtensionLabels) AssignReadyFunc(f admission.ReadyFunc) {
 }
 
 // SetInternalCoreInformerFactory sets the external garden core informer factory.
-func (e *ExtensionLabels) SetInternalCoreInformerFactory(f internalcoreinformers.SharedInformerFactory) {
+func (e *ExtensionLabels) SetInternalCoreInformerFactory(f gardencoreinformers.SharedInformerFactory) {
 	backupBucketInformer := f.Core().InternalVersion().BackupBuckets()
 	e.backupBucketLister = backupBucketInformer.Lister()
 	controllerRegistrationInformer := f.Core().InternalVersion().ControllerRegistrations()
@@ -245,8 +244,8 @@ func addMetaDataLabelsShoot(shoot *core.Shoot, controllerRegistrations []*core.C
 	metav1.SetMetaDataLabel(&shoot.ObjectMeta, v1beta1constants.LabelExtensionNetworkingTypePrefix+shoot.Spec.Networking.Type, "true")
 }
 
-func getEnabledExtensionsForShoot(shoot *core.Shoot, controllerRegistrations []*core.ControllerRegistration) sets.String {
-	enabledExtensions := sets.NewString()
+func getEnabledExtensionsForShoot(shoot *core.Shoot, controllerRegistrations []*core.ControllerRegistration) sets.Set[string] {
+	enabledExtensions := sets.New[string]()
 
 	// add globally enabled extensions
 	for _, reg := range controllerRegistrations {

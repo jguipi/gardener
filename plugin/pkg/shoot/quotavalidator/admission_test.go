@@ -18,12 +18,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	coreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
-	mocktime "github.com/gardener/gardener/pkg/utils/time/mock"
-	. "github.com/gardener/gardener/plugin/pkg/shoot/quotavalidator"
-
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -31,6 +25,12 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/admission"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	mocktime "github.com/gardener/gardener/pkg/utils/time/mock"
+	. "github.com/gardener/gardener/plugin/pkg/shoot/quotavalidator"
 )
 
 var _ = Describe("quotavalidator", func() {
@@ -39,7 +39,7 @@ var _ = Describe("quotavalidator", func() {
 			ctrl *gomock.Controller
 
 			admissionHandler    *QuotaValidator
-			coreInformerFactory coreinformers.SharedInformerFactory
+			coreInformerFactory gardencoreinformers.SharedInformerFactory
 			timeOps             *mocktime.MockOps
 			shoot               core.Shoot
 			oldShoot            core.Shoot
@@ -226,7 +226,7 @@ var _ = Describe("quotavalidator", func() {
 
 			admissionHandler, _ = New(timeOps)
 			admissionHandler.AssignReadyFunc(func() bool { return true })
-			coreInformerFactory = coreinformers.NewSharedInformerFactory(nil, 0)
+			coreInformerFactory = gardencoreinformers.NewSharedInformerFactory(nil, 0)
 			admissionHandler.SetInternalCoreInformerFactory(coreInformerFactory)
 			Expect(coreInformerFactory.Core().InternalVersion().CloudProfiles().Informer().GetStore().Add(&cloudProfile)).To(Succeed())
 			Expect(coreInformerFactory.Core().InternalVersion().Quotas().Informer().GetStore().Add(&quotaProject)).To(Succeed())

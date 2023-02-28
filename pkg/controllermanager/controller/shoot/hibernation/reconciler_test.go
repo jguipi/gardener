@@ -18,10 +18,6 @@ import (
 	"context"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/controllermanager/apis/config"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
@@ -34,6 +30,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/controllermanager/apis/config"
 )
 
 var _ = Describe("Shoot Hibernation", func() {
@@ -170,7 +170,7 @@ var _ = Describe("Shoot Hibernation", func() {
 			})
 
 			DescribeTable("should properly enable or disable hibernation and requeue the shoot", func(t testEntry) {
-				By("setting current time")
+				By("Set current time")
 				timeNow := now
 				if t.timeNow != nil {
 					timeNow = t.timeNow()
@@ -178,14 +178,14 @@ var _ = Describe("Shoot Hibernation", func() {
 				fakeClock = testclock.NewFakeClock(timeNow)
 
 				if t.shootSettings != nil {
-					By("configuring shoot")
+					By("Configure shoot")
 					t.shootSettings(shoot)
 				}
 
-				By("creating shoot")
+				By("Create shoot")
 				Expect(c.Create(ctx, shoot)).To(Succeed())
 
-				By("configuring hibernation reconciler")
+				By("Configure hibernation reconciler")
 				config := config.ShootHibernationControllerConfiguration{}
 				if t.triggerDeadlineDuration != noDeadLine {
 					config.TriggerDeadlineDuration = &metav1.Duration{Duration: t.triggerDeadlineDuration}
@@ -198,7 +198,7 @@ var _ = Describe("Shoot Hibernation", func() {
 					Clock:    fakeClock,
 				}
 
-				By("reconciling shoot resource")
+				By("Reconcile shoot resource")
 				var requeueAfter time.Duration
 				if t.expectedRequeueDurationFunc != nil {
 					requeueAfter = t.expectedRequeueDurationFunc(timeNow)

@@ -19,14 +19,6 @@ import (
 	"fmt"
 	"strings"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/operation"
-	webhookmatchers "github.com/gardener/gardener/pkg/operation/botanist/matchers"
-	"github.com/gardener/gardener/pkg/utils"
-	"github.com/gardener/gardener/pkg/utils/flow"
-
 	"github.com/go-logr/logr"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,6 +27,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/operation"
+	webhookmatchers "github.com/gardener/gardener/pkg/operation/botanist/matchers"
+	"github.com/gardener/gardener/pkg/utils"
+	"github.com/gardener/gardener/pkg/utils/flow"
 )
 
 // WebhookRemediation contains required information for shoot webhook remediation.
@@ -67,7 +67,7 @@ func (r *WebhookRemediation) Remediate(ctx context.Context) error {
 		fns []flow.TaskFn
 
 		notExcluded          = utils.MustNewRequirement(v1beta1constants.LabelExcludeWebhookFromRemediation, selection.NotIn, "true")
-		notManagedByGardener = utils.MustNewRequirement(resourcesv1alpha1.ManagedBy, selection.NotIn, "gardener")
+		notManagedByGardener = utils.MustNewRequirement(resourcesv1alpha1.ManagedBy, selection.NotIn, resourcesv1alpha1.GardenerManager)
 		labelSelector        = client.MatchingLabelsSelector{Selector: labels.NewSelector().Add(notExcluded).Add(notManagedByGardener)}
 	)
 
@@ -297,7 +297,7 @@ func newNotInLabelSelectorRequirement(key, value string) metav1.LabelSelectorReq
 
 func removeDuplicateRequirements(requirements []metav1.LabelSelectorRequirement) []metav1.LabelSelectorRequirement {
 	var (
-		keyValues   = sets.NewString()
+		keyValues   = sets.New[string]()
 		keyValuesID = func(requirement metav1.LabelSelectorRequirement) string {
 			return requirement.Key + strings.Join(requirement.Values, "")
 		}

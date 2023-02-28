@@ -18,16 +18,16 @@ import (
 	"context"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 )
 
-func (g *graph) setupBackupEntryWatch(_ context.Context, informer cache.Informer) {
-	informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+func (g *graph) setupBackupEntryWatch(_ context.Context, informer cache.Informer) error {
+	_, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			backupEntry, ok := obj.(*gardencorev1beta1.BackupEntry)
 			if !ok {
@@ -66,6 +66,7 @@ func (g *graph) setupBackupEntryWatch(_ context.Context, informer cache.Informer
 			g.handleBackupEntryDelete(backupEntry)
 		},
 	})
+	return err
 }
 
 func (g *graph) handleBackupEntryCreateOrUpdate(backupEntry *gardencorev1beta1.BackupEntry) {
@@ -97,7 +98,7 @@ func (g *graph) handleBackupEntryCreateOrUpdate(backupEntry *gardencorev1beta1.B
 		g.addEdge(backupEntryVertex, seedVertex)
 	}
 
-	if shootName := gutil.GetShootNameFromOwnerReferences(backupEntry); shootName != "" {
+	if shootName := gardenerutils.GetShootNameFromOwnerReferences(backupEntry); shootName != "" {
 		shootVertex := g.getOrCreateVertex(VertexTypeShoot, backupEntry.Namespace, shootName)
 		g.addEdge(backupEntryVertex, shootVertex)
 	}

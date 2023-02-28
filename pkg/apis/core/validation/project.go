@@ -18,15 +18,15 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	"github.com/gardener/gardener/pkg/utils"
-
 	rbacv1 "k8s.io/api/rbac/v1"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/api/validation/path"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	"github.com/gardener/gardener/pkg/utils"
 )
 
 // ValidateProject validates a Project object.
@@ -159,7 +159,7 @@ func ValidateSubject(subject rbacv1.Subject, fldPath *field.Path) field.ErrorLis
 	return allErrs
 }
 
-var supportedRoles = sets.NewString(
+var supportedRoles = sets.New[string](
 	core.ProjectMemberOwner,
 	core.ProjectMemberAdmin,
 	core.ProjectMemberViewer,
@@ -185,7 +185,7 @@ func ValidateProjectMember(member core.ProjectMember, fldPath *field.Path) field
 		foundRoles[role] = struct{}{}
 
 		if !supportedRoles.Has(role) && !strings.HasPrefix(role, core.ProjectMemberExtensionPrefix) {
-			allErrs = append(allErrs, field.NotSupported(rolesPath, role, append(supportedRoles.List(), core.ProjectMemberExtensionPrefix+"*")))
+			allErrs = append(allErrs, field.NotSupported(rolesPath, role, append(sets.List(supportedRoles), core.ProjectMemberExtensionPrefix+"*")))
 		}
 
 		if strings.HasPrefix(role, core.ProjectMemberExtensionPrefix) {
@@ -209,7 +209,7 @@ func ValidateProjectMember(member core.ProjectMember, fldPath *field.Path) field
 func ValidateTolerations(tolerations []core.Toleration, fldPath *field.Path) field.ErrorList {
 	var (
 		allErrs   field.ErrorList
-		keyValues = sets.NewString()
+		keyValues = sets.New[string]()
 	)
 
 	for i, toleration := range tolerations {
@@ -233,7 +233,7 @@ func ValidateTolerations(tolerations []core.Toleration, fldPath *field.Path) fie
 func ValidateTolerationsAgainstAllowlist(tolerations, allowlist []core.Toleration, fldPath *field.Path) field.ErrorList {
 	var (
 		allErrs            field.ErrorList
-		allowedTolerations = sets.NewString()
+		allowedTolerations = sets.New[string]()
 	)
 
 	for _, toleration := range allowlist {

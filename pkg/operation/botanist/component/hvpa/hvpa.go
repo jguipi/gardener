@@ -57,7 +57,6 @@ const (
 // Interface contains functions for an HVPA deployer.
 type Interface interface {
 	component.DeployWaiter
-	component.MonitoringComponent
 }
 
 // New creates a new instance of DeployWaiter for the HVPA controller.
@@ -206,7 +205,7 @@ func (h *hvpa) Deploy(ctx context.Context) error {
 								"./manager",
 								"--logtostderr=true",
 								"--enable-detailed-metrics=true",
-								fmt.Sprintf("--metrics-addr=:%d", portMetrics),
+								fmt.Sprintf("--metrics-bind-address=:%d", portMetrics),
 								"--v=2",
 							},
 							Resources: corev1.ResourceRequirements{
@@ -243,7 +242,6 @@ func (h *hvpa) Deploy(ctx context.Context) error {
 						{
 							ContainerName: vpaautoscalingv1.DefaultContainerResourcePolicy,
 							MinAllowed: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("100m"),
 								corev1.ResourceMemory: resource.MustParse("128Mi"),
 							},
 						},

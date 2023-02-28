@@ -15,34 +15,32 @@
 package exposureclass_test
 
 import (
-	"k8s.io/utils/pointer"
-
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	"github.com/gardener/gardener/pkg/utils"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	"github.com/gardener/gardener/pkg/utils"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("ExposureClass controller test", func() {
 	var (
-		exposureClass *gardencorev1alpha1.ExposureClass
+		exposureClass *gardencorev1beta1.ExposureClass
 		shoot         *gardencorev1beta1.Shoot
 	)
 
 	BeforeEach(func() {
-		exposureClass = &gardencorev1alpha1.ExposureClass{
+		exposureClass = &gardencorev1beta1.ExposureClass{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   testID + "-" + utils.ComputeSHA256Hex([]byte(testNamespace.Name + CurrentSpecReport().LeafNodeLocation.String()))[:8],
 				Labels: map[string]string{testID: testRunID},
 			},
 			Handler: "test-exposure-class-handler-name",
-			Scheduling: &gardencorev1alpha1.ExposureClassScheduling{
-				SeedSelector: &gardencorev1alpha1.SeedSelector{
+			Scheduling: &gardencorev1beta1.ExposureClassScheduling{
+				SeedSelector: &gardencorev1beta1.SeedSelector{
 					LabelSelector: metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"test": "foo",

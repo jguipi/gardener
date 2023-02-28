@@ -48,11 +48,9 @@ import (
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
 	"github.com/gardener/gardener/pkg/client/core/clientset/internalversion"
-	externalcoreinformers "github.com/gardener/gardener/pkg/client/core/informers/externalversions"
-	coreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
-	corelisters "github.com/gardener/gardener/pkg/client/core/listers/core/internalversion"
-	corev1alphalisters "github.com/gardener/gardener/pkg/client/core/listers/core/v1alpha1"
-	clientkubernetes "github.com/gardener/gardener/pkg/client/kubernetes"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	gardencorelisters "github.com/gardener/gardener/pkg/client/core/listers/core/internalversion"
+	kubernetesclient "github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/plugin/pkg/utils"
 )
 
@@ -77,15 +75,15 @@ type ReferenceManager struct {
 	authorizer                 authorizer.Authorizer
 	secretLister               kubecorev1listers.SecretLister
 	configMapLister            kubecorev1listers.ConfigMapLister
-	backupBucketLister         corelisters.BackupBucketLister
-	cloudProfileLister         corelisters.CloudProfileLister
-	seedLister                 corelisters.SeedLister
-	shootLister                corelisters.ShootLister
-	secretBindingLister        corelisters.SecretBindingLister
-	projectLister              corelisters.ProjectLister
-	quotaLister                corelisters.QuotaLister
-	controllerDeploymentLister corelisters.ControllerDeploymentLister
-	exposureClassLister        corev1alphalisters.ExposureClassLister
+	backupBucketLister         gardencorelisters.BackupBucketLister
+	cloudProfileLister         gardencorelisters.CloudProfileLister
+	seedLister                 gardencorelisters.SeedLister
+	shootLister                gardencorelisters.ShootLister
+	secretBindingLister        gardencorelisters.SecretBindingLister
+	projectLister              gardencorelisters.ProjectLister
+	quotaLister                gardencorelisters.QuotaLister
+	controllerDeploymentLister gardencorelisters.ControllerDeploymentLister
+	exposureClassLister        gardencorelisters.ExposureClassLister
 	readyFunc                  admission.ReadyFunc
 }
 
@@ -96,7 +94,6 @@ var (
 	_ = admissioninitializer.WantsKubeClientset(&ReferenceManager{})
 	_ = admissioninitializer.WantsDynamicClient(&ReferenceManager{})
 	_ = admissioninitializer.WantsAuthorizer(&ReferenceManager{})
-	_ = admissioninitializer.WantsExternalCoreInformerFactory(&ReferenceManager{})
 
 	readyFuncs = []admission.ReadyFunc{}
 
@@ -124,7 +121,7 @@ func (r *ReferenceManager) SetAuthorizer(authorizer authorizer.Authorizer) {
 }
 
 // SetInternalCoreInformerFactory gets Lister from SharedInformerFactory.
-func (r *ReferenceManager) SetInternalCoreInformerFactory(f coreinformers.SharedInformerFactory) {
+func (r *ReferenceManager) SetInternalCoreInformerFactory(f gardencoreinformers.SharedInformerFactory) {
 	seedInformer := f.Core().InternalVersion().Seeds()
 	r.seedLister = seedInformer.Lister()
 
@@ -149,6 +146,9 @@ func (r *ReferenceManager) SetInternalCoreInformerFactory(f coreinformers.Shared
 	controllerDeploymentInformer := f.Core().InternalVersion().ControllerDeployments()
 	r.controllerDeploymentLister = controllerDeploymentInformer.Lister()
 
+	exposureClassInformer := f.Core().InternalVersion().ExposureClasses()
+	r.exposureClassLister = exposureClassInformer.Lister()
+
 	readyFuncs = append(readyFuncs,
 		seedInformer.Informer().HasSynced,
 		shootInformer.Informer().HasSynced,
@@ -157,15 +157,8 @@ func (r *ReferenceManager) SetInternalCoreInformerFactory(f coreinformers.Shared
 		secretBindingInformer.Informer().HasSynced,
 		quotaInformer.Informer().HasSynced,
 		projectInformer.Informer().HasSynced,
-		controllerDeploymentInformer.Informer().HasSynced)
-}
-
-// SetExternalCoreInformerFactory sets the external garden core informer factory.
-func (r *ReferenceManager) SetExternalCoreInformerFactory(f externalcoreinformers.SharedInformerFactory) {
-	exposureClassInformer := f.Core().V1alpha1().ExposureClasses()
-	r.exposureClassLister = exposureClassInformer.Lister()
-
-	readyFuncs = append(readyFuncs, exposureClassInformer.Informer().HasSynced)
+		controllerDeploymentInformer.Informer().HasSynced,
+		exposureClassInformer.Informer().HasSynced)
 }
 
 // SetKubeInformerFactory gets Lister from SharedInformerFactory.
@@ -281,28 +274,6 @@ func (r *ReferenceManager) Admit(ctx context.Context, a admission.Attributes, o 
 			return nil
 		}
 		err = r.ensureSeedReferences(ctx, seed)
-
-		if operation == admission.Update {
-			oldSeed, ok := a.GetOldObject().(*core.Seed)
-			if !ok {
-				return apierrors.NewBadRequest("could not convert old resource into Seed object")
-			}
-
-			if oldSeed.Spec.Settings.ShootDNS.Enabled != seed.Spec.Settings.ShootDNS.Enabled {
-				shootList, err2 := r.shootLister.List(labels.Everything())
-				if err2 != nil {
-					return err2
-				}
-
-				for _, shoot := range shootList {
-					if shoot.Spec.SeedName == nil || *shoot.Spec.SeedName != seed.Name {
-						continue
-					}
-
-					err = errors.New("may not change shoot DNS enablement setting when shoots are still referencing to a seed")
-				}
-			}
-		}
 
 	case core.Kind("Shoot"):
 		var (
@@ -466,13 +437,13 @@ func (r *ReferenceManager) Admit(ctx context.Context, a admission.Attributes, o 
 			removedKubernetesVersions := sets.StringKeySet(helper.GetRemovedVersions(oldCloudProfile.Spec.Kubernetes.Versions, cloudProfile.Spec.Kubernetes.Versions))
 
 			// getting Machine image versions that have been removed from the CloudProfile
-			removedMachineImageVersions := map[string]sets.String{}
+			removedMachineImageVersions := map[string]sets.Set[string]{}
 			for _, oldImage := range oldCloudProfile.Spec.MachineImages {
 				imageFound := false
 				for _, newImage := range cloudProfile.Spec.MachineImages {
 					if oldImage.Name == newImage.Name {
 						imageFound = true
-						removedMachineImageVersions[oldImage.Name] = sets.StringKeySet(
+						removedMachineImageVersions[oldImage.Name] = sets.KeySet(
 							helper.GetRemovedVersions(
 								helper.ToExpirableVersions(oldImage.Versions),
 								helper.ToExpirableVersions(newImage.Versions),
@@ -483,7 +454,7 @@ func (r *ReferenceManager) Admit(ctx context.Context, a admission.Attributes, o 
 				if !imageFound {
 					for _, version := range oldImage.Versions {
 						if removedMachineImageVersions[oldImage.Name] == nil {
-							removedMachineImageVersions[oldImage.Name] = sets.NewString()
+							removedMachineImageVersions[oldImage.Name] = sets.New[string]()
 						}
 						removedMachineImageVersions[oldImage.Name] = removedMachineImageVersions[oldImage.Name].Insert(version.Version)
 					}
@@ -855,7 +826,7 @@ func (r *ReferenceManager) lookupSecret(ctx context.Context, namespace, name str
 	}
 
 	secretFromClient := func(ctx context.Context, namespace, name string) (runtime.Object, error) {
-		return r.kubeClient.CoreV1().Secrets(namespace).Get(ctx, name, clientkubernetes.DefaultGetOptions())
+		return r.kubeClient.CoreV1().Secrets(namespace).Get(ctx, name, kubernetesclient.DefaultGetOptions())
 	}
 
 	return lookupResource(ctx, namespace, name, secretFromLister, secretFromClient)
@@ -867,7 +838,7 @@ func (r *ReferenceManager) lookupControllerDeployment(ctx context.Context, name 
 	}
 
 	deploymentFromClient := func(ctx context.Context, _, name string) (runtime.Object, error) {
-		return r.gardenCoreClient.Core().ControllerDeployments().Get(ctx, name, clientkubernetes.DefaultGetOptions())
+		return r.gardenCoreClient.Core().ControllerDeployments().Get(ctx, name, kubernetesclient.DefaultGetOptions())
 	}
 
 	return lookupResource(ctx, "", name, deploymentFromLister, deploymentFromClient)
@@ -887,7 +858,7 @@ func (r *ReferenceManager) getAPIResource(groupVersion, kind string) (*metav1.AP
 }
 
 func (r *ReferenceManager) lookupResource(ctx context.Context, resource schema.GroupVersionResource, namespace, name string) error {
-	if _, err := r.dynamicClient.Resource(resource).Namespace(namespace).Get(ctx, name, clientkubernetes.DefaultGetOptions()); err != nil {
+	if _, err := r.dynamicClient.Resource(resource).Namespace(namespace).Get(ctx, name, kubernetesclient.DefaultGetOptions()); err != nil {
 		return err
 	}
 	return nil

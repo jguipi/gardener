@@ -17,9 +17,13 @@ package botanist
 import (
 	"context"
 
+	hvpav1alpha1 "github.com/gardener/hvpa-controller/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
 	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
 	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
@@ -29,13 +33,8 @@ import (
 	"github.com/gardener/gardener/pkg/operation/botanist/component/etcd"
 	"github.com/gardener/gardener/pkg/operation/shoot"
 	"github.com/gardener/gardener/pkg/utils/flow"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	"github.com/gardener/gardener/pkg/utils/timewindow"
-
-	hvpav1alpha1 "github.com/gardener/hvpa-controller/api/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/pointer"
 )
 
 // NewEtcd is a function exposed for testing.
@@ -61,13 +60,13 @@ func (b *Botanist) DefaultEtcd(role string, class etcd.Class) (etcd.Interface, e
 		etcd.Values{
 			Role:                    role,
 			Class:                   class,
-			FailureToleranceType:    v1beta1helper.GetFailureToleranceType(b.Shoot.GetInfo()),
 			Replicas:                replicas,
 			StorageCapacity:         b.Seed.GetValidVolumeSize("10Gi"),
 			DefragmentationSchedule: &defragmentationSchedule,
-			CARotationPhase:         gardencorev1beta1helper.GetShootCARotationPhase(b.Shoot.GetInfo().Status.Credentials),
-			K8sVersion:              b.ShootVersion(),
+			CARotationPhase:         v1beta1helper.GetShootCARotationPhase(b.Shoot.GetInfo().Status.Credentials),
+			KubernetesVersion:       b.Shoot.KubernetesVersion,
 			PriorityClassName:       v1beta1constants.PriorityClassNameShootControlPlane500,
+			HighAvailabilityEnabled: v1beta1helper.IsHAControlPlaneConfigured(b.Shoot.GetInfo()),
 		},
 	)
 
@@ -99,7 +98,7 @@ func getScaleDownUpdateMode(c etcd.Class, s *shoot.Shoot) *string {
 func (b *Botanist) DeployEtcd(ctx context.Context) error {
 	if b.Seed.GetInfo().Spec.Backup != nil {
 		secret := &corev1.Secret{}
-		if err := b.SeedClientSet.Client().Get(ctx, kutil.Key(b.Shoot.SeedNamespace, v1beta1constants.BackupSecretName), secret); err != nil {
+		if err := b.SeedClientSet.Client().Get(ctx, kubernetesutils.Key(b.Shoot.SeedNamespace, v1beta1constants.BackupSecretName), secret); err != nil {
 			return err
 		}
 
@@ -126,7 +125,7 @@ func (b *Botanist) DeployEtcd(ctx context.Context) error {
 	// Roll out the new peer CA first so that every member in the cluster trusts the old and the new CA.
 	// This is required because peer certificates which are used for client and server authentication at the same time,
 	// are re-created with the new CA in the `Deploy` step.
-	if gardencorev1beta1helper.GetShootCARotationPhase(b.Shoot.GetInfo().Status.Credentials) == gardencorev1beta1.RotationPreparing {
+	if v1beta1helper.GetShootCARotationPhase(b.Shoot.GetInfo().Status.Credentials) == gardencorev1beta1.RotationPreparing {
 		if err := flow.Parallel(
 			b.Shoot.Components.ControlPlane.EtcdMain.RolloutPeerCA,
 			b.Shoot.Components.ControlPlane.EtcdEvents.RolloutPeerCA,
@@ -220,7 +219,7 @@ func determineDefragmentationSchedule(shoot *gardencorev1beta1.Shoot, managedSee
 }
 
 func getEtcdReplicas(shoot *gardencorev1beta1.Shoot) int32 {
-	if gardencorev1beta1helper.IsHAControlPlaneConfigured(shoot) {
+	if v1beta1helper.IsHAControlPlaneConfigured(shoot) {
 		return 3
 	}
 	return 1

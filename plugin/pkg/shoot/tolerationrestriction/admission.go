@@ -20,20 +20,20 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	corevalidation "github.com/gardener/gardener/pkg/apis/core/validation"
-	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
-	coreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
-	corelisters "github.com/gardener/gardener/pkg/client/core/listers/core/internalversion"
-	"github.com/gardener/gardener/pkg/utils"
-	"github.com/gardener/gardener/plugin/pkg/shoot/tolerationrestriction/apis/shoottolerationrestriction"
-	"github.com/gardener/gardener/plugin/pkg/shoot/tolerationrestriction/apis/shoottolerationrestriction/validation"
-	admissionutils "github.com/gardener/gardener/plugin/pkg/utils"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/admission"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	gardencorevalidation "github.com/gardener/gardener/pkg/apis/core/validation"
+	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	gardencorelisters "github.com/gardener/gardener/pkg/client/core/listers/core/internalversion"
+	"github.com/gardener/gardener/pkg/utils"
+	"github.com/gardener/gardener/plugin/pkg/shoot/tolerationrestriction/apis/shoottolerationrestriction"
+	"github.com/gardener/gardener/plugin/pkg/shoot/tolerationrestriction/apis/shoottolerationrestriction/validation"
+	admissionutils "github.com/gardener/gardener/plugin/pkg/utils"
 )
 
 const (
@@ -61,7 +61,7 @@ func Register(plugins *admission.Plugins) {
 type TolerationRestriction struct {
 	*admission.Handler
 
-	projectLister corelisters.ProjectLister
+	projectLister gardencorelisters.ProjectLister
 	readyFunc     admission.ReadyFunc
 
 	defaults  []core.Toleration
@@ -90,7 +90,7 @@ func (t *TolerationRestriction) AssignReadyFunc(f admission.ReadyFunc) {
 }
 
 // SetInternalCoreInformerFactory sets the internal garden core informer factory.
-func (t *TolerationRestriction) SetInternalCoreInformerFactory(f coreinformers.SharedInformerFactory) {
+func (t *TolerationRestriction) SetInternalCoreInformerFactory(f gardencoreinformers.SharedInformerFactory) {
 	projectInformer := f.Core().InternalVersion().Projects()
 	t.projectLister = projectInformer.Lister()
 
@@ -164,7 +164,7 @@ func (t *TolerationRestriction) admitShoot(shoot *core.Shoot) error {
 		defaults = append(defaults, project.Spec.Tolerations.Defaults...)
 	}
 
-	existingKeys := sets.NewString()
+	existingKeys := sets.New[string]()
 	for _, toleration := range shoot.Spec.Tolerations {
 		existingKeys.Insert(toleration.Key)
 	}
@@ -225,7 +225,7 @@ func (t *TolerationRestriction) validateShoot(shoot, oldShoot *core.Shoot) error
 		allowlist = append(allowlist, project.Spec.Tolerations.Whitelist...)
 	}
 
-	if errList := corevalidation.ValidateTolerationsAgainstAllowlist(tolerationsToValidate, allowlist, field.NewPath("spec", "tolerations")); len(errList) > 0 {
+	if errList := gardencorevalidation.ValidateTolerationsAgainstAllowlist(tolerationsToValidate, allowlist, field.NewPath("spec", "tolerations")); len(errList) > 0 {
 		return fmt.Errorf("error while validating tolerations against allowlist: %+v", errList)
 	}
 	return nil
@@ -233,7 +233,7 @@ func (t *TolerationRestriction) validateShoot(shoot, oldShoot *core.Shoot) error
 
 func getNewOrChangedTolerations(shoot, oldShoot *core.Shoot) []core.Toleration {
 	var (
-		oldTolerations          = sets.NewString()
+		oldTolerations          = sets.New[string]()
 		newOrChangedTolerations []core.Toleration
 	)
 

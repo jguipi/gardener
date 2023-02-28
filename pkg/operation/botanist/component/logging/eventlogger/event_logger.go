@@ -19,16 +19,6 @@ import (
 	"errors"
 	"fmt"
 
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/controllerutils"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/pkg/utils/managedresources"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -39,6 +29,17 @@ import (
 	vpaautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/controllerutils"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	kubeapiserverconstants "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/constants"
+	"github.com/gardener/gardener/pkg/utils"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/managedresources"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
 )
 
 const (
@@ -114,7 +115,7 @@ func (l *eventLogger) Destroy(ctx context.Context) error {
 		return err
 	}
 
-	return kutil.DeleteObjects(
+	return kubernetesutils.DeleteObjects(
 		ctx,
 		l.client,
 		l.emptyServiceAccount(),
@@ -273,10 +274,9 @@ func (l *eventLogger) reconcileDeployment(ctx context.Context) error {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: utils.MergeStringMaps(getLabels(), map[string]string{
-						v1beta1constants.LabelNetworkPolicyFromPrometheus:   v1beta1constants.LabelNetworkPolicyAllowed,
-						v1beta1constants.LabelNetworkPolicyToDNS:            v1beta1constants.LabelNetworkPolicyAllowed,
-						v1beta1constants.LabelNetworkPolicyToShootAPIServer: v1beta1constants.LabelNetworkPolicyAllowed,
-						v1beta1constants.LabelNetworkPolicyToSeedAPIServer:  v1beta1constants.LabelNetworkPolicyAllowed,
+						v1beta1constants.LabelNetworkPolicyToDNS:                                                                    v1beta1constants.LabelNetworkPolicyAllowed,
+						v1beta1constants.LabelNetworkPolicyToRuntimeAPIServer:                                                       v1beta1constants.LabelNetworkPolicyAllowed,
+						gardenerutils.NetworkPolicyLabel(v1beta1constants.DeploymentNameKubeAPIServer, kubeapiserverconstants.Port): v1beta1constants.LabelNetworkPolicyAllowed,
 					}),
 				},
 				Spec: corev1.PodSpec{
@@ -300,7 +300,7 @@ func (l *eventLogger) reconcileDeployment(ctx context.Context) error {
 			},
 		}
 
-		utilruntime.Must(gutil.InjectGenericKubeconfig(deployment, genericTokenKubeconfigSecret.Name, gutil.SecretNamePrefixShootAccess+name))
+		utilruntime.Must(gardenerutils.InjectGenericKubeconfig(deployment, genericTokenKubeconfigSecret.Name, gardenerutils.SecretNamePrefixShootAccess+name))
 
 		return nil
 	})
@@ -329,7 +329,6 @@ func (l *eventLogger) reconcileVPA(ctx context.Context) error {
 					{
 						ContainerName: vpaautoscalingv1.DefaultContainerResourcePolicy,
 						MinAllowed: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("3m"),
 							corev1.ResourceMemory: resource.MustParse("20Mi"),
 						},
 						ControlledValues: &controlledValues,
@@ -348,11 +347,11 @@ func (l *eventLogger) deleteRBACForShoot(ctx context.Context) error {
 		return err
 	}
 
-	return kutil.DeleteObjects(ctx, l.client, l.newShootAccessSecret().Secret)
+	return kubernetesutils.DeleteObjects(ctx, l.client, l.newShootAccessSecret().Secret)
 }
 
-func (l *eventLogger) newShootAccessSecret() *gutil.ShootAccessSecret {
-	return gutil.NewShootAccessSecret(name, l.namespace)
+func (l *eventLogger) newShootAccessSecret() *gardenerutils.ShootAccessSecret {
+	return gardenerutils.NewShootAccessSecret(name, l.namespace)
 }
 
 func (l *eventLogger) emptyRole() *rbacv1.Role {
@@ -379,7 +378,7 @@ func (l *eventLogger) computeCommand() []string {
 	return []string{
 		"./event-logger",
 		"--seed-event-namespaces=" + l.namespace,
-		"--shoot-kubeconfig=" + gutil.PathGenericKubeconfig,
+		"--shoot-kubeconfig=" + gardenerutils.PathGenericKubeconfig,
 		"--shoot-event-namespaces=" + metav1.NamespaceSystem + "," + metav1.NamespaceDefault,
 	}
 }

@@ -18,15 +18,15 @@ import (
 	"context"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 )
 
-func (g *graph) setupProjectWatch(_ context.Context, informer cache.Informer) {
-	informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+func (g *graph) setupProjectWatch(_ context.Context, informer cache.Informer) error {
+	_, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			project, ok := obj.(*gardencorev1beta1.Project)
 			if !ok {
@@ -62,6 +62,7 @@ func (g *graph) setupProjectWatch(_ context.Context, informer cache.Informer) {
 			g.handleProjectDelete(project)
 		},
 	})
+	return err
 }
 
 func (g *graph) handleProjectCreateOrUpdate(project *gardencorev1beta1.Project) {

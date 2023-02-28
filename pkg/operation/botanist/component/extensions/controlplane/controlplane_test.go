@@ -19,18 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/extensions"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/controlplane"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
@@ -43,6 +31,17 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/extensions"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/controlplane"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("ControlPlane", func() {
@@ -203,11 +202,11 @@ var _ = Describe("ControlPlane", func() {
 			defer test.WithVars(&controlplane.TimeNow, mockNow.Do)()
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
-			By("deploy")
+			By("Deploy")
 			// Deploy should fill internal state with the added timestamp annotation
 			Expect(defaultDepWaiter.Deploy(ctx)).To(Succeed())
 
-			By("patch object")
+			By("Patch object")
 			patch := client.MergeFrom(cp.DeepCopy())
 			// remove operation annotation, add old timestamp annotation
 			cp.ObjectMeta.Annotations = map[string]string{
@@ -218,7 +217,7 @@ var _ = Describe("ControlPlane", func() {
 			}
 			Expect(c.Patch(ctx, cp, patch)).To(Succeed(), "patching controlplane succeeds")
 
-			By("wait")
+			By("Wait")
 			Expect(defaultDepWaiter.Wait(ctx)).NotTo(Succeed(), "controlplane indicates error")
 		})
 
@@ -226,11 +225,11 @@ var _ = Describe("ControlPlane", func() {
 			defer test.WithVars(&controlplane.TimeNow, mockNow.Do)()
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
-			By("deploy")
+			By("Deploy")
 			// Deploy should fill internal state with the added timestamp annotation
 			Expect(defaultDepWaiter.Deploy(ctx)).To(Succeed())
 
-			By("patch object")
+			By("Patch object")
 			patch := client.MergeFrom(cp.DeepCopy())
 			// remove operation annotation, add up-to-date timestamp annotation
 			cp.ObjectMeta.Annotations = map[string]string{
@@ -241,7 +240,7 @@ var _ = Describe("ControlPlane", func() {
 			}
 			Expect(c.Patch(ctx, cp, patch)).To(Succeed(), "patching controlplane succeeds")
 
-			By("wait")
+			By("Wait")
 			Expect(defaultDepWaiter.Wait(ctx)).To(Succeed(), "controlplane is ready")
 		})
 
@@ -253,11 +252,11 @@ var _ = Describe("ControlPlane", func() {
 			defaultDepWaiter = controlplane.New(log, c, values, time.Millisecond, 250*time.Millisecond, 500*time.Millisecond)
 			cp.Name += "-exposure"
 
-			By("deploy")
+			By("Deploy")
 			// Deploy should fill internal state with the added timestamp annotation
 			Expect(defaultDepWaiter.Deploy(ctx)).To(Succeed())
 
-			By("patch object")
+			By("Patch object")
 			patch := client.MergeFrom(cp.DeepCopy())
 			// remove operation annotation, add old timestamp annotation
 			cp.ObjectMeta.Annotations = map[string]string{
@@ -268,7 +267,7 @@ var _ = Describe("ControlPlane", func() {
 			}
 			Expect(c.Patch(ctx, cp, patch)).To(Succeed(), "patching controlplane succeeds")
 
-			By("wait")
+			By("Wait")
 			Expect(defaultDepWaiter.Wait(ctx)).NotTo(Succeed(), "controlplane indicates error")
 		})
 
@@ -280,11 +279,11 @@ var _ = Describe("ControlPlane", func() {
 			defaultDepWaiter = controlplane.New(log, c, values, time.Millisecond, 250*time.Millisecond, 500*time.Millisecond)
 			cp.Name += "-exposure"
 
-			By("deploy")
+			By("Deploy")
 			// Deploy should fill internal state with the added timestamp annotation
 			Expect(defaultDepWaiter.Deploy(ctx)).To(Succeed())
 
-			By("patch object")
+			By("Patch object")
 			patch := client.MergeFrom(cp.DeepCopy())
 			// remove operation annotation, add up-to-date timestamp annotation
 			cp.ObjectMeta.Annotations = map[string]string{
@@ -295,7 +294,7 @@ var _ = Describe("ControlPlane", func() {
 			}
 			Expect(c.Patch(ctx, cp, patch)).To(Succeed(), "patching controlplane succeeds")
 
-			By("wait")
+			By("Wait")
 			Expect(defaultDepWaiter.Wait(ctx)).To(Succeed(), "controlplane is ready")
 		})
 	})
@@ -313,7 +312,7 @@ var _ = Describe("ControlPlane", func() {
 		It("should return error if not deleted successfully (purpose != exposure)", func() {
 			defer test.WithVars(
 				&extensions.TimeNow, mockNow.Do,
-				&gutil.TimeNow, mockNow.Do,
+				&gardenerutils.TimeNow, mockNow.Do,
 			)()
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
@@ -335,7 +334,7 @@ var _ = Describe("ControlPlane", func() {
 		It("should return error if not deleted successfully (purpose == exposure)", func() {
 			defer test.WithVars(
 				&extensions.TimeNow, mockNow.Do,
-				&gutil.TimeNow, mockNow.Do,
+				&gardenerutils.TimeNow, mockNow.Do,
 			)()
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
@@ -387,13 +386,13 @@ var _ = Describe("ControlPlane", func() {
 	Describe("#Restore", func() {
 		var (
 			state      = &runtime.RawExtension{Raw: []byte(`{"dummy":"state"}`)}
-			shootState *gardencorev1alpha1.ShootState
+			shootState *gardencorev1beta1.ShootState
 		)
 
 		BeforeEach(func() {
-			shootState = &gardencorev1alpha1.ShootState{
-				Spec: gardencorev1alpha1.ShootStateSpec{
-					Extensions: []gardencorev1alpha1.ExtensionResourceState{
+			shootState = &gardencorev1beta1.ShootState{
+				Spec: gardencorev1beta1.ShootStateSpec{
+					Extensions: []gardencorev1beta1.ExtensionResourceState{
 						{
 							Name:    &name,
 							Kind:    extensionsv1alpha1.ControlPlaneResource,
@@ -413,7 +412,9 @@ var _ = Describe("ControlPlane", func() {
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
 			mc := mockclient.NewMockClient(ctrl)
-			mc.EXPECT().Status().Return(mc)
+			mockStatusWriter := mockclient.NewMockStatusWriter(ctrl)
+
+			mc.EXPECT().Status().Return(mockStatusWriter)
 
 			mc.EXPECT().Get(ctx, client.ObjectKeyFromObject(empty), gomock.AssignableToTypeOf(empty)).
 				Return(apierrors.NewNotFound(extensionsv1alpha1.Resource("controlplanes"), name))
@@ -432,7 +433,7 @@ var _ = Describe("ControlPlane", func() {
 			// restore state
 			expectedWithState := obj.DeepCopy()
 			expectedWithState.Status.State = state
-			test.EXPECTPatch(ctx, mc, expectedWithState, obj, types.MergePatchType)
+			test.EXPECTStatusPatch(ctx, mockStatusWriter, expectedWithState, obj, types.MergePatchType)
 
 			// annotate with restore annotation
 			expectedWithRestore := expectedWithState.DeepCopy()
@@ -450,7 +451,9 @@ var _ = Describe("ControlPlane", func() {
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
 			mc := mockclient.NewMockClient(ctrl)
-			mc.EXPECT().Status().Return(mc)
+			mockStatusWriter := mockclient.NewMockStatusWriter(ctrl)
+
+			mc.EXPECT().Status().Return(mockStatusWriter)
 
 			empty.Name += "-exposure"
 			mc.EXPECT().Get(ctx, client.ObjectKeyFromObject(empty), gomock.AssignableToTypeOf(empty)).
@@ -475,7 +478,7 @@ var _ = Describe("ControlPlane", func() {
 			shootState.Spec.Extensions[0].Purpose = pointer.String(string(values.Purpose))
 			expectedWithState := obj.DeepCopy()
 			expectedWithState.Status.State = state
-			test.EXPECTPatch(ctx, mc, expectedWithState, obj, types.MergePatchType)
+			test.EXPECTStatusPatch(ctx, mockStatusWriter, expectedWithState, obj, types.MergePatchType)
 
 			// annotate with restore annotation
 			expectedWithRestore := expectedWithState.DeepCopy()

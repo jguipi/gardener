@@ -20,30 +20,6 @@ import (
 	"flag"
 	"fmt"
 
-	"github.com/gardener/gardener/pkg/api"
-	gardencore "github.com/gardener/gardener/pkg/apis/core"
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/apis/operations"
-	operationsv1alpha1 "github.com/gardener/gardener/pkg/apis/operations/v1alpha1"
-	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
-	settingsv1alpha1 "github.com/gardener/gardener/pkg/apis/settings/v1alpha1"
-	"github.com/gardener/gardener/pkg/apiserver"
-	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
-	"github.com/gardener/gardener/pkg/apiserver/storage"
-	gardencoreclientset "github.com/gardener/gardener/pkg/client/core/clientset/internalversion"
-	gardenversionedcoreclientset "github.com/gardener/gardener/pkg/client/core/clientset/versioned"
-	gardenexternalcoreinformers "github.com/gardener/gardener/pkg/client/core/informers/externalversions"
-	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
-	clientkubernetes "github.com/gardener/gardener/pkg/client/kubernetes"
-	seedmanagementclientset "github.com/gardener/gardener/pkg/client/seedmanagement/clientset/versioned"
-	seedmanagementinformer "github.com/gardener/gardener/pkg/client/seedmanagement/informers/externalversions"
-	settingsclientset "github.com/gardener/gardener/pkg/client/settings/clientset/versioned"
-	settingsinformer "github.com/gardener/gardener/pkg/client/settings/informers/externalversions"
-	"github.com/gardener/gardener/pkg/logger"
-	"github.com/gardener/gardener/pkg/openapi"
-
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
@@ -56,7 +32,6 @@ import (
 	"k8s.io/apiserver/pkg/quota/v1/generic"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	genericoptions "k8s.io/apiserver/pkg/server/options"
-	"k8s.io/apiserver/pkg/server/options/encryptionconfig"
 	"k8s.io/apiserver/pkg/server/resourceconfig"
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -69,8 +44,32 @@ import (
 	"k8s.io/component-base/version"
 	"k8s.io/component-base/version/verflag"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	runtimelog "sigs.k8s.io/controller-runtime/pkg/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/gardener/gardener/pkg/api"
+	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/apis/operations"
+	operationsv1alpha1 "github.com/gardener/gardener/pkg/apis/operations/v1alpha1"
+	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
+	settingsv1alpha1 "github.com/gardener/gardener/pkg/apis/settings/v1alpha1"
+	"github.com/gardener/gardener/pkg/apiserver"
+	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
+	"github.com/gardener/gardener/pkg/apiserver/storage"
+	gardencoreclientset "github.com/gardener/gardener/pkg/client/core/clientset/internalversion"
+	gardencoreversionedclientset "github.com/gardener/gardener/pkg/client/core/clientset/versioned"
+	gardencoreexternalinformers "github.com/gardener/gardener/pkg/client/core/informers/externalversions"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	kubernetesclient "github.com/gardener/gardener/pkg/client/kubernetes"
+	seedmanagementclientset "github.com/gardener/gardener/pkg/client/seedmanagement/clientset/versioned"
+	seedmanagementinformers "github.com/gardener/gardener/pkg/client/seedmanagement/informers/externalversions"
+	settingsclientset "github.com/gardener/gardener/pkg/client/settings/clientset/versioned"
+	settingsinformers "github.com/gardener/gardener/pkg/client/settings/informers/externalversions"
+	"github.com/gardener/gardener/pkg/logger"
+	"github.com/gardener/gardener/pkg/openapi"
 )
 
 // NewCommandStartGardenerAPIServer creates a *cobra.Command object with default parameters.
@@ -115,10 +114,10 @@ type Options struct {
 	ServerRunOptions              *genericoptions.ServerRunOptions
 	ExtraOptions                  *apiserver.ExtraOptions
 	CoreInformerFactory           gardencoreinformers.SharedInformerFactory
-	ExternalCoreInformerFactory   gardenexternalcoreinformers.SharedInformerFactory
+	ExternalCoreInformerFactory   gardencoreexternalinformers.SharedInformerFactory
 	KubeInformerFactory           kubeinformers.SharedInformerFactory
-	SeedManagementInformerFactory seedmanagementinformer.SharedInformerFactory
-	SettingsInformerFactory       settingsinformer.SharedInformerFactory
+	SeedManagementInformerFactory seedmanagementinformers.SharedInformerFactory
+	SettingsInformerFactory       settingsinformers.SharedInformerFactory
 
 	Logs *logsv1.LoggingConfiguration
 }
@@ -201,25 +200,25 @@ func (o *Options) config(kubeAPIServerConfig *rest.Config, kubeClient *kubernete
 		o.CoreInformerFactory = gardencoreinformers.NewSharedInformerFactory(coreClient, protobufLoopbackConfig.Timeout)
 
 		// versioned core client
-		versionedCoreClient, err := gardenversionedcoreclientset.NewForConfig(&protobufLoopbackConfig)
+		versionedCoreClient, err := gardencoreversionedclientset.NewForConfig(&protobufLoopbackConfig)
 		if err != nil {
 			return nil, err
 		}
-		o.ExternalCoreInformerFactory = gardenexternalcoreinformers.NewSharedInformerFactory(versionedCoreClient, protobufLoopbackConfig.Timeout)
+		o.ExternalCoreInformerFactory = gardencoreexternalinformers.NewSharedInformerFactory(versionedCoreClient, protobufLoopbackConfig.Timeout)
 
 		// seedmanagement client
 		seedManagementClient, err := seedmanagementclientset.NewForConfig(gardenerAPIServerConfig.LoopbackClientConfig)
 		if err != nil {
 			return nil, err
 		}
-		o.SeedManagementInformerFactory = seedmanagementinformer.NewSharedInformerFactory(seedManagementClient, gardenerAPIServerConfig.LoopbackClientConfig.Timeout)
+		o.SeedManagementInformerFactory = seedmanagementinformers.NewSharedInformerFactory(seedManagementClient, gardenerAPIServerConfig.LoopbackClientConfig.Timeout)
 
 		// settings client
 		settingsClient, err := settingsclientset.NewForConfig(&protobufLoopbackConfig)
 		if err != nil {
 			return nil, err
 		}
-		o.SettingsInformerFactory = settingsinformer.NewSharedInformerFactory(settingsClient, protobufLoopbackConfig.Timeout)
+		o.SettingsInformerFactory = settingsinformers.NewSharedInformerFactory(settingsClient, protobufLoopbackConfig.Timeout)
 
 		// dynamic client
 		dynamicClient, err := dynamic.NewForConfig(kubeAPIServerConfig)
@@ -267,7 +266,7 @@ func (o *Options) Run(ctx context.Context) error {
 		return fmt.Errorf("error instantiating zap logger: %w", err)
 	}
 
-	runtimelog.SetLogger(log)
+	logf.SetLogger(log)
 	klog.SetLogger(log)
 
 	log.Info("Starting gardener-apiserver", "version", version.Get())
@@ -323,17 +322,27 @@ func (o *Options) Run(ctx context.Context) error {
 			ObjectMeta: metav1.ObjectMeta{
 				Name: gardencorev1beta1.GardenerSeedLeaseNamespace,
 			},
-		}, clientkubernetes.DefaultCreateOptions())
+		}, kubernetesclient.DefaultCreateOptions())
 		return err
 	}); err != nil {
 		return err
 	}
 
 	if err := server.GenericAPIServer.AddPostStartHook("bootstrap-cluster-identity", func(context genericapiserver.PostStartHookContext) error {
-		if _, err := kubeClient.CoreV1().ConfigMaps(metav1.NamespaceSystem).Get(ctx, v1beta1constants.ClusterIdentity, metav1.GetOptions{}); client.IgnoreNotFound(err) != nil {
+		if clusterIdentity, err := kubeClient.CoreV1().ConfigMaps(metav1.NamespaceSystem).Get(ctx, v1beta1constants.ClusterIdentity, metav1.GetOptions{}); client.IgnoreNotFound(err) != nil {
 			return err
 		} else if err == nil {
-			// Cluster identity ConfigMap already exists
+			// Set immutable flag to true and origin to gardener-apiserver if cluster-identity config map is not immutable, its origin is empty and the cluster-identity is equal the one set by gardener-apiserver
+			if pointer.BoolDeref(clusterIdentity.Immutable, false) {
+				return nil
+			}
+			if clusterIdentity.Data[v1beta1constants.ClusterIdentityOrigin] == "" && clusterIdentity.Data[v1beta1constants.ClusterIdentity] == o.ExtraOptions.ClusterIdentity {
+				clusterIdentity.Data[v1beta1constants.ClusterIdentityOrigin] = v1beta1constants.ClusterIdentityOriginGardenerAPIServer
+				clusterIdentity.Immutable = pointer.Bool(true)
+				if _, err = kubeClient.CoreV1().ConfigMaps(metav1.NamespaceSystem).Update(ctx, clusterIdentity, kubernetesclient.DefaultUpdateOptions()); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 
@@ -342,10 +351,12 @@ func (o *Options) Run(ctx context.Context) error {
 				Name:      v1beta1constants.ClusterIdentity,
 				Namespace: metav1.NamespaceSystem,
 			},
+			Immutable: pointer.Bool(true),
 			Data: map[string]string{
-				v1beta1constants.ClusterIdentity: o.ExtraOptions.ClusterIdentity,
+				v1beta1constants.ClusterIdentity:       o.ExtraOptions.ClusterIdentity,
+				v1beta1constants.ClusterIdentityOrigin: v1beta1constants.ClusterIdentityOriginGardenerAPIServer,
 			},
-		}, clientkubernetes.DefaultCreateOptions())
+		}, kubernetesclient.DefaultCreateOptions())
 		return err
 	}); err != nil {
 		return err
@@ -408,11 +419,7 @@ func (o *Options) ApplyTo(config *apiserver.Config) error {
 	}
 
 	resourceEncodingConfig := serverstorage.NewDefaultResourceEncodingConfig(api.Scheme)
-	// TODO: `ShootState` is not yet promoted to `core.gardener.cloud/v1beta1` - this can be removed once `ShootState` got promoted.
-	resourceEncodingConfig.SetResourceEncoding(gardencore.Resource("shootstates"), gardencorev1alpha1.SchemeGroupVersion, gardencore.SchemeGroupVersion)
 	resourceEncodingConfig.SetResourceEncoding(operations.Resource("bastions"), operationsv1alpha1.SchemeGroupVersion, operations.SchemeGroupVersion)
-	// TODO: `ExposureClass` is not yet promoted to `core.gardener.cloud/v1beta1` - this can be removed once `ExposureClass` got promoted.
-	resourceEncodingConfig.SetResourceEncoding(gardencore.Resource("exposureclasses"), gardencorev1alpha1.SchemeGroupVersion, gardencore.SchemeGroupVersion)
 
 	storageFactory := &storage.GardenerStorageFactory{
 		DefaultStorageFactory: serverstorage.NewDefaultStorageFactory(
@@ -425,14 +432,8 @@ func (o *Options) ApplyTo(config *apiserver.Config) error {
 		),
 	}
 
-	if len(o.Recommended.Etcd.EncryptionProviderConfigFilepath) != 0 {
-		transformerOverrides, err := encryptionconfig.GetTransformerOverrides(o.Recommended.Etcd.EncryptionProviderConfigFilepath)
-		if err != nil {
-			return err
-		}
-		for groupResource, transformer := range transformerOverrides {
-			storageFactory.SetTransformer(groupResource, transformer)
-		}
+	if err := o.Recommended.Etcd.Complete(config.GenericConfig.StorageObjectCountTracker, config.GenericConfig.DrainedNotify(), config.GenericConfig.AddPostStartHook); err != nil {
+		return err
 	}
 
 	return o.Recommended.Etcd.ApplyWithStorageFactoryTo(storageFactory, &gardenerAPIServerConfig.Config)

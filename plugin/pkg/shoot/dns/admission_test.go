@@ -19,13 +19,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	coreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-	. "github.com/gardener/gardener/plugin/pkg/shoot/dns"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
@@ -35,6 +28,13 @@ import (
 	"k8s.io/apiserver/pkg/admission"
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/utils/pointer"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
+	. "github.com/gardener/gardener/plugin/pkg/shoot/dns"
 )
 
 var _ = Describe("dns", func() {
@@ -43,7 +43,7 @@ var _ = Describe("dns", func() {
 		var (
 			admissionHandler    *DNS
 			kubeInformerFactory kubeinformers.SharedInformerFactory
-			coreInformerFactory coreinformers.SharedInformerFactory
+			coreInformerFactory gardencoreinformers.SharedInformerFactory
 
 			seed  core.Seed
 			shoot core.Shoot
@@ -77,8 +77,8 @@ var _ = Describe("dns", func() {
 						v1beta1constants.GardenRole: v1beta1constants.GardenRoleDefaultDomain,
 					},
 					Annotations: map[string]string{
-						gutil.DNSDomain:   domain,
-						gutil.DNSProvider: defaultDomainProvider,
+						gardenerutils.DNSDomain:   domain,
+						gardenerutils.DNSProvider: defaultDomainProvider,
 					},
 				},
 			}
@@ -91,9 +91,9 @@ var _ = Describe("dns", func() {
 						v1beta1constants.GardenRole: v1beta1constants.GardenRoleDefaultDomain,
 					},
 					Annotations: map[string]string{
-						gutil.DNSDomain:                domainHigherPriority,
-						gutil.DNSDefaultDomainPriority: "5",
-						gutil.DNSProvider:              defaultDomainProvider,
+						gardenerutils.DNSDomain:                domainHigherPriority,
+						gardenerutils.DNSDefaultDomainPriority: "5",
+						gardenerutils.DNSProvider:              defaultDomainProvider,
 					},
 				},
 			}
@@ -106,9 +106,9 @@ var _ = Describe("dns", func() {
 						v1beta1constants.GardenRole: v1beta1constants.GardenRoleDefaultDomain,
 					},
 					Annotations: map[string]string{
-						gutil.DNSDomain:                domainLowerPriority,
-						gutil.DNSDefaultDomainPriority: "-5",
-						gutil.DNSProvider:              defaultDomainProvider,
+						gardenerutils.DNSDomain:                domainLowerPriority,
+						gardenerutils.DNSDefaultDomainPriority: "-5",
+						gardenerutils.DNSProvider:              defaultDomainProvider,
 					},
 				},
 			}
@@ -136,7 +136,7 @@ var _ = Describe("dns", func() {
 			admissionHandler.AssignReadyFunc(func() bool { return true })
 			kubeInformerFactory = kubeinformers.NewSharedInformerFactory(nil, 0)
 			admissionHandler.SetKubeInformerFactory(kubeInformerFactory)
-			coreInformerFactory = coreinformers.NewSharedInformerFactory(nil, 0)
+			coreInformerFactory = gardencoreinformers.NewSharedInformerFactory(nil, 0)
 			admissionHandler.SetInternalCoreInformerFactory(coreInformerFactory)
 
 			shootBase.Spec.DNS.Domain = nil
@@ -146,12 +146,6 @@ var _ = Describe("dns", func() {
 				},
 			}
 			shoot = shootBase
-
-			seedBase.Spec.Settings = &core.SeedSettings{
-				ShootDNS: &core.SeedSettingShootDNS{
-					Enabled: true,
-				},
-			}
 			seed = seedBase
 		})
 
@@ -192,35 +186,6 @@ var _ = Describe("dns", func() {
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(*shootCopy).To(Equal(*shootBefore))
-		})
-
-		It("should do nothing because the seed disables DNS", func() {
-			seedCopy := seed.DeepCopy()
-			seedCopy.Spec.Settings = &core.SeedSettings{ShootDNS: &core.SeedSettingShootDNS{Enabled: false}}
-			shootCopy := shoot.DeepCopy()
-			shootCopy.Spec.DNS = nil
-			shootBefore := shootCopy.DeepCopy()
-
-			Expect(coreInformerFactory.Core().InternalVersion().Projects().Informer().GetStore().Add(&project)).To(Succeed())
-			Expect(coreInformerFactory.Core().InternalVersion().Seeds().Informer().GetStore().Add(seedCopy)).To(Succeed())
-			attrs := admission.NewAttributesRecord(shootCopy, nil, core.Kind("Shoot").WithVersion("version"), shootCopy.Namespace, shootCopy.Name, core.Resource("shoots").WithVersion("version"), "", admission.Create, &metav1.CreateOptions{}, false, nil)
-
-			err := admissionHandler.Admit(context.TODO(), attrs, nil)
-
-			Expect(err).NotTo(HaveOccurred())
-			Expect(*shootCopy).To(Equal(*shootBefore))
-		})
-
-		It("should throw an error because the seed disables DNS but shoot specifies a dns section", func() {
-			seedCopy := seed.DeepCopy()
-			seedCopy.Spec.Settings = &core.SeedSettings{ShootDNS: &core.SeedSettingShootDNS{Enabled: false}}
-
-			Expect(coreInformerFactory.Core().InternalVersion().Seeds().Informer().GetStore().Add(seedCopy)).To(Succeed())
-			attrs := admission.NewAttributesRecord(&shoot, nil, core.Kind("Shoot").WithVersion("version"), shoot.Namespace, shoot.Name, core.Resource("shoots").WithVersion("version"), "", admission.Create, &metav1.CreateOptions{}, false, nil)
-
-			err := admissionHandler.Admit(context.TODO(), attrs, nil)
-
-			Expect(err).To(BeInvalidError())
 		})
 
 		It("should set the 'unmanaged' dns provider as the primary one", func() {
@@ -845,19 +810,12 @@ var _ = Describe("dns", func() {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: destinationSeedName,
 					},
-					Spec: core.SeedSpec{
-						Settings: &core.SeedSettings{
-							ShootDNS: &core.SeedSettingShootDNS{
-								Enabled: true,
-							},
-						},
-					},
 				}
 
 				shoot.Spec.DNS.Providers = nil
 			})
 
-			It("should accept shoot migration update because new and old seeds support DNS", func() {
+			It("should accept shoot migration update", func() {
 				shootDomain := fmt.Sprintf("%s.%s.%s", shoot.Name, project.Name, domain)
 				shoot.Spec.DNS.Domain = &shootDomain
 
@@ -870,39 +828,6 @@ var _ = Describe("dns", func() {
 
 				err := admissionHandler.Admit(context.TODO(), attrs, nil)
 				Expect(err).NotTo(HaveOccurred())
-			})
-
-			It("should reject shoot migration update because the new seed does not support DNS", func() {
-				shootDomain := fmt.Sprintf("%s.%s.%s", shoot.Name, project.Name, domain)
-				shoot.Spec.DNS.Domain = &shootDomain
-
-				destinationSeed.Spec.Settings.ShootDNS.Enabled = false
-
-				Expect(coreInformerFactory.Core().InternalVersion().Projects().Informer().GetStore().Add(&project)).To(Succeed())
-				Expect(coreInformerFactory.Core().InternalVersion().Seeds().Informer().GetStore().Add(&seed)).To(Succeed())
-				Expect(coreInformerFactory.Core().InternalVersion().Seeds().Informer().GetStore().Add(&destinationSeed)).To(Succeed())
-
-				newShoot := (&shoot).DeepCopy()
-				newShoot.Spec.SeedName = &destinationSeedName
-				attrs := admission.NewAttributesRecord(newShoot, &shoot, core.Kind("Shoot").WithVersion("version"), shoot.Namespace, shoot.Name, core.Resource("shoots").WithVersion("version"), "", admission.Update, &metav1.UpdateOptions{}, false, nil)
-
-				err := admissionHandler.Admit(context.TODO(), attrs, nil)
-				Expect(err).To(HaveOccurred())
-			})
-
-			It("should reject shoot migration update because the old seed does not support DNS", func() {
-				seed.Spec.Settings.ShootDNS.Enabled = false
-
-				Expect(coreInformerFactory.Core().InternalVersion().Projects().Informer().GetStore().Add(&project)).To(Succeed())
-				Expect(coreInformerFactory.Core().InternalVersion().Seeds().Informer().GetStore().Add(&seed)).To(Succeed())
-				Expect(coreInformerFactory.Core().InternalVersion().Seeds().Informer().GetStore().Add(&destinationSeed)).To(Succeed())
-
-				newShoot := (&shoot).DeepCopy()
-				newShoot.Spec.SeedName = &destinationSeedName
-				attrs := admission.NewAttributesRecord(newShoot, &shoot, core.Kind("Shoot").WithVersion("version"), shoot.Namespace, shoot.Name, core.Resource("shoots").WithVersion("version"), "", admission.Update, &metav1.UpdateOptions{}, false, nil)
-
-				err := admissionHandler.Admit(context.TODO(), attrs, nil)
-				Expect(err).To(HaveOccurred())
 			})
 		})
 	})

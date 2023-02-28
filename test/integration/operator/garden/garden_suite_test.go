@@ -18,38 +18,24 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
-	"k8s.io/utils/pointer"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	"github.com/gardener/gardener/charts"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	operatorv1alpha1 "github.com/gardener/gardener/pkg/apis/operator/v1alpha1"
 	"github.com/gardener/gardener/pkg/logger"
-	"github.com/gardener/gardener/pkg/operator/apis/config"
 	operatorclient "github.com/gardener/gardener/pkg/operator/client"
-	"github.com/gardener/gardener/pkg/operator/controller/garden"
 	"github.com/gardener/gardener/pkg/operator/features"
-	"github.com/gardener/gardener/pkg/utils/imagevector"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 func TestGarden(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Garden Controller Integration Test Suite")
+	RunSpecs(t, "Test Integration Operator Garden Suite")
 }
 
 const testID = "garden-controller-test"
@@ -62,9 +48,6 @@ var (
 	testEnv    *envtest.Environment
 	testClient client.Client
 	mgrClient  client.Client
-
-	testRunID     string
-	testNamespace *corev1.Namespace
 )
 
 var _ = BeforeSuite(func() {
@@ -73,7 +56,7 @@ var _ = BeforeSuite(func() {
 
 	features.RegisterFeatureGates()
 
-	By("starting test environment")
+	By("Start test environment")
 	testEnv = &envtest.Environment{
 		CRDInstallOptions: envtest.CRDInstallOptions{
 			Paths: []string{
@@ -92,73 +75,11 @@ var _ = BeforeSuite(func() {
 	Expect(restConfig).NotTo(BeNil())
 
 	DeferCleanup(func() {
-		By("stopping test environment")
+		By("Stop test environment")
 		Expect(testEnv.Stop()).To(Succeed())
 	})
 
-	By("creating test client")
+	By("Create test client")
 	testClient, err = client.New(restConfig, client.Options{Scheme: operatorclient.RuntimeScheme})
 	Expect(err).NotTo(HaveOccurred())
-
-	By("creating test namespace for test")
-	testNamespace = &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "garden-",
-		},
-	}
-	Expect(testClient.Create(ctx, testNamespace)).To(Succeed())
-	log.Info("Created Namespace for test", "namespaceName", testNamespace.Name)
-	testRunID = testNamespace.Name
-
-	DeferCleanup(func() {
-		By("deleting test namespace")
-		Expect(testClient.Delete(ctx, testNamespace)).To(Or(Succeed(), BeNotFoundError()))
-	})
-
-	By("setup manager")
-	mgr, err := manager.New(restConfig, manager.Options{
-		Scheme:             operatorclient.RuntimeScheme,
-		MetricsBindAddress: "0",
-		NewCache: cache.BuilderWithOptions(cache.Options{
-			SelectorsByObject: map[client.Object]cache.ObjectSelector{
-				&operatorv1alpha1.Garden{}: {
-					Label: labels.SelectorFromSet(labels.Set{testID: testRunID}),
-				},
-			},
-		}),
-	})
-	Expect(err).NotTo(HaveOccurred())
-	mgrClient = mgr.GetClient()
-
-	By("registering controller")
-	chartsPath := filepath.Join("..", "..", "..", "..", charts.Path)
-	imageVector, err := imagevector.ReadGlobalImageVectorWithEnvOverride(filepath.Join(chartsPath, "images.yaml"))
-	Expect(err).NotTo(HaveOccurred())
-
-	Expect((&garden.Reconciler{
-		Config: config.OperatorConfiguration{
-			Controllers: config.ControllerConfiguration{
-				Garden: config.GardenControllerConfig{
-					ConcurrentSyncs: pointer.Int(5),
-					SyncPeriod:      &metav1.Duration{Duration: time.Minute},
-				},
-			},
-		},
-		ImageVector:     imageVector,
-		Identity:        &gardencorev1beta1.Gardener{Name: "test-gardener"},
-		GardenNamespace: testNamespace.Name,
-	}).AddToManager(mgr)).To(Succeed())
-
-	By("starting manager")
-	mgrContext, mgrCancel := context.WithCancel(ctx)
-
-	go func() {
-		defer GinkgoRecover()
-		Expect(mgr.Start(mgrContext)).To(Succeed())
-	}()
-
-	DeferCleanup(func() {
-		By("stopping manager")
-		mgrCancel()
-	})
 })

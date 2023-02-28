@@ -20,35 +20,27 @@ import (
 	"net"
 	"time"
 
-	"github.com/gardener/gardener/pkg/operation/common"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/pkg/utils/retry"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gardener/gardener/pkg/operation/common"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/retry"
 )
 
 // WaitUntilNginxIngressServiceIsReady waits until the external load balancer of the nginx ingress controller has been created.
 func (b *Botanist) WaitUntilNginxIngressServiceIsReady(ctx context.Context) error {
 	const timeout = 10 * time.Minute
 
-	loadBalancerIngress, err := kutil.WaitUntilLoadBalancerIsReady(ctx, b.Logger, b.ShootClientSet.Client(), metav1.NamespaceSystem, "addons-nginx-ingress-controller", timeout)
+	loadBalancerIngress, err := kubernetesutils.WaitUntilLoadBalancerIsReady(ctx, b.Logger, b.ShootClientSet.Client(), metav1.NamespaceSystem, "addons-nginx-ingress-controller", timeout)
 	if err != nil {
 		return err
 	}
 
-	b.SetNginxIngressAddress(loadBalancerIngress, b.SeedClientSet.Client())
+	b.SetNginxIngressAddress(loadBalancerIngress)
 	return nil
-}
-
-// WaitUntilVpnShootServiceIsReady waits until the external load balancer of the VPN has been created.
-func (b *Botanist) WaitUntilVpnShootServiceIsReady(ctx context.Context) error {
-	const timeout = 10 * time.Minute
-
-	_, err := kutil.WaitUntilLoadBalancerIsReady(ctx, b.Logger, b.ShootClientSet.Client(), metav1.NamespaceSystem, "vpn-shoot", timeout)
-	return err
 }
 
 // WaitUntilTunnelConnectionExists waits until a port forward connection to the tunnel pod (vpn-shoot) in the kube-system
@@ -59,34 +51,6 @@ func (b *Botanist) WaitUntilTunnelConnectionExists(ctx context.Context) error {
 	if err := retry.UntilTimeout(ctx, 5*time.Second, timeout, func(ctx context.Context) (bool, error) {
 		return CheckTunnelConnection(ctx, b.Logger, b.ShootClientSet, common.VPNTunnel)
 	}); err != nil {
-		// If the classic VPN solution is used for the shoot cluster then let's try to fetch
-		// the last events of the vpn-shoot service (potentially indicating an error with the load balancer service).
-		if !b.Shoot.ReversedVPNEnabled {
-			b.Logger.Error(err, "Error occurred while checking the tunnel connection")
-
-			service := &corev1.Service{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: corev1.SchemeGroupVersion.String(),
-					Kind:       "Service",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "vpn-shoot",
-					Namespace: metav1.NamespaceSystem,
-				},
-			}
-
-			eventsErrorMessage, err2 := kutil.FetchEventMessages(ctx, b.ShootClientSet.Client().Scheme(), b.ShootClientSet.Client(), service, corev1.EventTypeWarning, 2)
-			if err2 != nil {
-				return fmt.Errorf("'%v' occurred but could not fetch events for more information: %w", err, err2)
-			}
-
-			if eventsErrorMessage != "" {
-				return fmt.Errorf("%s\n\n%s", err.Error(), eventsErrorMessage)
-			}
-
-			return err
-		}
-
 		return err
 	}
 
@@ -158,7 +122,7 @@ func (b *Botanist) WaitUntilEndpointsDoNotContainPodIPs(ctx context.Context) err
 			return retry.SevereError(err)
 		}
 
-		epsNotReconciledByKCM := sets.NewString()
+		epsNotReconciledByKCM := sets.New[string]()
 		for _, service := range serviceList.Items {
 			// if service.Spec.Selector is empty or nil, kube-controller-manager will not reconcile Endpoints for this Service
 			if len(service.Spec.Selector) == 0 {

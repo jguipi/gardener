@@ -10,6 +10,7 @@ global:
       app: fluent-bit
       role: logging
 
+clusterType: seed
 authEnabled: true
 
 annotations: {}
@@ -111,7 +112,6 @@ hvpa:
     cpu: 800m
     memory: 3Gi
   minAllowed:
-    cpu: 200m
     memory: 300M
   targetAverageUtilizationCpu: 80
   targetAverageUtilizationMemory: 80

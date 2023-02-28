@@ -20,9 +20,6 @@ import (
 	"reflect"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -31,6 +28,9 @@ import (
 	testclock "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
 )
 
 var _ = Describe("Project Activity", func() {
@@ -47,12 +47,15 @@ var _ = Describe("Project Activity", func() {
 
 		ctrl                   *gomock.Controller
 		k8sGardenRuntimeClient *mockclient.MockClient
+		mockStatusWriter       *mockclient.MockStatusWriter
 		ctx                    context.Context
 	)
 
 	BeforeEach(func() {
 		ctrl = gomock.NewController(GinkgoT())
 		k8sGardenRuntimeClient = mockclient.NewMockClient(ctrl)
+		mockStatusWriter = mockclient.NewMockStatusWriter(ctrl)
+
 		ctx = context.TODO()
 
 		projectName = "name"
@@ -95,13 +98,14 @@ var _ = Describe("Project Activity", func() {
 				return errors.New("error retrieving object from store")
 			})
 
-			k8sGardenRuntimeClient.EXPECT().Patch(ctx, gomock.AssignableToTypeOf(&gardencorev1beta1.Project{}), gomock.Any()).DoAndReturn(
+			k8sGardenRuntimeClient.EXPECT().Status().Return(mockStatusWriter).AnyTimes()
+
+			mockStatusWriter.EXPECT().Patch(ctx, gomock.AssignableToTypeOf(&gardencorev1beta1.Project{}), gomock.Any()).DoAndReturn(
 				func(_ context.Context, prj *gardencorev1beta1.Project, _ client.Patch, _ ...client.PatchOption) error {
 					*project = *prj
 					return nil
 				},
 			).AnyTimes()
-			k8sGardenRuntimeClient.EXPECT().Status().Return(k8sGardenRuntimeClient).AnyTimes()
 		})
 
 		Context("#Reconcile", func() {

@@ -15,13 +15,13 @@
 package validation
 
 import (
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/utils"
-
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/utils"
 )
 
 // ValidateOperatingSystemConfig validates a OperatingSystemConfig object.
@@ -96,7 +96,7 @@ func ValidateUnits(units []extensionsv1alpha1.Unit, fldPath *field.Path) field.E
 func ValidateFiles(files []extensionsv1alpha1.File, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	paths := sets.NewString()
+	paths := sets.New[string]()
 
 	for i, file := range files {
 		idxPath := fldPath.Index(i)

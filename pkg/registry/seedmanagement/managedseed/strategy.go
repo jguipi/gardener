@@ -18,12 +18,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/gardener/gardener/pkg/api"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/apis/seedmanagement"
-	"github.com/gardener/gardener/pkg/apis/seedmanagement/validation"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
@@ -32,6 +26,12 @@ import (
 	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/apiserver/pkg/storage/names"
+
+	"github.com/gardener/gardener/pkg/api"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/apis/seedmanagement"
+	"github.com/gardener/gardener/pkg/apis/seedmanagement/validation"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 // Strategy defines the strategy for storing managedseeds.
@@ -84,13 +84,13 @@ func mustIncreaseGeneration(oldManagedSeed, newManagedSeed *seedmanagement.Manag
 	}
 
 	// The operation annotation was added with value "reconcile"
-	if kutil.HasMetaDataAnnotation(&newManagedSeed.ObjectMeta, v1beta1constants.GardenerOperation, v1beta1constants.GardenerOperationReconcile) {
+	if kubernetesutils.HasMetaDataAnnotation(&newManagedSeed.ObjectMeta, v1beta1constants.GardenerOperation, v1beta1constants.GardenerOperationReconcile) {
 		delete(newManagedSeed.Annotations, v1beta1constants.GardenerOperation)
 		return true
 	}
 
 	// The operation annotation was added with value "renew-kubeconfig"
-	if kutil.HasMetaDataAnnotation(&newManagedSeed.ObjectMeta, v1beta1constants.GardenerOperation, v1beta1constants.GardenerOperationRenewKubeconfig) {
+	if kubernetesutils.HasMetaDataAnnotation(&newManagedSeed.ObjectMeta, v1beta1constants.GardenerOperation, v1beta1constants.GardenerOperationRenewKubeconfig) {
 		return true
 	}
 

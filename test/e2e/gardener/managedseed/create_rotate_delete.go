@@ -19,20 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	"github.com/gardener/gardener/pkg/apis/seedmanagement/encoding"
-	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	gardenletconfigv1alpha1 "github.com/gardener/gardener/pkg/gardenlet/apis/config/v1alpha1"
-	"github.com/gardener/gardener/pkg/utils"
-	"github.com/gardener/gardener/pkg/utils/kubernetes/health"
-	. "github.com/gardener/gardener/pkg/utils/test"
-	e2e "github.com/gardener/gardener/test/e2e/gardener"
-	"github.com/gardener/gardener/test/framework"
-	"github.com/gardener/gardener/test/utils/shoots/access"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -43,6 +29,20 @@ import (
 	clientcmdv1 "k8s.io/client-go/tools/clientcmd/api/v1"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	"github.com/gardener/gardener/pkg/apis/seedmanagement/encoding"
+	seedmanagementv1alpha1 "github.com/gardener/gardener/pkg/apis/seedmanagement/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	gardenletv1alpha1 "github.com/gardener/gardener/pkg/gardenlet/apis/config/v1alpha1"
+	"github.com/gardener/gardener/pkg/utils"
+	"github.com/gardener/gardener/pkg/utils/kubernetes/health"
+	. "github.com/gardener/gardener/pkg/utils/test"
+	e2e "github.com/gardener/gardener/test/e2e/gardener"
+	"github.com/gardener/gardener/test/framework"
+	"github.com/gardener/gardener/test/utils/shoots/access"
 )
 
 var parentCtx context.Context
@@ -136,19 +136,20 @@ var _ = Describe("ManagedSeed Tests", Label("ManagedSeed", "default"), func() {
 
 		By("Trigger gardenlet kubeconfig auto-rotation by reducing kubeconfig validity")
 		{
-			By("Scale down gardenlet deployment to prevent interference of old pods with old validity settings")
-			// See https://github.com/gardener/gardener/issues/6766 for details
-			Eventually(func(g Gomega) {
+			By("Scale down gardenlet deployment and wait until no gardenlet pods exist anymore")
+			CEventually(ctx, func(g Gomega) []corev1.Pod {
 				deployment := &appsv1.Deployment{}
 				g.Expect(shootClient.Client().Get(ctx, client.ObjectKey{Name: "gardenlet", Namespace: "garden"}, deployment)).To(Succeed())
 
-				patch := client.MergeFrom(deployment.DeepCopy())
-				deployment.Spec.Replicas = pointer.Int32(0)
-				g.Expect(shootClient.Client().Patch(ctx, deployment, patch)).To(Succeed())
-			}).Should(Succeed())
+				if pointer.Int32Deref(deployment.Spec.Replicas, 0) != 0 {
+					By("Scale down gardenlet deployment to prevent interference of old pods with old validity settings")
+					// See https://github.com/gardener/gardener/issues/6766 for details
 
-			By("Wait until no gardenlet pods exist anymore")
-			CEventually(ctx, func(g Gomega) []corev1.Pod {
+					patch := client.MergeFrom(deployment.DeepCopy())
+					deployment.Spec.Replicas = pointer.Int32(0)
+					g.Expect(shootClient.Client().Patch(ctx, deployment, patch)).To(Succeed())
+				}
+
 				podList := &corev1.PodList{}
 				g.Expect(shootClient.Client().List(ctx, podList, client.InNamespace("garden"), client.MatchingLabels{"app": "gardener", "role": "gardenlet"})).To(Succeed())
 				return podList.Items
@@ -162,7 +163,7 @@ var _ = Describe("ManagedSeed Tests", Label("ManagedSeed", "default"), func() {
 				// kube-controller-manager backdates the issued certificate, see https://github.com/kubernetes/kubernetes/blob/252935368ab67f38cb252df0a961a6dcb81d20eb/pkg/controller/certificates/signer/signer.go#L197.
 				// ~40% * 15m =~ 6m. The jittering in gardenlet adds this to the time at which the certificate became
 				// valid and then renews it.
-				return patchGardenletKubeconfigValiditySettingsAndTriggerRotation(ctx, f.GardenClient.Client(), managedSeed, &gardenletconfigv1alpha1.KubeconfigValidity{
+				return patchGardenletKubeconfigValiditySettingsAndTriggerRotation(ctx, f.GardenClient.Client(), managedSeed, &gardenletv1alpha1.KubeconfigValidity{
 					Validity:                        &metav1.Duration{Duration: 10 * time.Minute},
 					AutoRotationJitterPercentageMin: pointer.Int32(40),
 					AutoRotationJitterPercentageMax: pointer.Int32(41),
@@ -242,18 +243,18 @@ const (
 )
 
 func buildManagedSeed(shoot *gardencorev1beta1.Shoot) (*seedmanagementv1alpha1.ManagedSeed, error) {
-	gardenletConfig, err := encoding.EncodeGardenletConfiguration(&gardenletconfigv1alpha1.GardenletConfiguration{
+	gardenletConfig, err := encoding.EncodeGardenletConfiguration(&gardenletv1alpha1.GardenletConfiguration{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: gardenletconfigv1alpha1.SchemeGroupVersion.String(),
+			APIVersion: gardenletv1alpha1.SchemeGroupVersion.String(),
 			Kind:       "GardenletConfiguration",
 		},
-		GardenClientConnection: &gardenletconfigv1alpha1.GardenClientConnection{
+		GardenClientConnection: &gardenletv1alpha1.GardenClientConnection{
 			KubeconfigSecret: &corev1.SecretReference{
 				Name:      gardenletKubeconfigSecretName,
 				Namespace: gardenletKubeconfigSecretNamespace,
 			},
 		},
-		SeedConfig: &gardenletconfigv1alpha1.SeedConfig{
+		SeedConfig: &gardenletv1alpha1.SeedConfig{
 			SeedTemplate: gardencorev1beta1.SeedTemplate{
 				Spec: gardencorev1beta1.SeedSpec{
 					Settings: &gardencorev1beta1.SeedSettings{
@@ -286,8 +287,13 @@ func buildManagedSeed(shoot *gardencorev1beta1.Shoot) (*seedmanagementv1alpha1.M
 			Namespace: shoot.Namespace,
 		},
 		Spec: seedmanagementv1alpha1.ManagedSeedSpec{
-			Shoot:     &seedmanagementv1alpha1.Shoot{Name: shoot.Name},
-			Gardenlet: &seedmanagementv1alpha1.Gardenlet{Config: *gardenletConfig},
+			Shoot: &seedmanagementv1alpha1.Shoot{Name: shoot.Name},
+			Gardenlet: &seedmanagementv1alpha1.Gardenlet{
+				Config: *gardenletConfig,
+				Deployment: &seedmanagementv1alpha1.GardenletDeployment{
+					ReplicaCount: pointer.Int32(1), // the default replicaCount is 2, however in this e2e test we don't need 2 replicas
+				},
+			},
 		},
 	}, nil
 }
@@ -321,7 +327,7 @@ func patchGardenletKubeconfigValiditySettingsAndTriggerRotation(
 	ctx context.Context,
 	gardenClient client.Client,
 	managedSeed *seedmanagementv1alpha1.ManagedSeed,
-	kubeconfigValidity *gardenletconfigv1alpha1.KubeconfigValidity,
+	kubeconfigValidity *gardenletv1alpha1.KubeconfigValidity,
 ) error {
 	if err := gardenClient.Get(ctx, client.ObjectKeyFromObject(managedSeed), managedSeed); err != nil {
 		return err
@@ -333,7 +339,7 @@ func patchGardenletKubeconfigValiditySettingsAndTriggerRotation(
 	}
 
 	if gardenletConfig.GardenClientConnection == nil {
-		gardenletConfig.GardenClientConnection = &gardenletconfigv1alpha1.GardenClientConnection{}
+		gardenletConfig.GardenClientConnection = &gardenletv1alpha1.GardenClientConnection{}
 	}
 	gardenletConfig.GardenClientConnection.KubeconfigValidity = kubeconfigValidity
 

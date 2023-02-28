@@ -15,12 +15,12 @@
 package validation
 
 import (
-	"github.com/gardener/gardener/pkg/apis/core"
-
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+
+	"github.com/gardener/gardener/pkg/apis/core"
 )
 
 // ValidateExposureClass validates a ExposureClass object.
@@ -33,16 +33,16 @@ func ValidateExposureClass(exposureClass *core.ExposureClass) field.ErrorList {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("handler"), exposureClass.Name, errorMessage))
 	}
 
-	// Restrict the max length of handler names to 41 characters to ensure that the exposureclass
-	// handler default namespace scheme (istio-ingress-handler-{handler-name}, see GardenletConfiguration)
+	// Restrict the max length of handler names to 34 characters to ensure that the exposureclass
+	// handler default namespace scheme (istio-ingress-handler-{handler-name}--{zone}, see GardenletConfiguration)
 	// does not exceed the max amount of characters for namespaces.
-	if handlerNameLength > 41 {
-		allErrs = append(allErrs, field.Invalid(field.NewPath("handler"), exposureClass.Name, "exposure class handler is restricted to 41 characters"))
+	if handlerNameLength > 34 {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("handler"), exposureClass.Name, "exposure class handler is restricted to 34 characters"))
 	}
 
 	if exposureClass.Scheduling != nil {
 		if exposureClass.Scheduling.SeedSelector != nil {
-			allErrs = append(allErrs, metav1validation.ValidateLabelSelector(&exposureClass.Scheduling.SeedSelector.LabelSelector, field.NewPath("scheduling", "seedSelector"))...)
+			allErrs = append(allErrs, metav1validation.ValidateLabelSelector(&exposureClass.Scheduling.SeedSelector.LabelSelector, metav1validation.LabelSelectorValidationOptions{AllowInvalidLabelValueInSelector: true}, field.NewPath("scheduling", "seedSelector"))...)
 		}
 		allErrs = append(allErrs, ValidateTolerations(exposureClass.Scheduling.Tolerations, field.NewPath("scheduling", "tolerations"))...)
 	}

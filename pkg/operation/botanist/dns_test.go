@@ -15,18 +15,6 @@
 package botanist
 
 import (
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	cr "github.com/gardener/gardener/pkg/chartrenderer"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	fakeclientset "github.com/gardener/gardener/pkg/client/kubernetes/fake"
-	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
-	"github.com/gardener/gardener/pkg/operation"
-	mockdnsrecord "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/dnsrecord/mock"
-	"github.com/gardener/gardener/pkg/operation/garden"
-	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
-
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
@@ -41,6 +29,19 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/chartrenderer"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	kubernetesfake "github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
+	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
+	"github.com/gardener/gardener/pkg/operation"
+	mockdnsrecord "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/dnsrecord/mock"
+	"github.com/gardener/gardener/pkg/operation/garden"
+	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 )
 
 var _ = Describe("dns", func() {
@@ -87,51 +88,41 @@ var _ = Describe("dns", func() {
 		gardenClient = fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
 		seedClient = fake.NewClientBuilder().WithScheme(s).Build()
 
-		renderer := cr.NewWithServerVersion(&version.Info{})
+		renderer := chartrenderer.NewWithServerVersion(&version.Info{})
 		chartApplier := kubernetes.NewChartApplier(renderer, kubernetes.NewApplier(seedClient, meta.NewDefaultRESTMapper([]schema.GroupVersion{})))
 		Expect(chartApplier).NotTo(BeNil(), "should return chart applier")
 
 		b.GardenClient = gardenClient
-		b.SeedClientSet = fakeclientset.NewClientSetBuilder().
+		b.SeedClientSet = kubernetesfake.NewClientSetBuilder().
 			WithClient(seedClient).
 			WithChartApplier(chartApplier).
 			Build()
 	})
 
 	Context("NeedsExternalDNS", func() {
-		It("should be false when dns disabled", func() {
-			b.Shoot.DisableDNS = true
-			Expect(b.NeedsExternalDNS()).To(BeFalse())
-		})
-
 		It("should be false when Shoot's DNS is nil", func() {
-			b.Shoot.DisableDNS = false
 			b.Shoot.GetInfo().Spec.DNS = nil
 			Expect(b.NeedsExternalDNS()).To(BeFalse())
 		})
 
 		It("should be false when Shoot DNS's domain is nil", func() {
-			b.Shoot.DisableDNS = false
 			b.Shoot.GetInfo().Spec.DNS = &gardencorev1beta1.DNS{Domain: nil}
 			Expect(b.NeedsExternalDNS()).To(BeFalse())
 		})
 
 		It("should be false when Shoot ExternalClusterDomain is nil", func() {
-			b.Shoot.DisableDNS = false
 			b.Shoot.GetInfo().Spec.DNS = &gardencorev1beta1.DNS{Domain: pointer.String("foo")}
 			b.Shoot.ExternalClusterDomain = nil
 			Expect(b.NeedsExternalDNS()).To(BeFalse())
 		})
 
 		It("should be false when Shoot ExternalClusterDomain is in nip.io", func() {
-			b.Shoot.DisableDNS = false
 			b.Shoot.GetInfo().Spec.DNS = &gardencorev1beta1.DNS{Domain: pointer.String("foo")}
 			b.Shoot.ExternalClusterDomain = pointer.String("foo.nip.io")
 			Expect(b.NeedsExternalDNS()).To(BeFalse())
 		})
 
 		It("should be false when Shoot ExternalDomain is nil", func() {
-			b.Shoot.DisableDNS = false
 			b.Shoot.GetInfo().Spec.DNS = &gardencorev1beta1.DNS{Domain: pointer.String("foo")}
 			b.Shoot.ExternalClusterDomain = pointer.String("baz")
 			b.Shoot.ExternalDomain = nil
@@ -140,45 +131,35 @@ var _ = Describe("dns", func() {
 		})
 
 		It("should be false when Shoot ExternalDomain provider is unamanaged", func() {
-			b.Shoot.DisableDNS = false
 			b.Shoot.GetInfo().Spec.DNS = &gardencorev1beta1.DNS{Domain: pointer.String("foo")}
 			b.Shoot.ExternalClusterDomain = pointer.String("baz")
-			b.Shoot.ExternalDomain = &garden.Domain{Provider: "unmanaged"}
+			b.Shoot.ExternalDomain = &gardenerutils.Domain{Provider: "unmanaged"}
 
 			Expect(b.NeedsExternalDNS()).To(BeFalse())
 		})
 
 		It("should be true when Shoot ExternalDomain provider is valid", func() {
-			b.Shoot.DisableDNS = false
 			b.Shoot.GetInfo().Spec.DNS = &gardencorev1beta1.DNS{Domain: pointer.String("foo")}
 			b.Shoot.ExternalClusterDomain = pointer.String("baz")
-			b.Shoot.ExternalDomain = &garden.Domain{Provider: "valid-provider"}
+			b.Shoot.ExternalDomain = &gardenerutils.Domain{Provider: "valid-provider"}
 
 			Expect(b.NeedsExternalDNS()).To(BeTrue())
 		})
 	})
 
 	Context("NeedsInternalDNS", func() {
-		It("should be false when dns disabled", func() {
-			b.Shoot.DisableDNS = true
-			Expect(b.NeedsInternalDNS()).To(BeFalse())
-		})
-
 		It("should be false when the internal domain is nil", func() {
-			b.Shoot.DisableDNS = false
 			b.Garden.InternalDomain = nil
 			Expect(b.NeedsInternalDNS()).To(BeFalse())
 		})
 
 		It("should be false when the internal domain provider is unmanaged", func() {
-			b.Shoot.DisableDNS = false
-			b.Garden.InternalDomain = &garden.Domain{Provider: "unmanaged"}
+			b.Garden.InternalDomain = &gardenerutils.Domain{Provider: "unmanaged"}
 			Expect(b.NeedsInternalDNS()).To(BeFalse())
 		})
 
 		It("should be true when the internal domain provider is not unmanaged", func() {
-			b.Shoot.DisableDNS = false
-			b.Garden.InternalDomain = &garden.Domain{Provider: "some-provider"}
+			b.Garden.InternalDomain = &gardenerutils.Domain{Provider: "some-provider"}
 			Expect(b.NeedsInternalDNS()).To(BeTrue())
 		})
 	})
@@ -188,18 +169,12 @@ var _ = Describe("dns", func() {
 			gardenletfeatures.RegisterFeatureGates()
 		})
 
-		It("returns false when feature gate is disabled", func() {
-			Expect(gardenletfeatures.FeatureGate.Set("APIServerSNI=false")).ToNot(HaveOccurred())
-
-			Expect(b.APIServerSNIEnabled()).To(BeFalse())
-		})
-
 		It("returns true when feature gate is enabled", func() {
 			Expect(gardenletfeatures.FeatureGate.Set("APIServerSNI=true")).ToNot(HaveOccurred())
-			b.Garden.InternalDomain = &garden.Domain{Provider: "some-provider"}
+			b.Garden.InternalDomain = &gardenerutils.Domain{Provider: "some-provider"}
 			b.Shoot.GetInfo().Spec.DNS = &gardencorev1beta1.DNS{Domain: pointer.String("foo")}
 			b.Shoot.ExternalClusterDomain = pointer.String("baz")
-			b.Shoot.ExternalDomain = &garden.Domain{Provider: "valid-provider"}
+			b.Shoot.ExternalDomain = &gardenerutils.Domain{Provider: "valid-provider"}
 
 			Expect(b.APIServerSNIEnabled()).To(BeTrue())
 		})
@@ -210,19 +185,13 @@ var _ = Describe("dns", func() {
 			gardenletfeatures.RegisterFeatureGates()
 		})
 
-		It("returns false when the feature gate is disabled", func() {
-			Expect(gardenletfeatures.FeatureGate.Set("APIServerSNI=false")).ToNot(HaveOccurred())
-
-			Expect(b.APIServerSNIPodMutatorEnabled()).To(BeFalse())
-		})
-
 		Context("APIServerSNI feature gate is enabled", func() {
 			BeforeEach(func() {
 				Expect(gardenletfeatures.FeatureGate.Set("APIServerSNI=true")).ToNot(HaveOccurred())
-				b.Garden.InternalDomain = &garden.Domain{Provider: "some-provider"}
+				b.Garden.InternalDomain = &gardenerutils.Domain{Provider: "some-provider"}
 				b.Shoot.GetInfo().Spec.DNS = &gardencorev1beta1.DNS{Domain: pointer.String("foo")}
 				b.Shoot.ExternalClusterDomain = pointer.String("baz")
-				b.Shoot.ExternalDomain = &garden.Domain{Provider: "valid-provider"}
+				b.Shoot.ExternalDomain = &gardenerutils.Domain{Provider: "valid-provider"}
 			})
 
 			It("returns true when Shoot annotations are nil", func() {
@@ -276,20 +245,13 @@ var _ = Describe("dns", func() {
 			ctrl.Finish()
 		})
 
-		It("does nothing when DNS is disabled", func() {
-			b.Shoot.DisableDNS = true
-
-			b.newDNSComponentsTargetingAPIServerAddress()
-		})
-
 		It("sets internal and external DNSRecords", func() {
 			b.Shoot.GetInfo().Status.ClusterIdentity = pointer.String("shoot-cluster-identity")
-			b.Shoot.DisableDNS = false
 			b.Shoot.GetInfo().Spec.DNS = &gardencorev1beta1.DNS{Domain: pointer.String("foo")}
 			b.Shoot.InternalClusterDomain = "bar"
 			b.Shoot.ExternalClusterDomain = pointer.String("baz")
-			b.Shoot.ExternalDomain = &garden.Domain{Provider: "valid-provider"}
-			b.Garden.InternalDomain = &garden.Domain{Provider: "valid-provider"}
+			b.Shoot.ExternalDomain = &gardenerutils.Domain{Provider: "valid-provider"}
+			b.Garden.InternalDomain = &gardenerutils.Domain{Provider: "valid-provider"}
 
 			externalDNSRecord.EXPECT().SetRecordType(extensionsv1alpha1.DNSRecordTypeA)
 			externalDNSRecord.EXPECT().SetValues([]string{"1.2.3.4"})

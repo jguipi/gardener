@@ -1,11 +1,12 @@
-# Contributing to shoot health status conditions
+# Contributing to Shoot Health Status Conditions
 
 Gardener checks regularly (every minute by default) the health status of all shoot clusters.
 It categorizes its checks into four different types:
 
 * `APIServerAvailable`: This type indicates whether the shoot's kube-apiserver is available or not.
-* `ControlPlaneHealthy`: This type indicates whether all the control plane components deployed to the shoot's namespace in the seed do exist and are running fine.
+* `ControlPlaneHealthy`: This type indicates whether the core components of the Shoot controlplane (ETCD, KAPI, KCM..) are healthy.
 * `EveryNodeReady`: This type indicates whether all `Node`s and all `Machine` objects report healthiness.
+* `ObservabilityComponentsHealthy`: This type indicates whether the  observability components of the Shoot control plane (Prometheus, Loki, Grafana..) are healthy.
 * `SystemComponentsHealthy`: This type indicates whether all system components deployed to the `kube-system` namespace in the shoot do exist and are running fine.
 
 Every `Shoot` resource has a `status.conditions[]` list that contains the mentioned types, together with a `status` (`True`/`False`) and a descriptive message/explanation of the `status`.
@@ -17,10 +18,10 @@ Now that the extensions deploy resources into the cluster, especially resources 
 ## What can extensions do to contribute to Gardener's health checks?
 
 Every extension resource in Gardener's `extensions.gardener.cloud/v1alpha1` API group also has a `status.conditions[]` list (like the `Shoot`).
-Extension controllers can write conditions to the resource they are acting on and use a type that also exist in the shoot's conditions.
-One exception is that `APIServerAvailable` can't be used as the Gardener clearly can identify the status of this condition and it doesn't make sense for extensions to try to contribute/modify it.
+Extension controllers can write conditions to the resource they are acting on and use a type that also exists in the shoot's conditions.
+One exception is that `APIServerAvailable` and `ObservabilityComponentsHealthy` can't be used, as Gardener clearly can identify the status of this condition and it doesn't make sense for extensions to try to contribute/modify it.
 
-As an example for the `ControlPlane` controller let's take a look at the following resource:
+As an example for the `ControlPlane` controller, let's take a look at the following resource:
 
 ```yaml
 apiVersion: extensions.gardener.cloud/v1alpha1
@@ -49,7 +50,7 @@ status:
 The extension controller has declared in its extension resource that one of the deployments it is responsible for is unhealthy.
 Also, it has written a second condition using a type that is unknown by Gardener.
 
-Gardener will pick the list of conditions and recognize that the there is one with a type `ControlPlaneHealthy`.
+Gardener will pick the list of conditions and recognize that there is one with a type `ControlPlaneHealthy`.
 It will merge it with its own `ControlPlaneHealthy` condition and report it back to the `Shoot`'s status:
 
 ```yaml

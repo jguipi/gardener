@@ -15,13 +15,13 @@
 package timewindow_test
 
 import (
+	"testing"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"testing"
 )
 
-func TestTimewindow(t *testing.T) {
+func TestTimeWindow(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Timewindow Utility Suite")
+	RunSpecs(t, "Utils TimeWindow Suite")
 }

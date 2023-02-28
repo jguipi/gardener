@@ -18,12 +18,6 @@ import (
 	"context"
 	"fmt"
 
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/controllerutils/mapper"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	. "github.com/gardener/gardener/pkg/resourcemanager/controller/managedresource"
-	"github.com/gardener/gardener/pkg/resourcemanager/predicate"
-
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
@@ -35,6 +29,12 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/controllerutils/mapper"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	. "github.com/gardener/gardener/pkg/resourcemanager/controller/managedresource"
+	"github.com/gardener/gardener/pkg/resourcemanager/predicate"
 )
 
 var _ = Describe("#MapSecretToManagedResources", func() {
@@ -94,7 +94,7 @@ var _ = Describe("#MapSecretToManagedResources", func() {
 
 	It("should do nothing, if there are no ManagedResources we are responsible for", func() {
 		mr := resourcesv1alpha1.ManagedResource{
-			Spec: resourcesv1alpha1.ManagedResourceSpec{Class: pointer.StringPtr("other")},
+			Spec: resourcesv1alpha1.ManagedResourceSpec{Class: pointer.String("other")},
 		}
 
 		c.EXPECT().List(ctx, gomock.AssignableToTypeOf(&resourcesv1alpha1.ManagedResourceList{}), client.InNamespace(secret.Namespace)).
@@ -114,7 +114,7 @@ var _ = Describe("#MapSecretToManagedResources", func() {
 				Namespace: secret.Namespace,
 			},
 			Spec: resourcesv1alpha1.ManagedResourceSpec{
-				Class:      pointer.StringPtr(filter.ResourceClass()),
+				Class:      pointer.String(filter.ResourceClass()),
 				SecretRefs: []corev1.LocalObjectReference{{Name: secret.Name}},
 			},
 		}

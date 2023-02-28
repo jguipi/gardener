@@ -19,13 +19,6 @@ import (
 	"fmt"
 	"strings"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	gardenversionedcoreclientset "github.com/gardener/gardener/pkg/client/core/clientset/versioned"
-	"github.com/gardener/gardener/pkg/scheduler/apis/config"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	cidrvalidation "github.com/gardener/gardener/pkg/utils/validation/cidr"
-
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,14 +28,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	"github.com/gardener/gardener/pkg/scheduler/apis/config"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	cidrvalidation "github.com/gardener/gardener/pkg/utils/validation/cidr"
 )
 
 // Reconciler schedules shoots to seeds.
 type Reconciler struct {
-	Client                  client.Client
-	Config                  *config.ShootSchedulerConfiguration
-	VersionedGardenerClient *gardenversionedcoreclientset.Clientset
-	Recorder                record.EventRecorder
+	Client   client.Client
+	Config   *config.ShootSchedulerConfiguration
+	Recorder record.EventRecorder
 }
 
 // Reconcile schedules shoots to seeds.
@@ -76,7 +74,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	shoot.Spec.SeedName = &seed.Name
-	if _, err = r.VersionedGardenerClient.CoreV1beta1().Shoots(shoot.GetNamespace()).UpdateBinding(ctx, shoot.GetName(), shoot, metav1.UpdateOptions{}); err != nil {
+	if err = r.Client.SubResource("binding").Update(ctx, shoot); err != nil {
 		log.Error(err, "Failed to bind shoot to seed")
 		r.reportFailedScheduling(shoot, err)
 		return reconcile.Result{}, err
@@ -121,7 +119,7 @@ func determineSeed(
 		return nil, err
 	}
 	cloudProfile := &gardencorev1beta1.CloudProfile{}
-	if err := reader.Get(ctx, kutil.Key(shoot.Spec.CloudProfileName), cloudProfile); err != nil {
+	if err := reader.Get(ctx, kubernetesutils.Key(shoot.Spec.CloudProfileName), cloudProfile); err != nil {
 		return nil, err
 	}
 	filteredSeeds, err := filterUsableSeeds(seedList.Items)
@@ -218,7 +216,7 @@ func filterSeedsMatchingProviders(cloudProfile *gardencorev1beta1.CloudProfile, 
 // filterSeedsForZonalShootControlPlanes filters seeds with at least three zones in case the shoot's failure tolerance
 // type is 'zone'.
 func filterSeedsForZonalShootControlPlanes(seedList []gardencorev1beta1.Seed, shoot *gardencorev1beta1.Shoot) ([]gardencorev1beta1.Seed, error) {
-	if gardencorev1beta1helper.IsMultiZonalShootControlPlane(shoot) {
+	if v1beta1helper.IsMultiZonalShootControlPlane(shoot) {
 		var seedsWithAtLeastThreeZones []gardencorev1beta1.Seed
 		for _, seed := range seedList {
 			if len(seed.Spec.Provider.Zones) >= 3 {
@@ -257,7 +255,7 @@ func filterCandidates(shoot *gardencorev1beta1.Shoot, shootList []gardencorev1be
 	var (
 		candidates      []gardencorev1beta1.Seed
 		candidateErrors = make(map[string]error)
-		seedUsage       = gardencorev1beta1helper.CalculateSeedUsage(shootList)
+		seedUsage       = v1beta1helper.CalculateSeedUsage(shootList)
 	)
 
 	for _, seed := range seedList {
@@ -266,12 +264,7 @@ func filterCandidates(shoot *gardencorev1beta1.Shoot, shootList []gardencorev1be
 			continue
 		}
 
-		if ignoreSeedDueToDNSConfiguration(&seed, shoot) {
-			candidateErrors[seed.Name] = fmt.Errorf("seed does not support DNS")
-			continue
-		}
-
-		if !gardencorev1beta1helper.TaintsAreTolerated(seed.Spec.Taints, shoot.Spec.Tolerations) {
+		if !v1beta1helper.TaintsAreTolerated(seed.Spec.Taints, shoot.Spec.Tolerations) {
 			candidateErrors[seed.Name] = fmt.Errorf("shoot does not tolerate the seed's taints")
 			continue
 		}
@@ -295,7 +288,7 @@ func getSeedWithLeastShootsDeployed(seedList []gardencorev1beta1.Seed, shootList
 	var (
 		bestCandidate gardencorev1beta1.Seed
 		min           *int
-		seedUsage     = gardencorev1beta1helper.CalculateSeedUsage(shootList)
+		seedUsage     = v1beta1helper.CalculateSeedUsage(shootList)
 	)
 
 	for _, seed := range seedList {
@@ -403,17 +396,6 @@ func networksAreDisjointed(seed *gardencorev1beta1.Seed, shoot *gardencorev1beta
 	return len(errorMessages) == 0, fmt.Errorf("invalid networks: %s", errorMessages)
 }
 
-// ignore seed if it disables DNS and shoot has DNS but not unmanaged
-func ignoreSeedDueToDNSConfiguration(seed *gardencorev1beta1.Seed, shoot *gardencorev1beta1.Shoot) bool {
-	if seed.Spec.Settings.ShootDNS.Enabled {
-		return false
-	}
-	if shoot.Spec.DNS == nil {
-		return false
-	}
-	return !gardencorev1beta1helper.ShootUsesUnmanagedDNS(shoot)
-}
-
 func errorMapToString(errs map[string]error) string {
 	res := "{"
 	for k, v := range errs {
@@ -424,16 +406,16 @@ func errorMapToString(errs map[string]error) string {
 }
 
 func verifySeedReadiness(seed *gardencorev1beta1.Seed) bool {
-	if cond := gardencorev1beta1helper.GetCondition(seed.Status.Conditions, gardencorev1beta1.SeedBootstrapped); cond == nil || cond.Status != gardencorev1beta1.ConditionTrue {
+	if cond := v1beta1helper.GetCondition(seed.Status.Conditions, gardencorev1beta1.SeedBootstrapped); cond == nil || cond.Status != gardencorev1beta1.ConditionTrue {
 		return false
 	}
 
-	if cond := gardencorev1beta1helper.GetCondition(seed.Status.Conditions, gardencorev1beta1.SeedGardenletReady); cond == nil || cond.Status != gardencorev1beta1.ConditionTrue {
+	if cond := v1beta1helper.GetCondition(seed.Status.Conditions, gardencorev1beta1.SeedGardenletReady); cond == nil || cond.Status != gardencorev1beta1.ConditionTrue {
 		return false
 	}
 
 	if seed.Spec.Backup != nil {
-		if cond := gardencorev1beta1helper.GetCondition(seed.Status.Conditions, gardencorev1beta1.SeedBackupBucketsReady); cond == nil || cond.Status != gardencorev1beta1.ConditionTrue {
+		if cond := v1beta1helper.GetCondition(seed.Status.Conditions, gardencorev1beta1.SeedBackupBucketsReady); cond == nil || cond.Status != gardencorev1beta1.ConditionTrue {
 			return false
 		}
 	}

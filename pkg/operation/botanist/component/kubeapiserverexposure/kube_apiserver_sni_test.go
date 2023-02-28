@@ -17,15 +17,6 @@ package kubeapiserverexposure_test
 import (
 	"context"
 
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/client/kubernetes/test"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	. "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserverexposure"
-	comptest "github.com/gardener/gardener/pkg/operation/botanist/component/test"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -46,6 +37,15 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/client/kubernetes/test"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	. "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserverexposure"
+	comptest "github.com/gardener/gardener/pkg/operation/botanist/component/test"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("#SNI", func() {
@@ -202,14 +202,16 @@ var _ = Describe("#SNI", func() {
 	})
 
 	JustBeforeEach(func() {
-		defaultDepWaiter = NewSNI(c, applier, namespace, &SNIValues{
-			Hosts:              hosts,
-			APIServerClusterIP: "1.1.1.1",
-			IstioIngressGateway: IstioIngressGateway{
-				Namespace: istioNamespace,
-				Labels:    istioLabels,
-			},
-			NamespaceUID: namespaceUID,
+		defaultDepWaiter = NewSNI(c, applier, namespace, func() *SNIValues {
+			return &SNIValues{
+				Hosts:              hosts,
+				APIServerClusterIP: "1.1.1.1",
+				IstioIngressGateway: IstioIngressGateway{
+					Namespace: istioNamespace,
+					Labels:    istioLabels,
+				},
+				NamespaceUID: namespaceUID,
+			}
 		})
 	})
 
@@ -218,19 +220,19 @@ var _ = Describe("#SNI", func() {
 			Expect(defaultDepWaiter.Deploy(ctx)).To(Succeed())
 
 			actualDestinationRule := &istionetworkingv1beta1.DestinationRule{}
-			Expect(c.Get(ctx, kutil.Key(expectedDestinationRule.Namespace, expectedDestinationRule.Name), actualDestinationRule)).To(Succeed())
+			Expect(c.Get(ctx, kubernetesutils.Key(expectedDestinationRule.Namespace, expectedDestinationRule.Name), actualDestinationRule)).To(Succeed())
 			Expect(actualDestinationRule).To(BeComparableTo(expectedDestinationRule, comptest.CmpOptsForDestinationRule()))
 
 			actualGateway := &istionetworkingv1beta1.Gateway{}
-			Expect(c.Get(ctx, kutil.Key(expectedGateway.Namespace, expectedGateway.Name), actualGateway)).To(Succeed())
+			Expect(c.Get(ctx, kubernetesutils.Key(expectedGateway.Namespace, expectedGateway.Name), actualGateway)).To(Succeed())
 			Expect(actualGateway).To(BeComparableTo(expectedGateway, comptest.CmpOptsForGateway()))
 
 			actualVirtualService := &istionetworkingv1beta1.VirtualService{}
-			Expect(c.Get(ctx, kutil.Key(expectedVirtualService.Namespace, expectedVirtualService.Name), actualVirtualService)).To(Succeed())
+			Expect(c.Get(ctx, kubernetesutils.Key(expectedVirtualService.Namespace, expectedVirtualService.Name), actualVirtualService)).To(Succeed())
 			Expect(actualVirtualService).To(BeComparableTo(expectedVirtualService, comptest.CmpOptsForVirtualService()))
 
 			actualEnvoyFilter := &istionetworkingv1alpha3.EnvoyFilter{}
-			Expect(c.Get(ctx, kutil.Key(expectedEnvoyFilterObjectMeta.Namespace, expectedEnvoyFilterObjectMeta.Name), actualEnvoyFilter)).To(Succeed())
+			Expect(c.Get(ctx, kubernetesutils.Key(expectedEnvoyFilterObjectMeta.Namespace, expectedEnvoyFilterObjectMeta.Name), actualEnvoyFilter)).To(Succeed())
 			// cannot validate the Spec as there is meaningful way to unmarshal the data into the Golang structure
 			Expect(actualEnvoyFilter.ObjectMeta).To(DeepEqual(expectedEnvoyFilterObjectMeta))
 		})
@@ -239,17 +241,17 @@ var _ = Describe("#SNI", func() {
 	It("destroy succeeds", func() {
 		Expect(defaultDepWaiter.Deploy(ctx)).To(Succeed())
 
-		Expect(c.Get(ctx, kutil.Key(expectedDestinationRule.Namespace, expectedDestinationRule.Name), &istionetworkingv1beta1.DestinationRule{})).To(Succeed())
-		Expect(c.Get(ctx, kutil.Key(expectedGateway.Namespace, expectedGateway.Name), &istionetworkingv1beta1.Gateway{})).To(Succeed())
-		Expect(c.Get(ctx, kutil.Key(expectedVirtualService.Namespace, expectedVirtualService.Name), &istionetworkingv1beta1.VirtualService{})).To(Succeed())
-		Expect(c.Get(ctx, kutil.Key(expectedEnvoyFilterObjectMeta.Namespace, expectedEnvoyFilterObjectMeta.Name), &istionetworkingv1alpha3.EnvoyFilter{})).To(Succeed())
+		Expect(c.Get(ctx, kubernetesutils.Key(expectedDestinationRule.Namespace, expectedDestinationRule.Name), &istionetworkingv1beta1.DestinationRule{})).To(Succeed())
+		Expect(c.Get(ctx, kubernetesutils.Key(expectedGateway.Namespace, expectedGateway.Name), &istionetworkingv1beta1.Gateway{})).To(Succeed())
+		Expect(c.Get(ctx, kubernetesutils.Key(expectedVirtualService.Namespace, expectedVirtualService.Name), &istionetworkingv1beta1.VirtualService{})).To(Succeed())
+		Expect(c.Get(ctx, kubernetesutils.Key(expectedEnvoyFilterObjectMeta.Namespace, expectedEnvoyFilterObjectMeta.Name), &istionetworkingv1alpha3.EnvoyFilter{})).To(Succeed())
 
 		Expect(defaultDepWaiter.Destroy(ctx)).To(Succeed())
 
-		Expect(c.Get(ctx, kutil.Key(expectedDestinationRule.Namespace, expectedDestinationRule.Name), &istionetworkingv1beta1.DestinationRule{})).To(BeNotFoundError())
-		Expect(c.Get(ctx, kutil.Key(expectedGateway.Namespace, expectedGateway.Name), &istionetworkingv1beta1.Gateway{})).To(BeNotFoundError())
-		Expect(c.Get(ctx, kutil.Key(expectedVirtualService.Namespace, expectedVirtualService.Name), &istionetworkingv1beta1.VirtualService{})).To(BeNotFoundError())
-		Expect(c.Get(ctx, kutil.Key(expectedEnvoyFilterObjectMeta.Namespace, expectedEnvoyFilterObjectMeta.Name), &istionetworkingv1alpha3.EnvoyFilter{})).To(BeNotFoundError())
+		Expect(c.Get(ctx, kubernetesutils.Key(expectedDestinationRule.Namespace, expectedDestinationRule.Name), &istionetworkingv1beta1.DestinationRule{})).To(BeNotFoundError())
+		Expect(c.Get(ctx, kubernetesutils.Key(expectedGateway.Namespace, expectedGateway.Name), &istionetworkingv1beta1.Gateway{})).To(BeNotFoundError())
+		Expect(c.Get(ctx, kubernetesutils.Key(expectedVirtualService.Namespace, expectedVirtualService.Name), &istionetworkingv1beta1.VirtualService{})).To(BeNotFoundError())
+		Expect(c.Get(ctx, kubernetesutils.Key(expectedEnvoyFilterObjectMeta.Namespace, expectedEnvoyFilterObjectMeta.Name), &istionetworkingv1alpha3.EnvoyFilter{})).To(BeNotFoundError())
 	})
 
 	Describe("#Wait", func() {
@@ -287,7 +289,17 @@ var _ = Describe("#SNI", func() {
 				// TODO(mvladev): can't directly import the istio apis due to dependency issues.
 				s.AddKnownTypeWithName(schema.FromAPIVersionAndKind("networking.istio.io/v1beta1", "VirtualServiceList"), &unstructured.UnstructuredList{})
 				s.AddKnownTypeWithName(schema.FromAPIVersionAndKind("networking.istio.io/v1beta1", "VirtualService"), &unstructured.Unstructured{})
-				c = fake.NewClientBuilder().WithScheme(s).Build()
+				virtualServiceObj := &unstructured.Unstructured{}
+				virtualServiceObj.SetGroupVersionKind(schema.FromAPIVersionAndKind("networking.istio.io/v1beta1", "VirtualService"))
+
+				c = fake.NewClientBuilder().
+					WithScheme(s).
+					WithIndex(
+						virtualServiceObj, "metadata.name", func(o client.Object) []string {
+							return []string{o.GetName()}
+						},
+					).
+					Build()
 			})
 
 			It("returns true when exists", func() {

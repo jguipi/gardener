@@ -136,6 +136,9 @@ spec:
     #   - ReadonlyFilesystem
     #   - KernelDeadlock
     #   - DiskPressure
+  # workersSettings:
+  #   sshAccess:
+  #     enabled: false
   kubernetes:
     version: 1.20.1
   # enableStaticTokenKubeconfig: true
@@ -194,7 +197,9 @@ spec:
   #     maxTokenExpiration: 45d
   #   logging:
   #     verbosity: 2
-  #     httpAccessLogs: 3   
+  #     httpAccessLogs: 3
+  #   defaultNotReadyTolerationSeconds: 300
+  #   defaultUnreachableTolerationSeconds: 300
   # kubeControllerManager:
   #   nodeCIDRMaskSize: 24
   #   podEvictionTimeout: 2m0s
@@ -311,6 +316,8 @@ spec:
   # disabled: true # only relevant for extensions that were marked as 'globally enabled' by Gardener administrators
   networking:
     type: <some-network-extension-name> # {calico,cilium}
+    ipFamilies:
+    - IPv4
     pods: 100.96.0.0/11
     nodes: 10.250.0.0/16
     services: 100.64.0.0/13
@@ -347,7 +354,7 @@ spec:
     #   enable-access-log-for-default-backend: "false"
     kubernetesDashboard:
       enabled: true
-    # authenticationMode: basic # allowed values: basic,token
+    # authenticationMode: token # allowed values: token
 # tolerations:
 # - key: <some-key>
 # Explicitly specify the seed that will run the shoot control plane. Only possible for users having RBAC for 
@@ -376,6 +383,7 @@ spec:
 #     enabled: true # {true,false}
 #     forceTCPToClusterDNS: true # {true,false}
 #     forceTCPToUpstreamDNS: true # {true,false}
+#     disableForwardToUpstreamDNS: true # {true,false}
 # controlPlane:
 #   highAvailability:
 #     failureTolerance:

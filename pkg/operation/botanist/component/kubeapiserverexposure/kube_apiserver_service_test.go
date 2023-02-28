@@ -17,11 +17,6 @@ package kubeapiserverexposure_test
 import (
 	"context"
 
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	. "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserverexposure"
-	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -31,6 +26,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	. "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserverexposure"
+	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("#Service", func() {
@@ -118,11 +118,11 @@ var _ = Describe("#Service", func() {
 			log,
 			c,
 			&ServiceValues{
-				Annotations: map[string]string{"foo": "bar"},
-				SNIPhase:    sniPhase,
+				AnnotationsFunc: func() map[string]string { return map[string]string{"foo": "bar"} },
+				SNIPhase:        sniPhase,
 			},
-			serviceObjKey,
-			sniServiceObjKey,
+			func() client.ObjectKey { return serviceObjKey },
+			func() client.ObjectKey { return sniServiceObjKey },
 			&retryfake.Ops{MaxAttempts: 1},
 			clusterIPFunc,
 			ingressIPFunc,
@@ -207,7 +207,12 @@ var _ = Describe("#Service", func() {
 	Context("SNI disabled", func() {
 		BeforeEach(func() {
 			sniPhase = component.PhaseDisabled
-			expected.Annotations = map[string]string{"foo": "bar"}
+			expected.Annotations = map[string]string{
+				"foo": "bar",
+				"networking.resources.gardener.cloud/from-policy-pod-label-selector": "all-scrape-targets",
+				"networking.resources.gardener.cloud/from-policy-allowed-ports":      `[{"protocol":"TCP","port":443}]`,
+				"networking.resources.gardener.cloud/from-world-to-ports":            `[{"protocol":"TCP","port":443}]`,
+			}
 		})
 
 		assertDisabledSNI()
@@ -219,6 +224,9 @@ var _ = Describe("#Service", func() {
 			expected.Annotations = map[string]string{
 				"foo":                          "bar",
 				"networking.istio.io/exportTo": "*",
+				"networking.resources.gardener.cloud/from-policy-pod-label-selector": "all-scrape-targets",
+				"networking.resources.gardener.cloud/from-policy-allowed-ports":      `[{"protocol":"TCP","port":443}]`,
+				"networking.resources.gardener.cloud/from-world-to-ports":            `[{"protocol":"TCP","port":443}]`,
 			}
 			expected.Spec.Type = corev1.ServiceTypeLoadBalancer
 			expected.Labels["core.gardener.cloud/apiserver-exposure"] = "gardener-managed"
@@ -233,6 +241,9 @@ var _ = Describe("#Service", func() {
 			expected.Annotations = map[string]string{
 				"foo":                          "bar",
 				"networking.istio.io/exportTo": "*",
+				"networking.resources.gardener.cloud/from-policy-pod-label-selector": "all-scrape-targets",
+				"networking.resources.gardener.cloud/from-policy-allowed-ports":      `[{"protocol":"TCP","port":443}]`,
+				"networking.resources.gardener.cloud/from-world-to-ports":            `[{"protocol":"TCP","port":443}]`,
 			}
 			expected.Spec.Type = corev1.ServiceTypeClusterIP
 			expected.Labels["core.gardener.cloud/apiserver-exposure"] = "gardener-managed"
@@ -247,6 +258,9 @@ var _ = Describe("#Service", func() {
 			expected.Annotations = map[string]string{
 				"foo":                          "bar",
 				"networking.istio.io/exportTo": "*",
+				"networking.resources.gardener.cloud/from-policy-pod-label-selector": "all-scrape-targets",
+				"networking.resources.gardener.cloud/from-policy-allowed-ports":      `[{"protocol":"TCP","port":443}]`,
+				"networking.resources.gardener.cloud/from-world-to-ports":            `[{"protocol":"TCP","port":443}]`,
 			}
 			expected.Spec.Type = corev1.ServiceTypeLoadBalancer
 		})

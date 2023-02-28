@@ -17,11 +17,10 @@ package imagevector
 
 import (
 	_ "embed"
-	"strings"
-
-	"github.com/gardener/gardener/pkg/utils/imagevector"
 
 	"k8s.io/apimachinery/pkg/util/runtime"
+
+	"github.com/gardener/gardener/pkg/utils/imagevector"
 )
 
 var (
@@ -33,7 +32,7 @@ var (
 func init() {
 	var err error
 
-	imageVector, err = imagevector.Read(strings.NewReader(imagesYAML))
+	imageVector, err = imagevector.Read([]byte(imagesYAML))
 	runtime.Must(err)
 
 	imageVector, err = imagevector.WithEnvOverride(imageVector)

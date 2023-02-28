@@ -41,6 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
+	controllerconfigv1alpha1 "sigs.k8s.io/controller-runtime/pkg/config/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -48,7 +49,6 @@ import (
 	"github.com/gardener/gardener/cmd/gardenlet/app/bootstrappers"
 	"github.com/gardener/gardener/pkg/api/indexer"
 	"github.com/gardener/gardener/pkg/apis/core"
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	"github.com/gardener/gardener/pkg/apis/operations"
@@ -57,18 +57,19 @@ import (
 	clientmapbuilder "github.com/gardener/gardener/pkg/client/kubernetes/clientmap/builder"
 	"github.com/gardener/gardener/pkg/controllerutils"
 	"github.com/gardener/gardener/pkg/controllerutils/routes"
-	"github.com/gardener/gardener/pkg/features"
 	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	confighelper "github.com/gardener/gardener/pkg/gardenlet/apis/config/helper"
+	gardenlethelper "github.com/gardener/gardener/pkg/gardenlet/apis/config/helper"
 	"github.com/gardener/gardener/pkg/gardenlet/bootstrap"
 	"github.com/gardener/gardener/pkg/gardenlet/bootstrap/certificate"
 	"github.com/gardener/gardener/pkg/gardenlet/controller"
 	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
 	gardenerhealthz "github.com/gardener/gardener/pkg/healthz"
 	"github.com/gardener/gardener/pkg/logger"
+	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
 	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/flow"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 // Name is a const for the name of this component.
@@ -129,11 +130,6 @@ func run(ctx context.Context, cancel context.CancelFunc, log logr.Logger, cfg *c
 	}
 	log.Info("Feature Gates", "featureGates", gardenletfeatures.FeatureGate.String())
 
-	if gardenletfeatures.FeatureGate.Enabled(features.ReversedVPN) && !gardenletfeatures.FeatureGate.Enabled(features.APIServerSNI) {
-		return fmt.Errorf("inconsistent feature gate: APIServerSNI is required for ReversedVPN (APIServerSNI: %t, ReversedVPN: %t)",
-			gardenletfeatures.FeatureGate.Enabled(features.APIServerSNI), gardenletfeatures.FeatureGate.Enabled(features.ReversedVPN))
-	}
-
 	if kubeconfig := os.Getenv("GARDEN_KUBECONFIG"); kubeconfig != "" {
 		cfg.GardenClientConnection.Kubeconfig = kubeconfig
 	}
@@ -156,15 +152,17 @@ func run(ctx context.Context, cancel context.CancelFunc, log logr.Logger, cfg *c
 		HealthProbeBindAddress: fmt.Sprintf("%s:%d", cfg.Server.HealthProbes.BindAddress, cfg.Server.HealthProbes.Port),
 		MetricsBindAddress:     fmt.Sprintf("%s:%d", cfg.Server.Metrics.BindAddress, cfg.Server.Metrics.Port),
 
-		LeaderElection:             cfg.LeaderElection.LeaderElect,
-		LeaderElectionResourceLock: cfg.LeaderElection.ResourceLock,
-		LeaderElectionID:           cfg.LeaderElection.ResourceName,
-		LeaderElectionNamespace:    cfg.LeaderElection.ResourceNamespace,
-		LeaseDuration:              &cfg.LeaderElection.LeaseDuration.Duration,
-		RenewDeadline:              &cfg.LeaderElection.RenewDeadline.Duration,
-		RetryPeriod:                &cfg.LeaderElection.RetryPeriod.Duration,
-		// TODO: enable this once we have refactored all controllers and added them to this manager
-		// LeaderElectionReleaseOnCancel: true,
+		LeaderElection:                cfg.LeaderElection.LeaderElect,
+		LeaderElectionResourceLock:    cfg.LeaderElection.ResourceLock,
+		LeaderElectionID:              cfg.LeaderElection.ResourceName,
+		LeaderElectionNamespace:       cfg.LeaderElection.ResourceNamespace,
+		LeaderElectionReleaseOnCancel: true,
+		LeaseDuration:                 &cfg.LeaderElection.LeaseDuration.Duration,
+		RenewDeadline:                 &cfg.LeaderElection.RenewDeadline.Duration,
+		RetryPeriod:                   &cfg.LeaderElection.RetryPeriod.Duration,
+		Controller: controllerconfigv1alpha1.ControllerConfigurationSpec{
+			RecoverPanic: pointer.Bool(true),
+		},
 
 		ClientDisableCacheFor: []client.Object{
 			&corev1.Event{},
@@ -216,6 +214,30 @@ func run(ctx context.Context, cancel context.CancelFunc, log logr.Logger, cfg *c
 				Config:     cfg,
 				Result:     kubeconfigBootstrapResult,
 			},
+
+			// TODO(rfranzke): Remove this in a future version.
+			// Ensure all existing ETCD encryption secrets get the 'garbage-collectable' label. There was a bug which
+			// prevented this from happening, see https://github.com/gardener/gardener/pull/7244.
+			manager.RunnableFunc(func(ctx context.Context) error {
+				secretList := &corev1.SecretList{}
+				if err := mgr.GetClient().List(ctx, secretList, client.MatchingLabels{v1beta1constants.LabelRole: v1beta1constants.SecretNamePrefixETCDEncryptionConfiguration}); err != nil {
+					return err
+				}
+
+				var tasks []flow.TaskFn
+
+				for _, obj := range secretList.Items {
+					secret := obj
+
+					tasks = append(tasks, func(ctx context.Context) error {
+						patch := client.MergeFrom(secret.DeepCopy())
+						metav1.SetMetaDataLabel(&secret.ObjectMeta, references.LabelKeyGarbageCollectable, references.LabelValueGarbageCollectable)
+						return mgr.GetClient().Patch(ctx, &secret, patch)
+					})
+				}
+
+				return flow.Parallel(tasks...)(ctx)
+			}),
 		},
 		ActualRunnables: []manager.Runnable{
 			&garden{
@@ -259,8 +281,8 @@ func (g *garden) Start(ctx context.Context) error {
 		// gardenlet does not have the required RBAC permissions for listing/watching the following resources, so let's
 		// prevent any attempts to cache them.
 		opts.ClientDisableCacheFor = []client.Object{
-			&gardencorev1alpha1.ExposureClass{},
-			&gardencorev1alpha1.ShootState{},
+			&gardencorev1beta1.ExposureClass{},
+			&gardencorev1beta1.ShootState{},
 			&gardencorev1beta1.CloudProfile{},
 			&gardencorev1beta1.ControllerDeployment{},
 			&gardencorev1beta1.Project{},
@@ -291,7 +313,7 @@ func (g *garden) Start(ctx context.Context) error {
 			return kubernetes.AggregatorCacheFunc(
 				kubernetes.NewRuntimeCache,
 				map[client.Object]cache.NewCacheFunc{
-					&corev1.Secret{}: cache.MultiNamespacedCacheBuilder([]string{gutil.ComputeGardenNamespace(g.kubeconfigBootstrapResult.SeedName)}),
+					&corev1.Secret{}: cache.MultiNamespacedCacheBuilder([]string{gardenerutils.ComputeGardenNamespace(g.kubeconfigBootstrapResult.SeedName)}),
 				},
 				kubernetes.GardenScheme,
 			)(config, opts)
@@ -326,11 +348,6 @@ func (g *garden) Start(ctx context.Context) error {
 		return fmt.Errorf("failed creating garden cluster object: %w", err)
 	}
 
-	log.Info("Setting up ready check for garden informer sync")
-	if err := g.mgr.AddReadyzCheck("garden-informer-sync", gardenerhealthz.NewCacheSyncHealthz(gardenCluster.GetCache())); err != nil {
-		return err
-	}
-
 	log.Info("Cleaning bootstrap authentication data used to request a certificate if needed")
 	if len(g.kubeconfigBootstrapResult.CSRName) > 0 && len(g.kubeconfigBootstrapResult.SeedName) > 0 {
 		if err := bootstrap.DeleteBootstrapAuth(ctx, gardenCluster.GetClient(), gardenCluster.GetClient(), g.kubeconfigBootstrapResult.CSRName, g.kubeconfigBootstrapResult.SeedName); err != nil {
@@ -353,6 +370,11 @@ func (g *garden) Start(ctx context.Context) error {
 		return err
 	}
 
+	log.Info("Updating last operation status of processing Shoots to 'Aborted'")
+	if err := g.updateProcessingShootStatusToAborted(ctx, gardenCluster.GetClient()); err != nil {
+		return err
+	}
+
 	log.Info("Setting up shoot client map")
 	shootClientMap, err := clientmapbuilder.
 		NewShootClientMapBuilder().
@@ -364,64 +386,17 @@ func (g *garden) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to build shoot ClientMap: %w", err)
 	}
 
-	log.Info("Fetching cluster identity and garden namespace from garden cluster")
-	configMap := &corev1.ConfigMap{}
-	if err := gardenCluster.GetClient().Get(ctx, kutil.Key(metav1.NamespaceSystem, v1beta1constants.ClusterIdentity), configMap); err != nil {
-		return fmt.Errorf("failed getting cluster-identity ConfigMap in garden cluster: %w", err)
-	}
-
-	gardenClusterIdentity, ok := configMap.Data[v1beta1constants.ClusterIdentity]
-	if !ok {
-		return fmt.Errorf("cluster-identity ConfigMap data does not have %q key", v1beta1constants.ClusterIdentity)
-	}
-
-	// TODO(rfranzke): Move this to the controller.AddToManager function once legacy controllers relying on
-	//  it have been refactored.
-	seedClientSet, err := kubernetes.NewWithConfig(
-		kubernetes.WithRESTConfig(g.mgr.GetConfig()),
-		kubernetes.WithRuntimeAPIReader(g.mgr.GetAPIReader()),
-		kubernetes.WithRuntimeClient(g.mgr.GetClient()),
-		kubernetes.WithRuntimeCache(g.mgr.GetCache()),
-	)
-	if err != nil {
-		return fmt.Errorf("failed creating seed clientset: %w", err)
-	}
-
-	// TODO(rfranzke): Move this to the controller.AddControllersToManager function once the shoot legacy controller has
-	//  been refactored.
-	identity, err := gutil.DetermineIdentity()
-	if err != nil {
-		return err
-	}
-
 	log.Info("Adding runnables now that bootstrapping is finished")
 	runnables := []manager.Runnable{
 		g.healthManager,
 		shootClientMap,
-		&controller.LegacyControllerFactory{
-			Log:                   log,
-			Config:                g.config,
-			GardenCluster:         gardenCluster,
-			SeedCluster:           g.mgr,
-			SeedClientSet:         seedClientSet,
-			ShootClientMap:        shootClientMap,
-			GardenClusterIdentity: gardenClusterIdentity,
-			Identity:              identity,
-		},
 	}
 
 	if g.config.GardenClientConnection.KubeconfigSecret != nil {
-		gardenClientSet, err := kubernetes.NewWithConfig(
-			kubernetes.WithRESTConfig(gardenCluster.GetConfig()),
-			kubernetes.WithRuntimeAPIReader(gardenCluster.GetAPIReader()),
-			kubernetes.WithRuntimeClient(gardenCluster.GetClient()),
-			kubernetes.WithRuntimeCache(gardenCluster.GetCache()),
-		)
+		certificateManager, err := certificate.NewCertificateManager(log, gardenCluster, g.mgr.GetClient(), g.config)
 		if err != nil {
-			return fmt.Errorf("failed creating garden clientset: %w", err)
+			return fmt.Errorf("failed to create a new certificate manager: %w", err)
 		}
-
-		certificateManager := certificate.NewCertificateManager(log, gardenClientSet, g.mgr.GetClient(), g.config)
 
 		runnables = append(runnables, manager.RunnableFunc(func(ctx context.Context) error {
 			return certificateManager.ScheduleCertificateRotation(ctx, g.cancel, g.mgr.GetEventRecorderFor("certificate-manager"))
@@ -433,21 +408,13 @@ func (g *garden) Start(ctx context.Context) error {
 	}
 
 	log.Info("Adding controllers to manager")
-	gardenNamespace := &corev1.Namespace{}
-	if err := gardenCluster.GetClient().Get(ctx, kutil.Key(v1beta1constants.GardenNamespace), gardenNamespace); err != nil {
-		return fmt.Errorf("failed getting garden namespace in garden cluster: %w", err)
-	}
-
 	if err := controller.AddToManager(
+		ctx,
 		g.mgr,
 		gardenCluster,
 		g.mgr,
-		seedClientSet,
 		shootClientMap,
 		g.config,
-		gardenNamespace,
-		gardenClusterIdentity,
-		identity,
 		g.healthManager,
 	); err != nil {
 		return fmt.Errorf("failed adding controllers to manager: %w", err)
@@ -464,7 +431,7 @@ func (g *garden) registerSeed(ctx context.Context, gardenClient client.Client) e
 	}
 
 	// Convert gardenlet config to an external version
-	cfg, err := confighelper.ConvertGardenletConfigurationExternal(g.config)
+	cfg, err := gardenlethelper.ConvertGardenletConfigurationExternal(g.config)
 	if err != nil {
 		return fmt.Errorf("could not convert gardenlet configuration: %w", err)
 	}
@@ -487,7 +454,7 @@ func (g *garden) registerSeed(ctx context.Context, gardenClient client.Client) e
 	defer cancel()
 
 	return wait.PollUntilWithContext(timeoutCtx, 500*time.Millisecond, func(context.Context) (done bool, err error) {
-		if err := gardenClient.Get(ctx, kutil.Key(gutil.ComputeGardenNamespace(g.config.SeedConfig.Name)), &corev1.Namespace{}); err != nil {
+		if err := gardenClient.Get(ctx, kubernetesutils.Key(gardenerutils.ComputeGardenNamespace(g.config.SeedConfig.Name)), &corev1.Namespace{}); err != nil {
 			if apierrors.IsNotFound(err) || apierrors.IsForbidden(err) {
 				return false, nil
 			}
@@ -495,6 +462,40 @@ func (g *garden) registerSeed(ctx context.Context, gardenClient client.Client) e
 		}
 		return true, nil
 	})
+}
+
+func (g *garden) updateProcessingShootStatusToAborted(ctx context.Context, gardenClient client.Client) error {
+	shoots := &gardencorev1beta1.ShootList{}
+	if err := gardenClient.List(ctx, shoots); err != nil {
+		return err
+	}
+
+	var taskFns []flow.TaskFn
+
+	for _, s := range shoots.Items {
+		shoot := s
+
+		if specSeedName, statusSeedName := gardenerutils.GetShootSeedNames(&shoot); gardenerutils.GetResponsibleSeedName(specSeedName, statusSeedName) != g.config.SeedConfig.Name {
+			continue
+		}
+
+		// Check if the status indicates that an operation is processing and mark it as "aborted".
+		if shoot.Status.LastOperation == nil || shoot.Status.LastOperation.State != gardencorev1beta1.LastOperationStateProcessing {
+			continue
+		}
+
+		taskFns = append(taskFns, func(ctx context.Context) error {
+			patch := client.MergeFrom(shoot.DeepCopy())
+			shoot.Status.LastOperation.State = gardencorev1beta1.LastOperationStateAborted
+			if err := gardenClient.Status().Patch(ctx, &shoot, patch); err != nil {
+				return fmt.Errorf("failed to set status to 'Aborted' for shoot %q: %w", client.ObjectKeyFromObject(&shoot), err)
+			}
+
+			return nil
+		})
+	}
+
+	return flow.Parallel(taskFns...)(ctx)
 }
 
 func addAllFieldIndexes(ctx context.Context, i client.FieldIndexer) error {

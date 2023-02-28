@@ -20,13 +20,6 @@ import (
 	"strconv"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	fakekubernetes "github.com/gardener/gardener/pkg/client/kubernetes/fake"
-	"github.com/gardener/gardener/pkg/operation"
-	. "github.com/gardener/gardener/pkg/operation/care"
-	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
@@ -58,6 +51,13 @@ import (
 	"k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	kubernetesfake "github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	"github.com/gardener/gardener/pkg/operation"
+	. "github.com/gardener/gardener/pkg/operation/care"
+	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
 )
 
 type webhookTestCase struct {
@@ -120,11 +120,16 @@ var _ = Describe("Constraints", func() {
 					namespaceSelector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{"gardener.cloud/purpose": "kube-system"}},
 				}),
+				Entry("namespaceSelector matching name label", webhookTestCase{
+					namespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"kubernetes.io/metadata.name": "kube-system"}},
+				}),
 				Entry("namespaceSelector matching all gardener labels", webhookTestCase{
 					namespaceSelector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"shoot.gardener.cloud/no-cleanup": "true",
 							"gardener.cloud/purpose":          "kube-system",
+							"kubernetes.io/metadata.name":     "kube-system",
 						}},
 				}),
 			}
@@ -133,6 +138,17 @@ var _ = Describe("Constraints", func() {
 				Entry("not matching namespaceSelector", webhookTestCase{
 					namespaceSelector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{"foo": "bar"}},
+				}),
+				Entry("namespaceSelector excluding name label", webhookTestCase{
+					namespaceSelector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{
+								Key:      "kubernetes.io/metadata.name",
+								Operator: metav1.LabelSelectorOpNotIn,
+								Values:   []string{"kube-system"},
+							},
+						},
+					},
 				}),
 			}
 
@@ -345,6 +361,9 @@ var _ = Describe("Constraints", func() {
 		kubeSystemNamespaceTables(extensionsv1beta1.SchemeGroupVersion.WithResource("networkpolicies"))
 		withoutSelectorsTables(extensionsv1beta1.SchemeGroupVersion.WithResource("podsecuritypolicies"))
 
+		// there are no non-problematic webhooks expected for leases because
+		// Gardener considers all leases in all namespaces
+		commonTests(coordinationv1.SchemeGroupVersion.WithResource("leases"), kubeSystemNamespaceProblematic, nil)
 		withoutSelectorsTables(coordinationv1.SchemeGroupVersion.WithResource("leases"))
 		withoutSelectorsTables(coordinationv1beta1.SchemeGroupVersion.WithResource("leases"))
 
@@ -449,7 +468,7 @@ var _ = Describe("Constraints", func() {
 
 			clock = testing.NewFakeClock(now)
 			op = &operation.Operation{
-				SeedClientSet: fakekubernetes.NewClientSetBuilder().WithClient(seedClient).Build(),
+				SeedClientSet: kubernetesfake.NewClientSetBuilder().WithClient(seedClient).Build(),
 				Shoot: &shootpkg.Shoot{
 					SeedNamespace: seedNamespace,
 				},

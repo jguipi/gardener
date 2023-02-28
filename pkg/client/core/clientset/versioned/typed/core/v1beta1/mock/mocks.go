@@ -8,7 +8,6 @@ import (
 	context "context"
 	reflect "reflect"
 
-	v1alpha1 "github.com/gardener/gardener/pkg/apis/authentication/v1alpha1"
 	v1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta10 "github.com/gardener/gardener/pkg/client/core/clientset/versioned/typed/core/v1beta1"
 	gomock "github.com/golang/mock/gomock"
@@ -125,6 +124,20 @@ func (mr *MockCoreV1beta1InterfaceMockRecorder) ControllerRegistrations() *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ControllerRegistrations", reflect.TypeOf((*MockCoreV1beta1Interface)(nil).ControllerRegistrations))
 }
 
+// ExposureClasses mocks base method.
+func (m *MockCoreV1beta1Interface) ExposureClasses() v1beta10.ExposureClassInterface {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExposureClasses")
+	ret0, _ := ret[0].(v1beta10.ExposureClassInterface)
+	return ret0
+}
+
+// ExposureClasses indicates an expected call of ExposureClasses.
+func (mr *MockCoreV1beta1InterfaceMockRecorder) ExposureClasses() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExposureClasses", reflect.TypeOf((*MockCoreV1beta1Interface)(nil).ExposureClasses))
+}
+
 // Projects mocks base method.
 func (m *MockCoreV1beta1Interface) Projects() v1beta10.ProjectInterface {
 	m.ctrl.T.Helper()
@@ -195,6 +208,20 @@ func (mr *MockCoreV1beta1InterfaceMockRecorder) Seeds() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Seeds", reflect.TypeOf((*MockCoreV1beta1Interface)(nil).Seeds))
 }
 
+// ShootStates mocks base method.
+func (m *MockCoreV1beta1Interface) ShootStates(arg0 string) v1beta10.ShootStateInterface {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ShootStates", arg0)
+	ret0, _ := ret[0].(v1beta10.ShootStateInterface)
+	return ret0
+}
+
+// ShootStates indicates an expected call of ShootStates.
+func (mr *MockCoreV1beta1InterfaceMockRecorder) ShootStates(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ShootStates", reflect.TypeOf((*MockCoreV1beta1Interface)(nil).ShootStates), arg0)
+}
+
 // Shoots mocks base method.
 func (m *MockCoreV1beta1Interface) Shoots(arg0 string) v1beta10.ShootInterface {
 	m.ctrl.T.Helper()
@@ -245,21 +272,6 @@ func (m *MockShootInterface) Create(arg0 context.Context, arg1 *v1beta1.Shoot, a
 func (mr *MockShootInterfaceMockRecorder) Create(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockShootInterface)(nil).Create), arg0, arg1, arg2)
-}
-
-// CreateAdminKubeconfigRequest mocks base method.
-func (m *MockShootInterface) CreateAdminKubeconfigRequest(arg0 context.Context, arg1 string, arg2 *v1alpha1.AdminKubeconfigRequest, arg3 v1.CreateOptions) (*v1alpha1.AdminKubeconfigRequest, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateAdminKubeconfigRequest", arg0, arg1, arg2, arg3)
-	ret0, _ := ret[0].(*v1alpha1.AdminKubeconfigRequest)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// CreateAdminKubeconfigRequest indicates an expected call of CreateAdminKubeconfigRequest.
-func (mr *MockShootInterfaceMockRecorder) CreateAdminKubeconfigRequest(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateAdminKubeconfigRequest", reflect.TypeOf((*MockShootInterface)(nil).CreateAdminKubeconfigRequest), arg0, arg1, arg2, arg3)
 }
 
 // Delete mocks base method.
@@ -353,21 +365,6 @@ func (m *MockShootInterface) Update(arg0 context.Context, arg1 *v1beta1.Shoot, a
 func (mr *MockShootInterfaceMockRecorder) Update(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockShootInterface)(nil).Update), arg0, arg1, arg2)
-}
-
-// UpdateBinding mocks base method.
-func (m *MockShootInterface) UpdateBinding(arg0 context.Context, arg1 string, arg2 *v1beta1.Shoot, arg3 v1.UpdateOptions) (*v1beta1.Shoot, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateBinding", arg0, arg1, arg2, arg3)
-	ret0, _ := ret[0].(*v1beta1.Shoot)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// UpdateBinding indicates an expected call of UpdateBinding.
-func (mr *MockShootInterfaceMockRecorder) UpdateBinding(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateBinding", reflect.TypeOf((*MockShootInterface)(nil).UpdateBinding), arg0, arg1, arg2, arg3)
 }
 
 // UpdateStatus mocks base method.

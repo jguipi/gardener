@@ -18,17 +18,17 @@ import (
 	"context"
 	"time"
 
-	"github.com/gardener/gardener/pkg/admissioncontroller/seedidentity"
-	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-
 	certificatesv1 "k8s.io/api/certificates/v1"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+
+	"github.com/gardener/gardener/pkg/admissioncontroller/seedidentity"
+	"github.com/gardener/gardener/pkg/utils"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 )
 
-func (g *graph) setupCertificateSigningRequestWatch(_ context.Context, informer cache.Informer) {
-	informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+func (g *graph) setupCertificateSigningRequestWatch(_ context.Context, informer cache.Informer) error {
+	_, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			if csrV1, ok := obj.(*certificatesv1.CertificateSigningRequest); ok {
 				g.handleCertificateSigningRequestCreate(csrV1.Name, csrV1.Spec.Request, csrV1.Spec.Usages)
@@ -47,6 +47,7 @@ func (g *graph) setupCertificateSigningRequestWatch(_ context.Context, informer 
 			}
 		},
 	})
+	return err
 }
 
 func (g *graph) handleCertificateSigningRequestCreate(name string, request []byte, usages []certificatesv1.KeyUsage) {
@@ -61,7 +62,7 @@ func (g *graph) handleCertificateSigningRequestCreate(name string, request []byt
 	if err != nil {
 		return
 	}
-	if ok, _ := gutil.IsSeedClientCert(x509cr, usages); !ok {
+	if ok, _ := gardenerutils.IsSeedClientCert(x509cr, usages); !ok {
 		return
 	}
 	seedName, _ := seedidentity.FromCertificateSigningRequest(x509cr)

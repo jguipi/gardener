@@ -24,6 +24,7 @@ import (
 	gomegatypes "github.com/onsi/gomega/types"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/pointer"
 
 	"github.com/gardener/gardener/pkg/apis/core"
@@ -75,51 +76,39 @@ var _ = Describe("helper", func() {
 		falseVar = false
 	)
 
-	DescribeTable("#ShootWantsBasicAuthentication",
-		func(kubeAPIServerConfig *core.KubeAPIServerConfig, wantsBasicAuth bool) {
-			actualWantsBasicAuth := ShootWantsBasicAuthentication(kubeAPIServerConfig)
-			Expect(actualWantsBasicAuth).To(Equal(wantsBasicAuth))
-		},
-
-		Entry("no kubeapiserver configuration", nil, true),
-		Entry("field not set", &core.KubeAPIServerConfig{}, true),
-		Entry("explicitly enabled", &core.KubeAPIServerConfig{EnableBasicAuthentication: &trueVar}, true),
-		Entry("explicitly disabled", &core.KubeAPIServerConfig{EnableBasicAuthentication: &falseVar}, false),
-	)
-
 	DescribeTable("#GetShootCARotationPhase",
-		func(credentials *core.ShootCredentials, expectedPhase core.ShootCredentialsRotationPhase) {
+		func(credentials *core.ShootCredentials, expectedPhase core.CredentialsRotationPhase) {
 			Expect(GetShootCARotationPhase(credentials)).To(Equal(expectedPhase))
 		},
 
-		Entry("credentials nil", nil, core.ShootCredentialsRotationPhase("")),
-		Entry("rotation nil", &core.ShootCredentials{}, core.ShootCredentialsRotationPhase("")),
-		Entry("ca nil", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{}}, core.ShootCredentialsRotationPhase("")),
-		Entry("phase empty", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{CertificateAuthorities: &core.ShootCARotation{}}}, core.ShootCredentialsRotationPhase("")),
-		Entry("phase set", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{CertificateAuthorities: &core.ShootCARotation{Phase: core.RotationCompleting}}}, core.RotationCompleting),
+		Entry("credentials nil", nil, core.CredentialsRotationPhase("")),
+		Entry("rotation nil", &core.ShootCredentials{}, core.CredentialsRotationPhase("")),
+		Entry("ca nil", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{}}, core.CredentialsRotationPhase("")),
+		Entry("phase empty", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{CertificateAuthorities: &core.CARotation{}}}, core.CredentialsRotationPhase("")),
+		Entry("phase set", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{CertificateAuthorities: &core.CARotation{Phase: core.RotationCompleting}}}, core.RotationCompleting),
 	)
 
 	DescribeTable("#GetShootServiceAccountKeyRotationPhase",
-		func(credentials *core.ShootCredentials, expectedPhase core.ShootCredentialsRotationPhase) {
+		func(credentials *core.ShootCredentials, expectedPhase core.CredentialsRotationPhase) {
 			Expect(GetShootServiceAccountKeyRotationPhase(credentials)).To(Equal(expectedPhase))
 		},
 
-		Entry("credentials nil", nil, core.ShootCredentialsRotationPhase("")),
-		Entry("rotation nil", &core.ShootCredentials{}, core.ShootCredentialsRotationPhase("")),
-		Entry("serviceAccountKey nil", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{}}, core.ShootCredentialsRotationPhase("")),
-		Entry("phase empty", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{ServiceAccountKey: &core.ShootServiceAccountKeyRotation{}}}, core.ShootCredentialsRotationPhase("")),
+		Entry("credentials nil", nil, core.CredentialsRotationPhase("")),
+		Entry("rotation nil", &core.ShootCredentials{}, core.CredentialsRotationPhase("")),
+		Entry("serviceAccountKey nil", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{}}, core.CredentialsRotationPhase("")),
+		Entry("phase empty", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{ServiceAccountKey: &core.ShootServiceAccountKeyRotation{}}}, core.CredentialsRotationPhase("")),
 		Entry("phase set", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{ServiceAccountKey: &core.ShootServiceAccountKeyRotation{Phase: core.RotationCompleting}}}, core.RotationCompleting),
 	)
 
 	DescribeTable("#GetShootETCDEncryptionKeyRotationPhase",
-		func(credentials *core.ShootCredentials, expectedPhase core.ShootCredentialsRotationPhase) {
+		func(credentials *core.ShootCredentials, expectedPhase core.CredentialsRotationPhase) {
 			Expect(GetShootETCDEncryptionKeyRotationPhase(credentials)).To(Equal(expectedPhase))
 		},
 
-		Entry("credentials nil", nil, core.ShootCredentialsRotationPhase("")),
-		Entry("rotation nil", &core.ShootCredentials{}, core.ShootCredentialsRotationPhase("")),
-		Entry("etcdEncryptionKey nil", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{}}, core.ShootCredentialsRotationPhase("")),
-		Entry("phase empty", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{ETCDEncryptionKey: &core.ShootETCDEncryptionKeyRotation{}}}, core.ShootCredentialsRotationPhase("")),
+		Entry("credentials nil", nil, core.CredentialsRotationPhase("")),
+		Entry("rotation nil", &core.ShootCredentials{}, core.CredentialsRotationPhase("")),
+		Entry("etcdEncryptionKey nil", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{}}, core.CredentialsRotationPhase("")),
+		Entry("phase empty", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{ETCDEncryptionKey: &core.ShootETCDEncryptionKeyRotation{}}}, core.CredentialsRotationPhase("")),
 		Entry("phase set", &core.ShootCredentials{Rotation: &core.ShootCredentialsRotation{ETCDEncryptionKey: &core.ShootETCDEncryptionKeyRotation{Phase: core.RotationCompleting}}}, core.RotationCompleting),
 	)
 
@@ -521,17 +510,6 @@ var _ = Describe("helper", func() {
 		Entry("scheduling 'visible' is true", &core.SeedSettings{Scheduling: &core.SeedSettingScheduling{Visible: true}}, true),
 	)
 
-	DescribeTable("#SeedSettingShootDNSEnabled",
-		func(settings *core.SeedSettings, expectation bool) {
-			Expect(SeedSettingShootDNSEnabled(settings)).To(Equal(expectation))
-		},
-
-		Entry("setting is nil", nil, true),
-		Entry("shoot dns is nil", &core.SeedSettings{}, true),
-		Entry("shoot dns 'enabled' is false", &core.SeedSettings{ShootDNS: &core.SeedSettingShootDNS{Enabled: false}}, false),
-		Entry("shoot dns 'enabled' is true", &core.SeedSettings{ShootDNS: &core.SeedSettingShootDNS{Enabled: true}}, true),
-	)
-
 	DescribeTable("#SeedSettingOwnerChecksEnabled",
 		func(settings *core.SeedSettings, expected bool) {
 			Expect(SeedSettingOwnerChecksEnabled(settings)).To(Equal(expected))
@@ -710,6 +688,18 @@ var _ = Describe("helper", func() {
 		})
 	})
 
+	DescribeTable("#CalculateEffectiveKubernetesVersion",
+		func(controlPlaneVersion *semver.Version, workerKubernetes *core.WorkerKubernetes, expectedRes *semver.Version) {
+			res, err := CalculateEffectiveKubernetesVersion(controlPlaneVersion, workerKubernetes)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res).To(Equal(expectedRes))
+		},
+
+		Entry("workerKubernetes = nil", semver.MustParse("1.2.3"), nil, semver.MustParse("1.2.3")),
+		Entry("workerKubernetes.version = nil", semver.MustParse("1.2.3"), &core.WorkerKubernetes{}, semver.MustParse("1.2.3")),
+		Entry("workerKubernetes.version != nil", semver.MustParse("1.2.3"), &core.WorkerKubernetes{Version: pointer.String("4.5.6")}, semver.MustParse("4.5.6")),
+	)
+
 	DescribeTable("#GetSecretBindingTypes",
 		func(secretBinding *core.SecretBinding, expected []string) {
 			actual := GetSecretBindingTypes(secretBinding)
@@ -735,11 +725,11 @@ var _ = Describe("helper", func() {
 
 	Describe("#GetAllZonesFromShoot", func() {
 		It("should return an empty list because there are no zones", func() {
-			Expect(GetAllZonesFromShoot(&core.Shoot{}).List()).To(BeEmpty())
+			Expect(sets.List(GetAllZonesFromShoot(&core.Shoot{}))).To(BeEmpty())
 		})
 
 		It("should return the expected list when there is only one pool", func() {
-			Expect(GetAllZonesFromShoot(&core.Shoot{
+			Expect(sets.List(GetAllZonesFromShoot(&core.Shoot{
 				Spec: core.ShootSpec{
 					Provider: core.Provider{
 						Workers: []core.Worker{
@@ -747,11 +737,11 @@ var _ = Describe("helper", func() {
 						},
 					},
 				},
-			}).List()).To(ConsistOf("a", "b"))
+			}))).To(ConsistOf("a", "b"))
 		})
 
 		It("should return the expected list when there are more than one pools", func() {
-			Expect(GetAllZonesFromShoot(&core.Shoot{
+			Expect(sets.List(GetAllZonesFromShoot(&core.Shoot{
 				Spec: core.ShootSpec{
 					Provider: core.Provider{
 						Workers: []core.Worker{
@@ -760,7 +750,7 @@ var _ = Describe("helper", func() {
 						},
 					},
 				},
-			}).List()).To(ConsistOf("a", "b", "c", "d"))
+			}))).To(ConsistOf("a", "b", "c", "d"))
 		})
 	})
 
@@ -812,6 +802,23 @@ var _ = Describe("helper", func() {
 		It("should return true when shoot defines failure tolerance type 'zone'", func() {
 			shoot.Spec.ControlPlane = &core.ControlPlane{HighAvailability: &core.HighAvailability{FailureTolerance: core.FailureTolerance{Type: core.FailureToleranceTypeZone}}}
 			Expect(IsMultiZonalShootControlPlane(shoot)).To(BeTrue())
+		})
+	})
+
+	Describe("#DeterminePrimaryIPFamily", func() {
+		It("should return IPv4 for empty ipFamilies", func() {
+			Expect(DeterminePrimaryIPFamily(nil)).To(Equal(core.IPFamilyIPv4))
+			Expect(DeterminePrimaryIPFamily([]core.IPFamily{})).To(Equal(core.IPFamilyIPv4))
+		})
+
+		It("should return IPv4 if it's the first entry", func() {
+			Expect(DeterminePrimaryIPFamily([]core.IPFamily{core.IPFamilyIPv4})).To(Equal(core.IPFamilyIPv4))
+			Expect(DeterminePrimaryIPFamily([]core.IPFamily{core.IPFamilyIPv4, core.IPFamilyIPv6})).To(Equal(core.IPFamilyIPv4))
+		})
+
+		It("should return IPv6 if it's the first entry", func() {
+			Expect(DeterminePrimaryIPFamily([]core.IPFamily{core.IPFamilyIPv6})).To(Equal(core.IPFamilyIPv6))
+			Expect(DeterminePrimaryIPFamily([]core.IPFamily{core.IPFamilyIPv6, core.IPFamilyIPv4})).To(Equal(core.IPFamilyIPv6))
 		})
 	})
 })

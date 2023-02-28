@@ -152,18 +152,6 @@ func ToExpirableVersions(versions []core.MachineImageVersion) []core.ExpirableVe
 	return expirableVersions
 }
 
-// ShootWantsBasicAuthentication returns true if basic authentication is not configured or
-// if it is set explicitly to 'true'.
-func ShootWantsBasicAuthentication(kubeAPIServerConfig *core.KubeAPIServerConfig) bool {
-	if kubeAPIServerConfig == nil {
-		return true
-	}
-	if kubeAPIServerConfig.EnableBasicAuthentication == nil {
-		return true
-	}
-	return *kubeAPIServerConfig.EnableBasicAuthentication
-}
-
 // TaintsHave returns true if the given key is part of the taints list.
 func TaintsHave(taints []core.SeedTaint, key string) bool {
 	for _, taint := range taints {
@@ -213,11 +201,6 @@ func SeedSettingExcessCapacityReservationEnabled(settings *core.SeedSettings) bo
 // SeedSettingSchedulingVisible returns true if the 'scheduling' setting is set to 'visible'.
 func SeedSettingSchedulingVisible(settings *core.SeedSettings) bool {
 	return settings == nil || settings.Scheduling == nil || settings.Scheduling.Visible
-}
-
-// SeedSettingShootDNSEnabled returns true if the 'shoot dns' setting is enabled.
-func SeedSettingShootDNSEnabled(settings *core.SeedSettings) bool {
-	return settings == nil || settings.ShootDNS == nil || settings.ShootDNS.Enabled
 }
 
 // SeedSettingOwnerChecksEnabled returns true if the 'ownerChecks' setting is enabled.
@@ -276,7 +259,7 @@ func GetAddedVersions(old, new []core.ExpirableVersion) map[string]int {
 // getVersionDiff gets versions that are in v1 but not in v2.
 // Returns versions mapped to their index in v1.
 func getVersionDiff(v1, v2 []core.ExpirableVersion) map[string]int {
-	v2Versions := sets.String{}
+	v2Versions := sets.Set[string]{}
 	for _, x := range v2 {
 		v2Versions.Insert(x.Version)
 	}
@@ -362,7 +345,7 @@ func ShootWantsVerticalPodAutoscaler(shoot *core.Shoot) bool {
 }
 
 // GetShootCARotationPhase returns the specified shoot CA rotation phase or an empty string
-func GetShootCARotationPhase(credentials *core.ShootCredentials) core.ShootCredentialsRotationPhase {
+func GetShootCARotationPhase(credentials *core.ShootCredentials) core.CredentialsRotationPhase {
 	if credentials != nil && credentials.Rotation != nil && credentials.Rotation.CertificateAuthorities != nil {
 		return credentials.Rotation.CertificateAuthorities.Phase
 	}
@@ -371,7 +354,7 @@ func GetShootCARotationPhase(credentials *core.ShootCredentials) core.ShootCrede
 
 // GetShootServiceAccountKeyRotationPhase returns the specified shoot service account key rotation phase or an empty
 // string.
-func GetShootServiceAccountKeyRotationPhase(credentials *core.ShootCredentials) core.ShootCredentialsRotationPhase {
+func GetShootServiceAccountKeyRotationPhase(credentials *core.ShootCredentials) core.CredentialsRotationPhase {
 	if credentials != nil && credentials.Rotation != nil && credentials.Rotation.ServiceAccountKey != nil {
 		return credentials.Rotation.ServiceAccountKey.Phase
 	}
@@ -380,7 +363,7 @@ func GetShootServiceAccountKeyRotationPhase(credentials *core.ShootCredentials) 
 
 // GetShootETCDEncryptionKeyRotationPhase returns the specified shoot ETCD encryption key rotation phase or an empty
 // string.
-func GetShootETCDEncryptionKeyRotationPhase(credentials *core.ShootCredentials) core.ShootCredentialsRotationPhase {
+func GetShootETCDEncryptionKeyRotationPhase(credentials *core.ShootCredentials) core.CredentialsRotationPhase {
 	if credentials != nil && credentials.Rotation != nil && credentials.Rotation.ETCDEncryptionKey != nil {
 		return credentials.Rotation.ETCDEncryptionKey.Phase
 	}
@@ -443,6 +426,15 @@ func CalculateSeedUsage(shootList []*core.Shoot) map[string]int {
 	return m
 }
 
+// CalculateEffectiveKubernetesVersion if a shoot has kubernetes version specified by worker group, return this,
+// otherwise the shoot kubernetes version
+func CalculateEffectiveKubernetesVersion(controlPlaneVersion *semver.Version, workerKubernetes *core.WorkerKubernetes) (*semver.Version, error) {
+	if workerKubernetes != nil && workerKubernetes.Version != nil {
+		return semver.NewVersion(*workerKubernetes.Version)
+	}
+	return controlPlaneVersion, nil
+}
+
 // GetSecretBindingTypes returns the SecretBinding provider types.
 func GetSecretBindingTypes(secretBinding *core.SecretBinding) []string {
 	return strings.Split(secretBinding.Provider.Type, ",")
@@ -459,12 +451,12 @@ func SecretBindingHasType(secretBinding *core.SecretBinding, providerType string
 		return false
 	}
 
-	return sets.NewString(types...).Has(providerType)
+	return sets.New[string](types...).Has(providerType)
 }
 
 // GetAllZonesFromShoot returns the set of all availability zones defined in the worker pools of the Shoot specification.
-func GetAllZonesFromShoot(shoot *core.Shoot) sets.String {
-	out := sets.NewString()
+func GetAllZonesFromShoot(shoot *core.Shoot) sets.Set[string] {
+	out := sets.New[string]()
 	for _, worker := range shoot.Spec.Provider.Workers {
 		out.Insert(worker.Zones...)
 	}
@@ -479,4 +471,12 @@ func IsHAControlPlaneConfigured(shoot *core.Shoot) bool {
 // IsMultiZonalShootControlPlane checks if the shoot should have a multi-zonal control plane.
 func IsMultiZonalShootControlPlane(shoot *core.Shoot) bool {
 	return shoot.Spec.ControlPlane != nil && shoot.Spec.ControlPlane.HighAvailability != nil && shoot.Spec.ControlPlane.HighAvailability.FailureTolerance.Type == core.FailureToleranceTypeZone
+}
+
+// DeterminePrimaryIPFamily determines the primary IP family out of a specified list of IP families.
+func DeterminePrimaryIPFamily(ipFamilies []core.IPFamily) core.IPFamily {
+	if len(ipFamilies) == 0 {
+		return core.IPFamilyIPv4
+	}
+	return ipFamilies[0]
 }

@@ -21,6 +21,9 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/utils/clock"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	"github.com/gardener/gardener/charts"
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
@@ -28,13 +31,9 @@ import (
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	"github.com/gardener/gardener/pkg/operation"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/etcd"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/hvpa"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/logging/kuberbacproxy"
-	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-
-	"k8s.io/utils/clock"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // DefaultInterval is the default interval for retry operations.
@@ -164,6 +163,10 @@ func New(ctx context.Context, o *operation.Operation) (*Botanist, error) {
 	}
 
 	// system components
+	o.Shoot.Components.SystemComponents.APIServerProxy, err = b.DefaultAPIServerProxy()
+	if err != nil {
+		return nil, err
+	}
 	o.Shoot.Components.SystemComponents.ClusterIdentity = b.DefaultClusterIdentity()
 	o.Shoot.Components.SystemComponents.Namespaces = b.DefaultShootNamespaces()
 	o.Shoot.Components.SystemComponents.CoreDNS, err = b.DefaultCoreDNS()
@@ -197,11 +200,7 @@ func New(ctx context.Context, o *operation.Operation) (*Botanist, error) {
 	o.Shoot.Components.BackupEntry = b.DefaultCoreBackupEntry()
 	o.Shoot.Components.DependencyWatchdogAccess = b.DefaultDependencyWatchdogAccess()
 	o.Shoot.Components.GardenerAccess = b.DefaultGardenerAccess()
-	o.Shoot.Components.NetworkPolicies, err = b.DefaultNetworkPolicies(sniPhase)
-	if err != nil {
-		return nil, err
-	}
-	o.Shoot.Components.HVPA = hvpa.New(nil, b.Shoot.SeedNamespace, hvpa.Values{})
+	o.Shoot.Components.NetworkPolicies = b.DefaultNetworkPolicies()
 
 	// Logging
 	o.Shoot.Components.Logging.ShootRBACProxy, err = kuberbacproxy.New(b.SeedClientSet.Client(), b.Shoot.SeedNamespace)
@@ -209,6 +208,16 @@ func New(ctx context.Context, o *operation.Operation) (*Botanist, error) {
 		return nil, err
 	}
 	o.Shoot.Components.Logging.ShootEventLogger, err = b.DefaultEventLogger()
+	if err != nil {
+		return nil, err
+	}
+
+	// Addons
+	o.Shoot.Components.Addons.KubernetesDashboard, err = b.DefaultKubernetesDashboard()
+	if err != nil {
+		return nil, err
+	}
+	o.Shoot.Components.Addons.NginxIngress, err = b.DefaultNginxIngress()
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +237,7 @@ func (b *Botanist) RequiredExtensionsReady(ctx context.Context) error {
 		return err
 	}
 
-	requiredExtensions := shootpkg.ComputeRequiredExtensions(b.Shoot.GetInfo(), b.Seed.GetInfo(), controllerRegistrationList, b.Garden.InternalDomain, b.Shoot.ExternalDomain)
+	requiredExtensions := gardenerutils.ComputeRequiredExtensions(b.Shoot.GetInfo(), b.Seed.GetInfo(), controllerRegistrationList, b.Garden.InternalDomain, b.Shoot.ExternalDomain)
 
 	for _, controllerInstallation := range controllerInstallationList.Items {
 		if controllerInstallation.Spec.SeedRef.Name != b.Seed.GetInfo().Name {
@@ -258,4 +267,11 @@ func (b *Botanist) RequiredExtensionsReady(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// outOfClusterAPIServerFQDN returns the Fully Qualified Domain Name of the apiserver
+// with dot "." suffix. It'll prevent extra requests to the DNS in case the record is not
+// available.
+func (b *Botanist) outOfClusterAPIServerFQDN() string {
+	return fmt.Sprintf("%s.", b.Shoot.ComputeOutOfClusterAPIServerAddress(b.APIServerAddress, true))
 }

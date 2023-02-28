@@ -20,20 +20,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/controllermanager/apis/config"
-	"github.com/gardener/gardener/pkg/controllerutils"
-	"github.com/gardener/gardener/pkg/extensions"
-	"github.com/gardener/gardener/pkg/operation/common"
-	gardenpkg "github.com/gardener/gardener/pkg/operation/garden"
-	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
-	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -43,6 +29,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/controllermanager/apis/config"
+	"github.com/gardener/gardener/pkg/controllerutils"
+	"github.com/gardener/gardener/pkg/utils"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+)
+
+const (
+	// SeedSpecHash is a constant for a label on `ControllerInstallation`s (similar to `pod-template-hash` on `Pod`s).
+	SeedSpecHash = "seed-spec-hash"
+	// ControllerDeploymentHash is a constant for a label on `ControllerInstallation`s (similar to `pod-template-hash` on `Pod`s).
+	ControllerDeploymentHash = "deployment-hash"
+	// RegistrationSpecHash is a constant for a label on `ControllerInstallation`s (similar to `pod-template-hash` on `Pod`s).
+	RegistrationSpecHash = "registration-spec-hash"
 )
 
 // Reconciler determines which ControllerRegistrations are required for a given Seed by checking all objects in the
@@ -98,7 +103,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, err
 	}
 
-	secrets, err := gardenpkg.ReadGardenSecrets(ctx, log, r.Client, gutil.ComputeGardenNamespace(seed.Name), false)
+	secrets, err := gardenerutils.ReadGardenSecrets(ctx, log, r.Client, gardenerutils.ComputeGardenNamespace(seed.Name), false)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -107,11 +112,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, fmt.Errorf("garden secrets for seed %q have not been synchronized yet", seed.Name)
 	}
 
-	internalDomain, err := gardenpkg.GetInternalDomain(secrets)
+	internalDomain, err := gardenerutils.GetInternalDomain(secrets)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	defaultDomains, err := gardenpkg.GetDefaultDomains(secrets)
+	defaultDomains, err := gardenerutils.GetDefaultDomains(secrets)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -125,7 +130,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		wantedKindTypeCombinationForSeed                   = computeKindTypesForSeed(seed)
 
 		wantedKindTypeCombinations = sets.
-						NewString().
+						New[string]().
 						Union(wantedKindTypeCombinationForBackupBuckets).
 						Union(wantedKindTypeCombinationForBackupEntries).
 						Union(wantedKindTypeCombinationForShoots).
@@ -158,17 +163,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 func computeKindTypesForBackupBuckets(
 	backupBucketList *gardencorev1beta1.BackupBucketList,
 ) (
-	sets.String,
+	sets.Set[string],
 	map[string]gardencorev1beta1.BackupBucket,
 ) {
 	var (
-		wantedKindTypeCombinations = sets.NewString()
+		wantedKindTypeCombinations = sets.New[string]()
 		buckets                    = make(map[string]gardencorev1beta1.BackupBucket)
 	)
 
 	for _, backupBucket := range backupBucketList.Items {
 		buckets[backupBucket.Name] = backupBucket
-		wantedKindTypeCombinations.Insert(extensions.Id(extensionsv1alpha1.BackupBucketResource, backupBucket.Spec.Provider.Type))
+		wantedKindTypeCombinations.Insert(gardenerutils.ExtensionsID(extensionsv1alpha1.BackupBucketResource, backupBucket.Spec.Provider.Type))
 	}
 
 	return wantedKindTypeCombinations, buckets
@@ -180,8 +185,8 @@ func computeKindTypesForBackupEntries(
 	log logr.Logger,
 	backupEntryList *gardencorev1beta1.BackupEntryList,
 	buckets map[string]gardencorev1beta1.BackupBucket,
-) sets.String {
-	wantedKindTypeCombinations := sets.NewString()
+) sets.Set[string] {
+	wantedKindTypeCombinations := sets.New[string]()
 
 	for _, backupEntry := range backupEntryList.Items {
 		bucket, ok := buckets[backupEntry.Spec.BucketName]
@@ -190,7 +195,7 @@ func computeKindTypesForBackupEntries(
 			continue
 		}
 
-		wantedKindTypeCombinations.Insert(extensions.Id(extensionsv1alpha1.BackupEntryResource, bucket.Spec.Provider.Type))
+		wantedKindTypeCombinations.Insert(gardenerutils.ExtensionsID(extensionsv1alpha1.BackupEntryResource, bucket.Spec.Provider.Type))
 	}
 
 	return wantedKindTypeCombinations
@@ -205,14 +210,14 @@ func computeKindTypesForShoots(
 	shootList []gardencorev1beta1.Shoot,
 	seed *gardencorev1beta1.Seed,
 	controllerRegistrationList *gardencorev1beta1.ControllerRegistrationList,
-	internalDomain *gardenpkg.Domain,
-	defaultDomains []*gardenpkg.Domain,
-) sets.String {
+	internalDomain *gardenerutils.Domain,
+	defaultDomains []*gardenerutils.Domain,
+) sets.Set[string] {
 	var (
-		wantedKindTypeCombinations = sets.NewString()
+		wantedKindTypeCombinations = sets.New[string]()
 
 		wg  sync.WaitGroup
-		out = make(chan sets.String)
+		out = make(chan sets.Set[string])
 	)
 
 	for _, shoot := range shootList {
@@ -224,12 +229,12 @@ func computeKindTypesForShoots(
 		go func(shoot *gardencorev1beta1.Shoot) {
 			defer wg.Done()
 
-			externalDomain, err := shootpkg.ConstructExternalDomain(ctx, c, shoot, &corev1.Secret{}, defaultDomains)
-			if err != nil && !(shootpkg.IsIncompleteDNSConfigError(err) && shoot.DeletionTimestamp != nil && len(shoot.Status.UID) == 0) {
+			externalDomain, err := gardenerutils.ConstructExternalDomain(ctx, c, shoot, &corev1.Secret{}, defaultDomains)
+			if err != nil && !(gardenerutils.IsIncompleteDNSConfigError(err) && shoot.DeletionTimestamp != nil && len(shoot.Status.UID) == 0) {
 				log.Info("Could not determine external domain for shoot", "err", err, "shoot", client.ObjectKeyFromObject(shoot))
 			}
 
-			out <- shootpkg.ComputeRequiredExtensions(shoot, seed, controllerRegistrationList, internalDomain, externalDomain)
+			out <- gardenerutils.ComputeRequiredExtensions(shoot, seed, controllerRegistrationList, internalDomain, externalDomain)
 		}(shoot.DeepCopy())
 	}
 
@@ -249,16 +254,16 @@ func computeKindTypesForShoots(
 // Seed configuration
 func computeKindTypesForSeed(
 	seed *gardencorev1beta1.Seed,
-) sets.String {
-	var wantedKindTypeCombinations = sets.NewString()
+) sets.Set[string] {
+	var wantedKindTypeCombinations = sets.New[string]()
 
 	// enable clean up of controller installations in case of seed deletion
 	if seed.DeletionTimestamp != nil {
-		return sets.NewString()
+		return sets.New[string]()
 	}
 
 	if seed.Spec.DNS.Provider != nil {
-		wantedKindTypeCombinations.Insert(extensions.Id(extensionsv1alpha1.DNSRecordResource, seed.Spec.DNS.Provider.Type))
+		wantedKindTypeCombinations.Insert(gardenerutils.ExtensionsID(extensionsv1alpha1.DNSRecordResource, seed.Spec.DNS.Provider.Type))
 	}
 
 	return wantedKindTypeCombinations
@@ -292,18 +297,18 @@ func computeControllerRegistrationMaps(
 // to existing ControllerRegistration objects. Additionally, all names in the alwaysPolicyControllerRegistrationNames list
 // will be returned and all currently installed and required installations.
 func computeWantedControllerRegistrationNames(
-	wantedKindTypeCombinations sets.String,
+	wantedKindTypeCombinations sets.Set[string],
 	controllerInstallationList *gardencorev1beta1.ControllerInstallationList,
 	controllerRegistrations map[string]controllerRegistration,
 	numberOfShoots int,
 	seedObjectMeta metav1.ObjectMeta,
 ) (
-	sets.String,
+	sets.Set[string],
 	error,
 ) {
 	var (
 		kindTypeToControllerRegistrationNames = make(map[string][]string)
-		wantedControllerRegistrationNames     = sets.NewString()
+		wantedControllerRegistrationNames     = sets.New[string]()
 	)
 
 	for name, controllerRegistration := range controllerRegistrations {
@@ -316,7 +321,7 @@ func computeWantedControllerRegistrationNames(
 		}
 
 		for _, resource := range controllerRegistration.obj.Spec.Resources {
-			id := extensions.Id(resource.Kind, resource.Type)
+			id := gardenerutils.ExtensionsID(resource.Kind, resource.Type)
 			kindTypeToControllerRegistrationNames[id] = append(kindTypeToControllerRegistrationNames[id], name)
 		}
 	}
@@ -329,19 +334,19 @@ func computeWantedControllerRegistrationNames(
 		wantedControllerRegistrationNames.Insert(names...)
 	}
 
-	wantedControllerRegistrationNames.Insert(installedAndRequiredRegistrationNames(controllerInstallationList, seedObjectMeta.Name).List()...)
+	wantedControllerRegistrationNames.Insert(sets.List(installedAndRequiredRegistrationNames(controllerInstallationList, seedObjectMeta.Name))...)
 
 	// filter controller registrations with non-matching seed selector
 	return controllerRegistrationNamesWithMatchingSeedLabelSelector(wantedControllerRegistrationNames.UnsortedList(), controllerRegistrations, seedObjectMeta.Labels)
 }
 
-func installedAndRequiredRegistrationNames(controllerInstallationList *gardencorev1beta1.ControllerInstallationList, seedName string) sets.String {
-	requiredControllerRegistrationNames := sets.NewString()
+func installedAndRequiredRegistrationNames(controllerInstallationList *gardencorev1beta1.ControllerInstallationList, seedName string) sets.Set[string] {
+	requiredControllerRegistrationNames := sets.New[string]()
 	for _, controllerInstallation := range controllerInstallationList.Items {
 		if controllerInstallation.Spec.SeedRef.Name != seedName {
 			continue
 		}
-		if !gardencorev1beta1helper.IsControllerInstallationRequired(controllerInstallation) {
+		if !v1beta1helper.IsControllerInstallationRequired(controllerInstallation) {
 			continue
 		}
 		requiredControllerRegistrationNames.Insert(controllerInstallation.Spec.RegistrationRef.Name)
@@ -385,7 +390,7 @@ func deployNeededInstallations(
 	log logr.Logger,
 	c client.Client,
 	seed *gardencorev1beta1.Seed,
-	wantedControllerRegistrations sets.String,
+	wantedControllerRegistrations sets.Set[string],
 	controllerRegistrations map[string]controllerRegistration,
 	registrationNameToInstallation map[string]*gardencorev1beta1.ControllerInstallation,
 ) error {
@@ -412,7 +417,7 @@ func deployNeededInstallations(
 			// Today, only one DeploymentRef element is allowed, which is why can simply pick the first one from the slice.
 			controllerDeployment = &gardencorev1beta1.ControllerDeployment{}
 
-			if err := c.Get(ctx, kutil.Key(controllerRegistration.Spec.Deployment.DeploymentRefs[0].Name), controllerDeployment); err != nil {
+			if err := c.Get(ctx, kubernetesutils.Key(controllerRegistration.Spec.Deployment.DeploymentRefs[0].Name), controllerDeployment); err != nil {
 				return fmt.Errorf("cannot deploy ControllerInstallation because the referenced ControllerDeployment cannot be retrieved: %w", err)
 			}
 		}
@@ -463,14 +468,14 @@ func deployNeededInstallation(
 			return err
 		}
 		seedSpecHash := utils.HashForMap(seedSpecMap)[:16]
-		metav1.SetMetaDataLabel(&controllerInstallation.ObjectMeta, common.SeedSpecHash, seedSpecHash)
+		metav1.SetMetaDataLabel(&controllerInstallation.ObjectMeta, SeedSpecHash, seedSpecHash)
 
 		registrationSpecMap, err := convertObjToMap(controllerRegistration.Spec)
 		if err != nil {
 			return err
 		}
 		registrationSpecHash := utils.HashForMap(registrationSpecMap)[:16]
-		metav1.SetMetaDataLabel(&controllerInstallation.ObjectMeta, common.RegistrationSpecHash, registrationSpecHash)
+		metav1.SetMetaDataLabel(&controllerInstallation.ObjectMeta, RegistrationSpecHash, registrationSpecHash)
 
 		if controllerDeployment != nil {
 			// Add all fields that are relevant for the hash calculation as `ControllerDeployment`s don't have a `spec` field.
@@ -484,7 +489,7 @@ func deployNeededInstallation(
 				return err
 			}
 			deploymentSpecHash := utils.HashForMap(deploymentMap)[:16]
-			metav1.SetMetaDataLabel(&controllerInstallation.ObjectMeta, common.ControllerDeploymentHash, deploymentSpecHash)
+			metav1.SetMetaDataLabel(&controllerInstallation.ObjectMeta, ControllerDeploymentHash, deploymentSpecHash)
 		}
 		controllerInstallation.Spec = installationSpec
 		return nil
@@ -514,7 +519,7 @@ func deleteUnneededInstallations(
 	ctx context.Context,
 	log logr.Logger,
 	c client.Client,
-	wantedControllerRegistrationNames sets.String,
+	wantedControllerRegistrationNames sets.Set[string],
 	registrationNameToInstallation map[string]*gardencorev1beta1.ControllerInstallation,
 ) error {
 	for registrationName, installation := range registrationNameToInstallation {
@@ -563,8 +568,8 @@ func controllerRegistrationNamesWithMatchingSeedLabelSelector(
 	namesInQuestion []string,
 	controllerRegistrations map[string]controllerRegistration,
 	seedLabels map[string]string,
-) (sets.String, error) {
-	matchingNames := sets.NewString()
+) (sets.Set[string], error) {
+	matchingNames := sets.New[string]()
 
 	for _, name := range namesInQuestion {
 		controllerRegistration, ok := controllerRegistrations[name]
@@ -590,13 +595,13 @@ func getShoots(ctx context.Context, c client.Reader, seed *gardencorev1beta1.See
 	if err := c.List(ctx, shootList, client.MatchingFields{core.ShootSeedName: seed.Name}); err != nil {
 		return nil, err
 	}
-	shootListAsItems := gardencorev1beta1helper.ShootItems(*shootList)
+	shootListAsItems := v1beta1helper.ShootItems(*shootList)
 
 	shootList2 := &gardencorev1beta1.ShootList{}
 	if err := c.List(ctx, shootList2, client.MatchingFields{core.ShootStatusSeedName: seed.Name}); err != nil {
 		return nil, err
 	}
-	shootListAsItems2 := gardencorev1beta1helper.ShootItems(*shootList2)
+	shootListAsItems2 := v1beta1helper.ShootItems(*shootList2)
 
 	return shootListAsItems.Union(&shootListAsItems2), nil
 }

@@ -15,18 +15,18 @@
 package vpnseedserver_test
 
 import (
+	. "github.com/onsi/ginkgo/v2"
+
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/test"
 	. "github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
-
-	. "github.com/onsi/ginkgo/v2"
 )
 
 var _ = Describe("Monitoring", func() {
 	var vpnSeedServer component.MonitoringComponent
 
 	BeforeEach(func() {
-		vpnSeedServer = New(nil, "shoot--foo--bar", nil, Values{})
+		vpnSeedServer = New(nil, "shoot--foo--bar", nil, nil, Values{})
 	})
 
 	It("should successfully test the scrape configs", func() {

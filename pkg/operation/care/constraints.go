@@ -21,18 +21,6 @@ import (
 	"strings"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/operation"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/resourcemanager"
-	"github.com/gardener/gardener/pkg/operation/botanist/matchers"
-	"github.com/gardener/gardener/pkg/operation/shoot"
-	"github.com/gardener/gardener/pkg/utils"
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-
 	"github.com/go-logr/logr"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -41,6 +29,18 @@ import (
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/operation"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/resourcemanager"
+	"github.com/gardener/gardener/pkg/operation/botanist/matchers"
+	"github.com/gardener/gardener/pkg/operation/shoot"
+	"github.com/gardener/gardener/pkg/utils"
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
 )
 
 // WebhookMaximumTimeoutSecondsNotProblematic is the maximum timeout in seconds a webhooks on critical resources can
@@ -51,7 +51,7 @@ const WebhookMaximumTimeoutSecondsNotProblematic = 15
 func shootHibernatedConstraints(clock clock.Clock, conditions ...gardencorev1beta1.Condition) []gardencorev1beta1.Condition {
 	hibernationConditions := make([]gardencorev1beta1.Condition, 0, len(conditions))
 	for _, cond := range conditions {
-		hibernationConditions = append(hibernationConditions, gardencorev1beta1helper.UpdatedConditionWithClock(clock, cond, gardencorev1beta1.ConditionTrue, "ConstraintNotChecked", "Shoot cluster has been hibernated."))
+		hibernationConditions = append(hibernationConditions, v1beta1helper.UpdatedConditionWithClock(clock, cond, gardencorev1beta1.ConditionTrue, "ConstraintNotChecked", "Shoot cluster has been hibernated."))
 	}
 	return hibernationConditions
 }
@@ -59,7 +59,7 @@ func shootHibernatedConstraints(clock clock.Clock, conditions ...gardencorev1bet
 func shootControlPlaneNotRunningConstraints(clock clock.Clock, conditions ...gardencorev1beta1.Condition) []gardencorev1beta1.Condition {
 	constraints := make([]gardencorev1beta1.Condition, 0, len(conditions))
 	for _, cond := range conditions {
-		constraints = append(constraints, gardencorev1beta1helper.UpdatedConditionWithClock(clock, cond, gardencorev1beta1.ConditionFalse, "ConstraintNotChecked", "Shoot control plane is not running at the moment."))
+		constraints = append(constraints, v1beta1helper.UpdatedConditionWithClock(clock, cond, gardencorev1beta1.ConditionFalse, "ConstraintNotChecked", "Shoot control plane is not running at the moment."))
 	}
 	return constraints
 }
@@ -95,7 +95,7 @@ func (c *Constraint) Check(
 	updatedConstraints := c.constraintsChecks(ctx, constraints)
 	lastOp := c.shoot.GetInfo().Status.LastOperation
 	lastErrors := c.shoot.GetInfo().Status.LastErrors
-	return PardonConditions(updatedConstraints, lastOp, lastErrors)
+	return PardonConditions(c.clock, updatedConstraints, lastOp, lastErrors)
 }
 
 func (c *Constraint) constraintsChecks(
@@ -127,9 +127,9 @@ func (c *Constraint) constraintsChecks(
 	// Check constraints not depending on the shoot's kube-apiserver to be up and running
 	status, reason, message, errorCodes, err := c.CheckIfCACertificateValiditiesAcceptable(ctx)
 	if err != nil {
-		caCertificateValiditiesAcceptableConstraint = gardencorev1beta1helper.UpdatedConditionUnknownErrorWithClock(c.clock, caCertificateValiditiesAcceptableConstraint, err)
+		caCertificateValiditiesAcceptableConstraint = v1beta1helper.UpdatedConditionUnknownErrorWithClock(c.clock, caCertificateValiditiesAcceptableConstraint, err)
 	} else {
-		caCertificateValiditiesAcceptableConstraint = gardencorev1beta1helper.UpdatedConditionWithClock(c.clock, caCertificateValiditiesAcceptableConstraint, status, reason, message, errorCodes...)
+		caCertificateValiditiesAcceptableConstraint = v1beta1helper.UpdatedConditionWithClock(c.clock, caCertificateValiditiesAcceptableConstraint, status, reason, message, errorCodes...)
 	}
 
 	// Now check constraints depending on the shoot's kube-apiserver to be up and running
@@ -138,8 +138,8 @@ func (c *Constraint) constraintsChecks(
 		c.log.Error(err, "Could not initialize Shoot client for constraints check")
 
 		message := fmt.Sprintf("Could not initialize Shoot client for constraints check: %+v", err)
-		hibernationPossibleConstraint = gardencorev1beta1helper.UpdatedConditionUnknownErrorMessageWithClock(c.clock, hibernationPossibleConstraint, message)
-		maintenancePreconditionsSatisfiedConstraint = gardencorev1beta1helper.UpdatedConditionUnknownErrorMessageWithClock(c.clock, maintenancePreconditionsSatisfiedConstraint, message)
+		hibernationPossibleConstraint = v1beta1helper.UpdatedConditionUnknownErrorMessageWithClock(c.clock, hibernationPossibleConstraint, message)
+		maintenancePreconditionsSatisfiedConstraint = v1beta1helper.UpdatedConditionUnknownErrorMessageWithClock(c.clock, maintenancePreconditionsSatisfiedConstraint, message)
 
 		return filterOptionalConstraints(
 			[]gardencorev1beta1.Condition{hibernationPossibleConstraint, maintenancePreconditionsSatisfiedConstraint},
@@ -157,11 +157,11 @@ func (c *Constraint) constraintsChecks(
 
 	status, reason, message, errorCodes, err = c.CheckForProblematicWebhooks(ctx)
 	if err != nil {
-		hibernationPossibleConstraint = gardencorev1beta1helper.UpdatedConditionUnknownErrorWithClock(c.clock, hibernationPossibleConstraint, err)
-		maintenancePreconditionsSatisfiedConstraint = gardencorev1beta1helper.UpdatedConditionUnknownErrorWithClock(c.clock, maintenancePreconditionsSatisfiedConstraint, err)
+		hibernationPossibleConstraint = v1beta1helper.UpdatedConditionUnknownErrorWithClock(c.clock, hibernationPossibleConstraint, err)
+		maintenancePreconditionsSatisfiedConstraint = v1beta1helper.UpdatedConditionUnknownErrorWithClock(c.clock, maintenancePreconditionsSatisfiedConstraint, err)
 	} else {
-		hibernationPossibleConstraint = gardencorev1beta1helper.UpdatedConditionWithClock(c.clock, hibernationPossibleConstraint, status, reason, message, errorCodes...)
-		maintenancePreconditionsSatisfiedConstraint = gardencorev1beta1helper.UpdatedConditionWithClock(c.clock, maintenancePreconditionsSatisfiedConstraint, status, reason, message, errorCodes...)
+		hibernationPossibleConstraint = v1beta1helper.UpdatedConditionWithClock(c.clock, hibernationPossibleConstraint, status, reason, message, errorCodes...)
+		maintenancePreconditionsSatisfiedConstraint = v1beta1helper.UpdatedConditionWithClock(c.clock, maintenancePreconditionsSatisfiedConstraint, status, reason, message, errorCodes...)
 	}
 
 	return filterOptionalConstraints(
@@ -172,7 +172,7 @@ func (c *Constraint) constraintsChecks(
 
 var (
 	notResourceManager   = utils.MustNewRequirement(v1beta1constants.LabelApp, selection.NotIn, resourcemanager.LabelValue)
-	notManagedByGardener = utils.MustNewRequirement(resourcesv1alpha1.ManagedBy, selection.NotIn, "gardener")
+	notManagedByGardener = utils.MustNewRequirement(resourcesv1alpha1.ManagedBy, selection.NotIn, resourcesv1alpha1.GardenerManager)
 	labelSelector        = client.MatchingLabelsSelector{Selector: labels.NewSelector().Add(notResourceManager).Add(notManagedByGardener)}
 )
 
@@ -210,7 +210,7 @@ func (c *Constraint) CheckIfCACertificateValiditiesAcceptable(ctx context.Contex
 
 	expiringCACertificates := make(map[string]time.Time, len(secretList.Items))
 	for _, secret := range secretList.Items {
-		if secret.Data[secretutils.DataKeyCertificateCA] == nil || secret.Data[secretutils.DataKeyPrivateKeyCA] == nil {
+		if secret.Data[secretsutils.DataKeyCertificateCA] == nil || secret.Data[secretsutils.DataKeyPrivateKeyCA] == nil {
 			continue
 		}
 

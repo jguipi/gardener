@@ -15,10 +15,10 @@
 package istio_test
 
 import (
-	. "github.com/gardener/gardener/pkg/operation/botanist/component/istio"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	. "github.com/gardener/gardener/pkg/operation/botanist/component/istio"
 )
 
 var _ = Describe("Monitoring", func() {
@@ -66,7 +66,7 @@ relabel_configs:
   - __meta_kubernetes_endpoint_port_name
   - __meta_kubernetes_namespace
   action: keep
-  regex: istio-ingressgateway;status-port;istio-ingress
+  regex: istio-ingressgateway;tls-tunnel;istio-ingress
 - source_labels: [__meta_kubernetes_pod_ip]
   action: replace
   target_label: __address__

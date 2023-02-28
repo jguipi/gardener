@@ -33,11 +33,12 @@ import (
 
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
 	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 	"github.com/gardener/gardener/pkg/controllerutils"
 	"github.com/gardener/gardener/pkg/features"
 	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
+	"github.com/gardener/gardener/pkg/operation"
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/clusterautoscaler"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/clusteridentity"
@@ -55,7 +56,7 @@ import (
 	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnauthzserver"
 	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
 	"github.com/gardener/gardener/pkg/utils/flow"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	"github.com/gardener/gardener/pkg/utils/managedresources"
 )
 
@@ -70,7 +71,7 @@ func (r *Reconciler) delete(
 ) {
 	seed := seedObj.GetInfo()
 
-	if !sets.NewString(seed.Finalizers...).Has(gardencorev1beta1.GardenerName) {
+	if !sets.New[string](seed.Finalizers...).Has(gardencorev1beta1.GardenerName) {
 		return reconcile.Result{}, nil
 	}
 
@@ -113,8 +114,8 @@ func (r *Reconciler) delete(
 	log.Info("No Shoots or BackupBuckets are referencing the Seed, deletion accepted")
 
 	if err := r.runDeleteSeedFlow(ctx, log, seedObj, seedIsGarden); err != nil {
-		conditionSeedBootstrapped := gardencorev1beta1helper.GetOrInitCondition(seedObj.GetInfo().Status.Conditions, gardencorev1beta1.SeedBootstrapped)
-		conditionSeedBootstrapped = gardencorev1beta1helper.UpdatedCondition(conditionSeedBootstrapped, gardencorev1beta1.ConditionFalse, "DebootstrapFailed", fmt.Sprintf("Failed to delete Seed Cluster (%s).", err.Error()))
+		conditionSeedBootstrapped := v1beta1helper.GetOrInitConditionWithClock(r.Clock, seedObj.GetInfo().Status.Conditions, gardencorev1beta1.SeedBootstrapped)
+		conditionSeedBootstrapped = v1beta1helper.UpdatedConditionWithClock(r.Clock, conditionSeedBootstrapped, gardencorev1beta1.ConditionFalse, "DebootstrapFailed", fmt.Sprintf("Failed to delete Seed Cluster (%s).", err.Error()))
 		if err := r.patchSeedStatus(ctx, r.GardenClient, seed, "<unknown>", nil, nil, conditionSeedBootstrapped); err != nil {
 			return reconcile.Result{}, fmt.Errorf("could not patch seed status after deletion flow failed: %w", err)
 		}
@@ -159,15 +160,30 @@ func (r *Reconciler) runDeleteSeedFlow(
 		return err
 	}
 
+	seedIsOriginOfClusterIdentity, err := clusteridentity.IsClusterIdentityEmptyOrFromOrigin(ctx, seedClient, v1beta1constants.ClusterIdentityOriginSeed)
+	if err != nil {
+		return err
+	}
+
 	secretData, err := getDNSProviderSecretData(ctx, r.GardenClient, seed.GetInfo())
 	if err != nil {
 		return err
 	}
 
-	istioIngressGateway := []istio.IngressGateway{{Namespace: *r.Config.SNI.Ingress.Namespace}}
+	istioIngressGateway := []istio.IngressGatewayValues{{Namespace: *r.Config.SNI.Ingress.Namespace}}
+	if len(seed.GetInfo().Spec.Provider.Zones) > 1 {
+		for _, zone := range seed.GetInfo().Spec.Provider.Zones {
+			istioIngressGateway = append(istioIngressGateway, istio.IngressGatewayValues{Namespace: operation.GetIstioNamespaceForZone(*r.Config.SNI.Ingress.Namespace, zone)})
+		}
+	}
 	// Add for each ExposureClass handler in the config an own Ingress Gateway.
 	for _, handler := range r.Config.ExposureClassHandlers {
-		istioIngressGateway = append(istioIngressGateway, istio.IngressGateway{Namespace: *handler.SNI.Ingress.Namespace})
+		istioIngressGateway = append(istioIngressGateway, istio.IngressGatewayValues{Namespace: *handler.SNI.Ingress.Namespace})
+		if len(seed.GetInfo().Spec.Provider.Zones) > 1 {
+			for _, zone := range seed.GetInfo().Spec.Provider.Zones {
+				istioIngressGateway = append(istioIngressGateway, istio.IngressGatewayValues{Namespace: operation.GetIstioNamespaceForZone(*handler.SNI.Ingress.Namespace, zone)})
+			}
+		}
 	}
 
 	// Delete all ingress objects in garden namespace which are not created as part of ManagedResources. This can be
@@ -179,24 +195,29 @@ func (r *Reconciler) runDeleteSeedFlow(
 
 	// setup for flow graph
 	var (
-		dnsRecord          = getManagedIngressDNSRecord(log, seedClient, r.GardenNamespace, seed.GetInfo().Spec.DNS, secretData, seed.GetIngressFQDN("*"), "")
-		autoscaler         = clusterautoscaler.NewBootstrapper(seedClient, r.GardenNamespace)
-		kubeStateMetrics   = kubestatemetrics.New(seedClient, r.GardenNamespace, nil, kubestatemetrics.Values{ClusterType: component.ClusterTypeSeed})
-		nginxIngress       = nginxingress.New(seedClient, r.GardenNamespace, nginxingress.Values{})
-		networkPolicies    = networkpolicies.NewBootstrapper(seedClient, r.GardenNamespace, networkpolicies.GlobalValues{})
-		clusterIdentity    = clusteridentity.NewForSeed(seedClient, r.GardenNamespace, "")
-		dwdEndpoint        = dependencywatchdog.NewBootstrapper(seedClient, r.GardenNamespace, dependencywatchdog.BootstrapperValues{Role: dependencywatchdog.RoleEndpoint})
-		dwdProbe           = dependencywatchdog.NewBootstrapper(seedClient, r.GardenNamespace, dependencywatchdog.BootstrapperValues{Role: dependencywatchdog.RoleProbe})
-		systemResources    = seedsystem.New(seedClient, r.GardenNamespace, seedsystem.Values{})
-		vpnAuthzServer     = vpnauthzserver.New(seedClient, r.GardenNamespace, "", kubernetesVersion)
-		istioCRDs          = istio.NewIstioCRD(r.SeedClientSet.ChartApplier(), seedClient)
-		istio              = istio.NewIstio(seedClient, r.SeedClientSet.ChartRenderer(), istio.IstiodValues{}, v1beta1constants.IstioSystemNamespace, istioIngressGateway, nil)
+		dnsRecord        = getManagedIngressDNSRecord(log, seedClient, r.GardenNamespace, seed.GetInfo().Spec.DNS, secretData, seed.GetIngressFQDN("*"), "")
+		autoscaler       = clusterautoscaler.NewBootstrapper(seedClient, r.GardenNamespace)
+		kubeStateMetrics = kubestatemetrics.New(seedClient, r.GardenNamespace, nil, kubestatemetrics.Values{ClusterType: component.ClusterTypeSeed})
+		nginxIngress     = nginxingress.New(seedClient, r.GardenNamespace, nginxingress.Values{})
+		networkPolicies  = networkpolicies.NewBootstrapper(seedClient, r.GardenNamespace, networkpolicies.GlobalValues{})
+		dwdEndpoint      = dependencywatchdog.NewBootstrapper(seedClient, r.GardenNamespace, dependencywatchdog.BootstrapperValues{Role: dependencywatchdog.RoleEndpoint})
+		dwdProbe         = dependencywatchdog.NewBootstrapper(seedClient, r.GardenNamespace, dependencywatchdog.BootstrapperValues{Role: dependencywatchdog.RoleProbe})
+		systemResources  = seedsystem.New(seedClient, r.GardenNamespace, seedsystem.Values{})
+		vpnAuthzServer   = vpnauthzserver.New(seedClient, r.GardenNamespace, "", kubernetesVersion)
+		istioCRDs        = istio.NewCRD(r.SeedClientSet.ChartApplier(), seedClient)
+		istio            = istio.NewIstio(seedClient, r.SeedClientSet.ChartRenderer(), istio.Values{
+			Istiod: istio.IstiodValues{
+				Enabled:   true,
+				Namespace: v1beta1constants.IstioSystemNamespace,
+			},
+			IngressGateway: istioIngressGateway,
+		})
 		fluentOperatorCRDs = fluentoperator.NewCRDs(r.SeedClientSet.Applier())
 	)
 
 	// TODO(rfranzke): Delete this in a future version.
 	{
-		if err := kutil.DeleteObjects(ctx, seedClient,
+		if err := kubernetesutils.DeleteObjects(ctx, seedClient,
 			&resourcesv1alpha1.ManagedResource{ObjectMeta: metav1.ObjectMeta{Name: "gardener-seed-admission-controller", Namespace: r.GardenNamespace}},
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "managedresource-gardener-seed-admission-controller", Namespace: r.GardenNamespace}},
 		); err != nil {
@@ -214,10 +235,6 @@ func (r *Reconciler) runDeleteSeedFlow(
 			Name:         "Ensuring no ControllerInstallations are left",
 			Fn:           ensureNoControllerInstallations(r.GardenClient, seed.GetInfo().Name),
 			Dependencies: flow.NewTaskIDs(destroyDNSRecord),
-		})
-		destroyClusterIdentity = g.Add(flow.Task{
-			Name: "Destroying cluster-identity",
-			Fn:   component.OpDestroyAndWait(clusterIdentity).Destroy,
 		})
 		destroyClusterAutoscaler = g.Add(flow.Task{
 			Name: "Destroying cluster-autoscaler",
@@ -266,7 +283,6 @@ func (r *Reconciler) runDeleteSeedFlow(
 		})
 		syncPointCleanedUp = flow.NewTaskIDs(
 			destroyNginxIngress,
-			destroyClusterIdentity,
 			destroyClusterAutoscaler,
 			destroyNetworkPolicies,
 			destroyDWDEndpoint,
@@ -285,13 +301,27 @@ func (r *Reconciler) runDeleteSeedFlow(
 		})
 	)
 
+	// Use the managed resource for cluster-identity only if there is no cluster-identity config map in kube-system namespace from a different origin than seed.
+	// This prevents gardenlet from deleting the config map accidentally on seed deletion when it was created by a different party (gardener-apiserver or shoot).
+	if seedIsOriginOfClusterIdentity {
+		var (
+			clusterIdentity = clusteridentity.NewForSeed(seedClient, r.GardenNamespace, "")
+
+			destroyClusterIdentity = g.Add(flow.Task{
+				Name: "Destroying cluster-identity",
+				Fn:   component.OpDestroyAndWait(clusterIdentity).Destroy,
+			})
+		)
+		syncPointCleanedUp.Insert(destroyClusterIdentity)
+	}
+
 	// When the seed is the garden cluster then these components are reconciled by the gardener-operator.
 	if !seedIsGarden {
 		var (
 			etcdDruid             = etcd.NewBootstrapper(seedClient, r.GardenNamespace, nil, r.Config.ETCDConfig, "", nil, "")
 			hvpa                  = hvpa.New(seedClient, r.GardenNamespace, hvpa.Values{})
 			verticalPodAutoscaler = vpa.New(seedClient, r.GardenNamespace, nil, vpa.Values{ClusterType: component.ClusterTypeSeed, RuntimeKubernetesVersion: kubernetesVersion})
-			resourceManager       = resourcemanager.New(seedClient, r.GardenNamespace, nil, resourcemanager.Values{Version: kubernetesVersion})
+			resourceManager       = resourcemanager.New(seedClient, r.GardenNamespace, nil, resourcemanager.Values{KubernetesVersion: kubernetesVersion})
 
 			destroyEtcdDruid = g.Add(flow.Task{
 				Name: "Destroying etcd druid",

@@ -19,20 +19,10 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/extensions"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/containerruntime"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	"github.com/gardener/gardener/pkg/utils/test"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -41,8 +31,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/extensions"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	mocktime "github.com/gardener/gardener/pkg/mock/go/time"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/containerruntime"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/test"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("#ContainerRuntime", func() {
@@ -191,11 +189,11 @@ var _ = Describe("#ContainerRuntime", func() {
 			)()
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
-			By("deploy")
+			By("Deploy")
 			// Deploy should fill internal state with the added timestamp annotation
 			Expect(defaultDepWaiter.Deploy(ctx)).To(Succeed())
 
-			By("patch object")
+			By("Patch object")
 			for i := range expected {
 				patch := client.MergeFrom(expected[i].DeepCopy())
 				// remove operation annotation, add old timestamp annotation
@@ -209,7 +207,7 @@ var _ = Describe("#ContainerRuntime", func() {
 				Expect(c.Patch(ctx, expected[i], patch)).ToNot(HaveOccurred(), "patching containerruntime succeeds")
 			}
 
-			By("wait")
+			By("Wait")
 			Expect(defaultDepWaiter.Wait(ctx)).NotTo(Succeed(), "containerruntime indicates error")
 		})
 
@@ -219,11 +217,11 @@ var _ = Describe("#ContainerRuntime", func() {
 			)()
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 
-			By("deploy")
+			By("Deploy")
 			// Deploy should fill internal state with the added timestamp annotation
 			Expect(defaultDepWaiter.Deploy(ctx)).To(Succeed())
 
-			By("patch object")
+			By("Patch object")
 			for i := range expected {
 				patch := client.MergeFrom(expected[i].DeepCopy())
 				// remove operation annotation, add up-to-date timestamp annotation
@@ -237,7 +235,7 @@ var _ = Describe("#ContainerRuntime", func() {
 				Expect(c.Patch(ctx, expected[i], patch)).ToNot(HaveOccurred(), "patching containerruntime succeeds")
 			}
 
-			By("wait")
+			By("Wait")
 			Expect(defaultDepWaiter.Wait(ctx)).To(Succeed(), "containerruntime is ready, should not return an error")
 		})
 	})
@@ -255,7 +253,7 @@ var _ = Describe("#ContainerRuntime", func() {
 		It("should return error if not deleted successfully", func() {
 			defer test.WithVars(
 				&extensions.TimeNow, mockNow.Do,
-				&gutil.TimeNow, mockNow.Do,
+				&gardenerutils.TimeNow, mockNow.Do,
 			)()
 
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
@@ -280,7 +278,7 @@ var _ = Describe("#ContainerRuntime", func() {
 					Name:      containerRuntimeName,
 					Namespace: namespace,
 					Annotations: map[string]string{
-						gutil.ConfirmationDeletion:         "true",
+						gardenerutils.ConfirmationDeletion: "true",
 						v1beta1constants.GardenerTimestamp: now.UTC().String(),
 					},
 				},
@@ -316,23 +314,23 @@ var _ = Describe("#ContainerRuntime", func() {
 
 	Describe("#Restore", func() {
 		var (
-			shootState *gardencorev1alpha1.ShootState
+			shootState *gardencorev1beta1.ShootState
 		)
 
 		BeforeEach(func() {
-			extensions := make([]gardencorev1alpha1.ExtensionResourceState, 0, len(workerNames)+len(containerRuntimeTypes))
+			extensions := make([]gardencorev1beta1.ExtensionResourceState, 0, len(workerNames)+len(containerRuntimeTypes))
 			for _, name := range workerNames {
 				for _, criType := range containerRuntimeTypes {
 					extensionName := fmt.Sprintf("%s-%s", criType, name)
-					extensions = append(extensions, gardencorev1alpha1.ExtensionResourceState{
+					extensions = append(extensions, gardencorev1beta1.ExtensionResourceState{
 						Name:  &extensionName,
 						Kind:  extensionsv1alpha1.ContainerRuntimeResource,
 						State: &runtime.RawExtension{Raw: []byte(`{"dummy":"state"}`)},
 					})
 				}
 			}
-			shootState = &gardencorev1alpha1.ShootState{
-				Spec: gardencorev1alpha1.ShootStateSpec{
+			shootState = &gardencorev1beta1.ShootState{
+				Spec: gardencorev1beta1.ShootStateSpec{
 					Extensions: extensions,
 				},
 			}
@@ -346,7 +344,9 @@ var _ = Describe("#ContainerRuntime", func() {
 
 			mockNow.EXPECT().Do().Return(now.UTC()).AnyTimes()
 			mc := mockclient.NewMockClient(ctrl)
-			mc.EXPECT().Status().Return(mc)
+			mockStatusWriter := mockclient.NewMockStatusWriter(ctrl)
+
+			mc.EXPECT().Status().Return(mockStatusWriter)
 
 			worker := gardencorev1beta1.Worker{
 				Name: workerNames[0],
@@ -379,7 +379,7 @@ var _ = Describe("#ContainerRuntime", func() {
 			expectedWithState.Status = extensionsv1alpha1.ContainerRuntimeStatus{
 				DefaultStatus: extensionsv1alpha1.DefaultStatus{State: &runtime.RawExtension{Raw: []byte(`{"dummy":"state"}`)}},
 			}
-			test.EXPECTPatch(ctx, mc, expectedWithState, expected[0], types.MergePatchType)
+			test.EXPECTStatusPatch(ctx, mockStatusWriter, expectedWithState, expected[0], types.MergePatchType)
 
 			// annotate with restore annotation
 			expectedWithRestore := expectedWithState.DeepCopy()

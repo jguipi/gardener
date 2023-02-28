@@ -18,18 +18,18 @@ import (
 	"context"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
-func (g *graph) setupSeedWatch(ctx context.Context, informer cache.Informer) {
-	informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+func (g *graph) setupSeedWatch(ctx context.Context, informer cache.Informer) error {
+	_, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			seed, ok := obj.(*gardencorev1beta1.Seed)
 			if !ok {
@@ -51,12 +51,12 @@ func (g *graph) setupSeedWatch(ctx context.Context, informer cache.Informer) {
 			}
 
 			if !apiequality.Semantic.DeepEqual(oldSeed.Spec.SecretRef, newSeed.Spec.SecretRef) ||
-				!gardencorev1beta1helper.SeedBackupSecretRefEqual(oldSeed.Spec.Backup, newSeed.Spec.Backup) ||
+				!v1beta1helper.SeedBackupSecretRefEqual(oldSeed.Spec.Backup, newSeed.Spec.Backup) ||
 				!seedDNSProviderSecretRefEqual(oldSeed.Spec.DNS.Provider, newSeed.Spec.DNS.Provider) {
 				g.handleSeedCreateOrUpdate(newSeed)
 			}
 
-			newGardenletReadyCondition := gardencorev1beta1helper.GetCondition(newSeed.Status.Conditions, gardencorev1beta1.SeedGardenletReady)
+			newGardenletReadyCondition := v1beta1helper.GetCondition(newSeed.Status.Conditions, gardencorev1beta1.SeedGardenletReady)
 
 			// When the GardenletReady condition transitions to 'Unknown' then the client certificate might be expired.
 			// Hence, check if seed belongs to a ManagedSeed and reconcile it to potentially allow re-bootstrapping it.
@@ -80,6 +80,7 @@ func (g *graph) setupSeedWatch(ctx context.Context, informer cache.Informer) {
 			g.handleSeedDelete(seed)
 		},
 	})
+	return err
 }
 
 func (g *graph) handleSeedCreateOrUpdate(seed *gardencorev1beta1.Seed) {
@@ -95,7 +96,7 @@ func (g *graph) handleSeedCreateOrUpdate(seed *gardencorev1beta1.Seed) {
 	g.deleteAllIncomingEdges(VertexTypeLease, VertexTypeSeed, "", seed.Name)
 
 	seedVertex := g.getOrCreateVertex(VertexTypeSeed, "", seed.Name)
-	namespaceVertex := g.getOrCreateVertex(VertexTypeNamespace, "", gutil.ComputeGardenNamespace(seed.Name))
+	namespaceVertex := g.getOrCreateVertex(VertexTypeNamespace, "", gardenerutils.ComputeGardenNamespace(seed.Name))
 	g.addEdge(namespaceVertex, seedVertex)
 
 	leaseVertex := g.getOrCreateVertex(VertexTypeLease, gardencorev1beta1.GardenerSeedLeaseNamespace, seed.Name)
@@ -130,7 +131,7 @@ func (g *graph) handleSeedDelete(seed *gardencorev1beta1.Seed) {
 
 func (g *graph) handleManagedSeedIfSeedBelongsToIt(ctx context.Context, seedName string) {
 	// error is ignored here since we cannot do anything meaningful with it
-	if managedSeed, err := kutil.GetManagedSeedByName(ctx, g.client, seedName); err == nil && managedSeed != nil {
+	if managedSeed, err := kubernetesutils.GetManagedSeedByName(ctx, g.client, seedName); err == nil && managedSeed != nil {
 		g.handleManagedSeedCreateOrUpdate(ctx, managedSeed)
 	}
 }

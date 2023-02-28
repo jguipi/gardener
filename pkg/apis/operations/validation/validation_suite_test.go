@@ -17,14 +17,14 @@ package validation_test
 import (
 	"testing"
 
-	"github.com/gardener/gardener/pkg/apiserver/features"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/gardener/gardener/pkg/apiserver/features"
 )
 
 func TestValidation(t *testing.T) {
 	features.RegisterFeatureGates()
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Operations API Validation Suite")
+	RunSpecs(t, "APIs Operations Validation Suite")
 }

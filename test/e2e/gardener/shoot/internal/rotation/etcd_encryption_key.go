@@ -33,14 +33,15 @@ import (
 	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
 	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 	"github.com/gardener/gardener/test/framework"
+	"github.com/gardener/gardener/test/utils/rotation"
 )
 
 // ETCDEncryptionKeyVerifier verifies the etcd encryption key rotation.
 type ETCDEncryptionKeyVerifier struct {
 	*framework.ShootCreationFramework
 
-	secretsBefore   secretConfigNamesToSecrets
-	secretsPrepared secretConfigNamesToSecrets
+	secretsBefore   rotation.SecretConfigNamesToSecrets
+	secretsPrepared rotation.SecretConfigNamesToSecrets
 }
 
 const etcdEncryptionKey = "kube-apiserver-etcd-encryption-key"
@@ -61,22 +62,22 @@ func init() {
 func (v *ETCDEncryptionKeyVerifier) Before(ctx context.Context) {
 	seedClient := v.ShootFramework.SeedClient.Client()
 
-	By("Verifying old etcd encryption key secret")
+	By("Verify old etcd encryption key secret")
 	Eventually(func(g Gomega) {
 		secretList := &corev1.SecretList{}
 		g.Expect(seedClient.List(ctx, secretList, client.InNamespace(v.Shoot.Status.TechnicalID), managedByGardenletSecretsManager)).To(Succeed())
 
-		grouped := groupByName(secretList.Items)
+		grouped := rotation.GroupByName(secretList.Items)
 		g.Expect(grouped[etcdEncryptionKey]).To(HaveLen(1), "etcd encryption key should get created, but not rotated yet")
 		v.secretsBefore = grouped
 	}).Should(Succeed())
 
-	By("Verifying old etcd encryption config secret")
+	By("Verify old etcd encryption config secret")
 	Eventually(func(g Gomega) {
 		secretList := &corev1.SecretList{}
 		g.Expect(seedClient.List(ctx, secretList, client.InNamespace(v.Shoot.Status.TechnicalID), labelSelectorEncryptionConfig)).To(Succeed())
 		g.Expect(secretList.Items).NotTo(BeEmpty())
-		sort.Sort(sort.Reverse(ageSorter(secretList.Items)))
+		sort.Sort(sort.Reverse(rotation.AgeSorter(secretList.Items)))
 
 		encryptionConfiguration := &apiserverconfigv1.EncryptionConfiguration{}
 		g.Expect(runtime.DecodeInto(decoder, secretList.Items[0].Data["encryption-configuration.yaml"], encryptionConfiguration)).To(Succeed())
@@ -104,6 +105,8 @@ func (v *ETCDEncryptionKeyVerifier) Before(ctx context.Context) {
 func (v *ETCDEncryptionKeyVerifier) ExpectPreparingStatus(g Gomega) {
 	g.Expect(v1beta1helper.GetShootETCDEncryptionKeyRotationPhase(v.Shoot.Status.Credentials)).To(Equal(gardencorev1beta1.RotationPreparing))
 	g.Expect(time.Now().UTC().Sub(v.Shoot.Status.Credentials.Rotation.ETCDEncryptionKey.LastInitiationTime.Time.UTC())).To(BeNumerically("<=", time.Minute))
+	g.Expect(v.Shoot.Status.Credentials.Rotation.ETCDEncryptionKey.LastInitiationFinishedTime).To(BeNil())
+	g.Expect(v.Shoot.Status.Credentials.Rotation.ETCDEncryptionKey.LastCompletionTriggeredTime).To(BeNil())
 }
 
 // AfterPrepared is called when the Shoot is in Prepared status.
@@ -111,24 +114,26 @@ func (v *ETCDEncryptionKeyVerifier) AfterPrepared(ctx context.Context) {
 	seedClient := v.ShootFramework.SeedClient.Client()
 
 	Expect(v.Shoot.Status.Credentials.Rotation.ETCDEncryptionKey.Phase).To(Equal(gardencorev1beta1.RotationPrepared), "rotation phase should be 'Prepared'")
+	Expect(v.Shoot.Status.Credentials.Rotation.ETCDEncryptionKey.LastInitiationFinishedTime).NotTo(BeNil())
+	Expect(v.Shoot.Status.Credentials.Rotation.ETCDEncryptionKey.LastInitiationFinishedTime.After(v.Shoot.Status.Credentials.Rotation.ETCDEncryptionKey.LastInitiationTime.Time)).To(BeTrue())
 
-	By("Verifying etcd encryption key secrets")
+	By("Verify etcd encryption key secrets")
 	Eventually(func(g Gomega) {
 		secretList := &corev1.SecretList{}
 		g.Expect(seedClient.List(ctx, secretList, client.InNamespace(v.Shoot.Status.TechnicalID), managedByGardenletSecretsManager)).To(Succeed())
 
-		grouped := groupByName(secretList.Items)
+		grouped := rotation.GroupByName(secretList.Items)
 		g.Expect(grouped[etcdEncryptionKey]).To(HaveLen(2), "etcd encryption key should get rotated")
 		g.Expect(grouped[etcdEncryptionKey]).To(ContainElement(v.secretsBefore[etcdEncryptionKey][0]), "old etcd encryption key secret should be kept")
 		v.secretsPrepared = grouped
 	}).Should(Succeed())
 
-	By("Verifying combined etcd encryption config secret")
+	By("Verify combined etcd encryption config secret")
 	Eventually(func(g Gomega) {
 		secretList := &corev1.SecretList{}
 		g.Expect(seedClient.List(ctx, secretList, client.InNamespace(v.Shoot.Status.TechnicalID), labelSelectorEncryptionConfig)).To(Succeed())
 		g.Expect(secretList.Items).NotTo(BeEmpty())
-		sort.Sort(sort.Reverse(ageSorter(secretList.Items)))
+		sort.Sort(sort.Reverse(rotation.AgeSorter(secretList.Items)))
 
 		encryptionConfiguration := &apiserverconfigv1.EncryptionConfiguration{}
 		err := runtime.DecodeInto(decoder, secretList.Items[0].Data["encryption-configuration.yaml"], encryptionConfiguration)
@@ -159,6 +164,9 @@ func (v *ETCDEncryptionKeyVerifier) AfterPrepared(ctx context.Context) {
 // ExpectCompletingStatus is called while waiting for the Completing status.
 func (v *ETCDEncryptionKeyVerifier) ExpectCompletingStatus(g Gomega) {
 	g.Expect(v1beta1helper.GetShootETCDEncryptionKeyRotationPhase(v.Shoot.Status.Credentials)).To(Equal(gardencorev1beta1.RotationCompleting))
+	Expect(v.Shoot.Status.Credentials.Rotation.ETCDEncryptionKey.LastCompletionTriggeredTime).NotTo(BeNil())
+	Expect(v.Shoot.Status.Credentials.Rotation.ETCDEncryptionKey.LastCompletionTriggeredTime.Time.Equal(v.Shoot.Status.Credentials.Rotation.ETCDEncryptionKey.LastInitiationFinishedTime.Time) ||
+		v.Shoot.Status.Credentials.Rotation.ETCDEncryptionKey.LastCompletionTriggeredTime.After(v.Shoot.Status.Credentials.Rotation.ETCDEncryptionKey.LastInitiationFinishedTime.Time)).To(BeTrue())
 }
 
 // AfterCompleted is called when the Shoot is in Completed status.
@@ -168,23 +176,25 @@ func (v *ETCDEncryptionKeyVerifier) AfterCompleted(ctx context.Context) {
 	etcdEncryptionKeyRotation := v.Shoot.Status.Credentials.Rotation.ETCDEncryptionKey
 	Expect(v1beta1helper.GetShootETCDEncryptionKeyRotationPhase(v.Shoot.Status.Credentials)).To(Equal(gardencorev1beta1.RotationCompleted))
 	Expect(etcdEncryptionKeyRotation.LastCompletionTime.Time.UTC().After(etcdEncryptionKeyRotation.LastInitiationTime.Time.UTC())).To(BeTrue())
+	Expect(etcdEncryptionKeyRotation.LastInitiationFinishedTime).To(BeNil())
+	Expect(etcdEncryptionKeyRotation.LastCompletionTriggeredTime).To(BeNil())
 
-	By("Verifying new etcd encryption key secret")
+	By("Verify new etcd encryption key secret")
 	Eventually(func(g Gomega) {
 		secretList := &corev1.SecretList{}
 		g.Expect(seedClient.List(ctx, secretList, client.InNamespace(v.Shoot.Status.TechnicalID), managedByGardenletSecretsManager)).To(Succeed())
 
-		grouped := groupByName(secretList.Items)
+		grouped := rotation.GroupByName(secretList.Items)
 		g.Expect(grouped[etcdEncryptionKey]).To(HaveLen(1), "old etcd encryption key should get cleaned up")
 		g.Expect(grouped[etcdEncryptionKey]).To(ContainElement(v.secretsPrepared[etcdEncryptionKey][1]), "new etcd encryption key secret should be kept")
 	}).Should(Succeed())
 
-	By("Verifying new etcd encryption config secret")
+	By("Verify new etcd encryption config secret")
 	Eventually(func(g Gomega) {
 		secretList := &corev1.SecretList{}
 		g.Expect(seedClient.List(ctx, secretList, client.InNamespace(v.Shoot.Status.TechnicalID), labelSelectorEncryptionConfig)).To(Succeed())
 		g.Expect(secretList.Items).NotTo(BeEmpty())
-		sort.Sort(sort.Reverse(ageSorter(secretList.Items)))
+		sort.Sort(sort.Reverse(rotation.AgeSorter(secretList.Items)))
 
 		encryptionConfiguration := &apiserverconfigv1.EncryptionConfiguration{}
 		err := runtime.DecodeInto(decoder, secretList.Items[0].Data["encryption-configuration.yaml"], encryptionConfiguration)

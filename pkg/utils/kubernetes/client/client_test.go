@@ -19,16 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	mockcorev1 "github.com/gardener/gardener/pkg/mock/client-go/core/v1"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	. "github.com/gardener/gardener/pkg/utils/kubernetes/client"
-	utilclient "github.com/gardener/gardener/pkg/utils/kubernetes/client"
-	mockutilclient "github.com/gardener/gardener/pkg/utils/kubernetes/client/mock"
-	"github.com/gardener/gardener/pkg/utils/test"
-	mocktime "github.com/gardener/gardener/pkg/utils/time/mock"
-
 	"github.com/golang/mock/gomock"
 	volumesnapshotv1beta1 "github.com/kubernetes-csi/external-snapshotter/v2/pkg/apis/volumesnapshot/v1beta1"
 	. "github.com/onsi/ginkgo/v2"
@@ -41,6 +31,15 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	. "github.com/gardener/gardener/pkg/utils/kubernetes/client"
+	utilclient "github.com/gardener/gardener/pkg/utils/kubernetes/client"
+	mockutilclient "github.com/gardener/gardener/pkg/utils/kubernetes/client/mock"
+	"github.com/gardener/gardener/pkg/utils/test"
+	mocktime "github.com/gardener/gardener/pkg/utils/time/mock"
 )
 
 func TestClient(t *testing.T) {
@@ -74,9 +73,9 @@ var _ = Describe("Cleaner", func() {
 		c = mockclient.NewMockClient(ctrl)
 		ctx = context.Background()
 
-		cm1Key = kutil.Key("n", "foo")
-		cm2Key = kutil.Key("n", "bar")
-		nsKey = kutil.Key("baz")
+		cm1Key = kubernetesutils.Key("n", "foo")
+		cm2Key = kubernetesutils.Key("n", "bar")
+		nsKey = kubernetesutils.Key("baz")
 
 		cm1 = corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "n", Name: "foo"}}
 		cm2 = corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "n", Name: "bar"}}
@@ -195,8 +194,8 @@ var _ = Describe("Cleaner", func() {
 					ctx               = context.TODO()
 					deletionTimestamp = metav1.NewTime(time.Unix(30, 0))
 					now               = time.Unix(60, 0)
-					nsInterface       = mockcorev1.NewMockNamespaceInterface(ctrl)
-					finalizer         = NewNamespaceFinalizer(nsInterface)
+					sw                = mockclient.NewMockSubResourceClient(ctrl)
+					finalizer         = NewNamespaceFinalizer()
 					cleaner           = NewCleaner(timeOps, finalizer)
 				)
 
@@ -206,7 +205,8 @@ var _ = Describe("Cleaner", func() {
 				gomock.InOrder(
 					c.EXPECT().Get(ctx, nsKey, &nsWithFinalizer),
 					timeOps.EXPECT().Now().Return(now),
-					nsInterface.EXPECT().Finalize(ctx, &ns, metav1.UpdateOptions{}).Return(&ns, nil),
+					c.EXPECT().SubResource("finalize").Return(sw),
+					sw.EXPECT().Update(ctx, &ns).Return(nil),
 				)
 
 				Expect(cleaner.Clean(ctx, c, &nsWithFinalizer, FinalizeGracePeriodSeconds(20))).To(Succeed())

@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -35,6 +37,7 @@ import (
 	"github.com/gardener/gardener/pkg/operation/botanist/component/hvpa"
 	"github.com/gardener/gardener/pkg/operation/botanist/component/vpa"
 	"github.com/gardener/gardener/pkg/utils/flow"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	"github.com/gardener/gardener/pkg/utils/managedresources"
 	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
 )
@@ -81,20 +84,29 @@ func (r *Reconciler) delete(
 	if err != nil {
 		return reconcile.Result{}, err
 	}
+	kubeAPIServerService := r.newKubeAPIServerService(log, garden)
 
 	var (
-		g           = flow.NewGraph("Garden deletion")
+		g = flow.NewGraph("Garden deletion")
+
+		destroyKubeAPIServerService = g.Add(flow.Task{
+			Name: "Destroying Kubernetes API Server service",
+			Fn:   component.OpDestroyAndWait(kubeAPIServerService).Destroy,
+		})
 		destroyEtcd = g.Add(flow.Task{
 			Name: "Destroying main and events ETCDs of virtual garden",
-			Fn:   flow.Parallel(etcdMain.Destroy, etcdEvents.Destroy),
-		})
-		waitUntilEtcdDeleted = g.Add(flow.Task{
-			Name:         "Waiting until main and event ETCDs have been destroyed",
-			Fn:           flow.Parallel(etcdMain.WaitCleanup, etcdEvents.WaitCleanup),
-			Dependencies: flow.NewTaskIDs(destroyEtcd),
+			Fn: flow.Parallel(
+				component.OpDestroyAndWait(etcdMain).Destroy,
+				component.OpDestroyAndWait(etcdEvents).Destroy,
+				// TODO(rfranzke): Remove this in the future when the network policy deployment has been refactored.
+				func(ctx context.Context) error {
+					return kubernetesutils.DeleteObject(ctx, r.RuntimeClient, &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "etcd-to-world", Namespace: r.GardenNamespace}})
+				},
+			),
 		})
 		syncPointVirtualGardenControlPlaneDestroyed = flow.NewTaskIDs(
-			waitUntilEtcdDeleted,
+			destroyKubeAPIServerService,
+			destroyEtcd,
 		)
 		destroyEtcdDruid = g.Add(flow.Task{
 			Name:         "Destroying ETCD Druid",

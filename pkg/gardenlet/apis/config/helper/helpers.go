@@ -17,15 +17,15 @@ package helper
 import (
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+
 	gardencore "github.com/gardener/gardener/pkg/apis/core"
 	gardencorehelper "github.com/gardener/gardener/pkg/apis/core/helper"
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	configv1alpha1 "github.com/gardener/gardener/pkg/gardenlet/apis/config/v1alpha1"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	gardenletv1alpha1 "github.com/gardener/gardener/pkg/gardenlet/apis/config/v1alpha1"
 )
 
 // SeedNameFromSeedConfig returns an empty string if the given seed config is nil, or the
@@ -63,7 +63,7 @@ func init() {
 	utilruntime.Must(gardencore.AddToScheme(scheme))
 	utilruntime.Must(gardencorev1beta1.AddToScheme(scheme))
 	utilruntime.Must(config.AddToScheme(scheme))
-	utilruntime.Must(configv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(gardenletv1alpha1.AddToScheme(scheme))
 }
 
 // ConvertGardenletConfiguration converts the given object to an internal GardenletConfiguration version.
@@ -80,14 +80,14 @@ func ConvertGardenletConfiguration(obj runtime.Object) (*config.GardenletConfigu
 }
 
 // ConvertGardenletConfigurationExternal converts the given object to an external  GardenletConfiguration version.
-func ConvertGardenletConfigurationExternal(obj runtime.Object) (*configv1alpha1.GardenletConfiguration, error) {
-	obj, err := scheme.ConvertToVersion(obj, configv1alpha1.SchemeGroupVersion)
+func ConvertGardenletConfigurationExternal(obj runtime.Object) (*gardenletv1alpha1.GardenletConfiguration, error) {
+	obj, err := scheme.ConvertToVersion(obj, gardenletv1alpha1.SchemeGroupVersion)
 	if err != nil {
 		return nil, err
 	}
-	result, ok := obj.(*configv1alpha1.GardenletConfiguration)
+	result, ok := obj.(*gardenletv1alpha1.GardenletConfiguration)
 	if !ok {
-		return nil, fmt.Errorf("could not convert GardenletConfiguration to version %s", configv1alpha1.SchemeGroupVersion.String())
+		return nil, fmt.Errorf("could not convert GardenletConfiguration to version %s", gardenletv1alpha1.SchemeGroupVersion.String())
 	}
 	return result, nil
 }
@@ -125,4 +125,12 @@ func IsMonitoringEnabled(c *config.GardenletConfiguration) bool {
 		return *c.Monitoring.Shoot.Enabled
 	}
 	return true
+}
+
+// GetManagedResourceProgressingThreshold returns ManagedResourceProgressingThreshold if set otherwise it returns nil.
+func GetManagedResourceProgressingThreshold(c *config.GardenletConfiguration) *metav1.Duration {
+	if c != nil && c.Controllers != nil && c.Controllers.ShootCare != nil && c.Controllers.ShootCare.ManagedResourceProgressingThreshold != nil {
+		return c.Controllers.ShootCare.ManagedResourceProgressingThreshold
+	}
+	return nil
 }

@@ -17,6 +17,7 @@ package operation
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/Masterminds/semver"
@@ -28,10 +29,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap"
@@ -44,9 +44,9 @@ import (
 	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
 	"github.com/gardener/gardener/pkg/utils/chart"
 	"github.com/gardener/gardener/pkg/utils/flow"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 	"github.com/gardener/gardener/pkg/utils/imagevector"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 	versionutils "github.com/gardener/gardener/pkg/utils/version"
 )
 
@@ -79,9 +79,6 @@ func NewBuilder() *Builder {
 		},
 		shootFunc: func(context.Context, client.Reader, *garden.Garden, *seed.Seed) (*shootpkg.Shoot, error) {
 			return nil, fmt.Errorf("shoot object is required but not set")
-		},
-		exposureClassFunc: func(string) (*config.ExposureClassHandler, error) {
-			return nil, nil
 		},
 	}
 }
@@ -178,8 +175,6 @@ func (b *Builder) WithShootFromCluster(gardenClient client.Client, seedClientSet
 			WithCloudProfileObjectFromCluster(seedClientSet, shootNamespace).
 			WithShootSecretFrom(gardenClient).
 			WithProjectName(gardenObj.Project.Name).
-			WithExposureClassFrom(gardenClient).
-			WithDisableDNS(!seedObj.GetInfo().Spec.Settings.ShootDNS.Enabled).
 			WithInternalDomain(gardenObj.InternalDomain).
 			WithDefaultDomains(gardenObj.DefaultDomains).
 			Build(ctx, c)
@@ -190,20 +185,6 @@ func (b *Builder) WithShootFromCluster(gardenClient client.Client, seedClientSet
 		// can be no concurrent reads or writes
 		shoot.GetInfo().Status = s.Status
 		return shoot, nil
-	}
-	return b
-}
-
-// WithExposureClassHandlerFromConfig sets the exposureClassFunc attribute at the Builder which will find the
-// the required exposure class handler in the passed Gardenlet config.
-func (b *Builder) WithExposureClassHandlerFromConfig(cfg *config.GardenletConfiguration) *Builder {
-	b.exposureClassFunc = func(handlerName string) (*config.ExposureClassHandler, error) {
-		for _, handler := range cfg.ExposureClassHandlers {
-			if handler.Name == handlerName {
-				return &handler, nil
-			}
-		}
-		return nil, fmt.Errorf("no exposure class handler with name %q found", handlerName)
 	}
 	return b
 }
@@ -276,7 +257,7 @@ func (b *Builder) Build(
 	}
 	operation.Seed = seed
 
-	seedVersion, err := semver.NewVersion(versionutils.Normalize(seedClientSet.Version()))
+	seedVersion, err := semver.NewVersion(seedClientSet.Version())
 	if err != nil {
 		return nil, err
 	}
@@ -288,21 +269,13 @@ func (b *Builder) Build(
 	}
 	operation.Shoot = shoot
 
-	if shoot.ExposureClass != nil {
-		exposureClassHandler, err := b.exposureClassFunc(shoot.ExposureClass.Handler)
-		if err != nil {
-			return nil, err
-		}
-		operation.ExposureClassHandler = exposureClassHandler
-	}
-
 	// Get the ManagedSeed object for this shoot, if it exists.
 	// Also read the managed seed API server settings from the managed-seed-api-server annotation.
-	operation.ManagedSeed, err = kutil.GetManagedSeedWithReader(ctx, gardenClient, shoot.GetInfo().Namespace, shoot.GetInfo().Name)
+	operation.ManagedSeed, err = kubernetesutils.GetManagedSeedWithReader(ctx, gardenClient, shoot.GetInfo().Namespace, shoot.GetInfo().Name)
 	if err != nil {
 		return nil, fmt.Errorf("could not get managed seed for shoot %s/%s: %w", shoot.GetInfo().Namespace, shoot.GetInfo().Name, err)
 	}
-	operation.ManagedSeedAPIServer, err = gardencorev1beta1helper.ReadManagedSeedAPIServer(shoot.GetInfo())
+	operation.ManagedSeedAPIServer, err = v1beta1helper.ReadManagedSeedAPIServer(shoot.GetInfo())
 	if err != nil {
 		return nil, fmt.Errorf("could not read managed seed API server settings of shoot %s/%s: %+v", shoot.GetInfo().Namespace, shoot.GetInfo().Name, err)
 	}
@@ -375,7 +348,7 @@ func (o *Operation) initShootClients(ctx context.Context, versionMatchRequired b
 func (o *Operation) IsAPIServerRunning(ctx context.Context) (bool, error) {
 	deployment := &appsv1.Deployment{}
 	// use API reader here to make sure, we're not reading from a stale cache, when checking if we should initialize a shoot client (e.g. from within the care controller)
-	if err := o.SeedClientSet.APIReader().Get(ctx, kutil.Key(o.Shoot.SeedNamespace, v1beta1constants.DeploymentNameKubeAPIServer), deployment); err != nil {
+	if err := o.SeedClientSet.APIReader().Get(ctx, kubernetesutils.Key(o.Shoot.SeedNamespace, v1beta1constants.DeploymentNameKubeAPIServer), deployment); err != nil {
 		if apierrors.IsNotFound(err) {
 			return false, nil
 		}
@@ -439,7 +412,7 @@ func (o *Operation) ReportShootProgress(ctx context.Context, stats *flow.Stats) 
 // If the status.LastErrors array is empty then status.LastErrors is also removed.
 func (o *Operation) CleanShootTaskError(ctx context.Context, taskID string) {
 	if err := o.Shoot.UpdateInfoStatus(ctx, o.GardenClient, false, func(shoot *gardencorev1beta1.Shoot) error {
-		shoot.Status.LastErrors = gardencorev1beta1helper.DeleteLastErrorByTaskID(shoot.Status.LastErrors, taskID)
+		shoot.Status.LastErrors = v1beta1helper.DeleteLastErrorByTaskID(shoot.Status.LastErrors, taskID)
 		return nil
 	}); err != nil {
 		o.Logger.Error(err, "Could not update last errors of shoot", "shoot", client.ObjectKeyFromObject(o.Shoot.GetInfo()))
@@ -475,7 +448,7 @@ func (o *Operation) InjectShootShootImages(values map[string]interface{}, names 
 func (o *Operation) EnsureShootStateExists(ctx context.Context) error {
 	var (
 		err        error
-		shootState = &gardencorev1alpha1.ShootState{
+		shootState = &gardencorev1beta1.ShootState{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      o.Shoot.GetInfo().Name,
 				Namespace: o.Shoot.GetInfo().Namespace,
@@ -497,14 +470,14 @@ func (o *Operation) EnsureShootStateExists(ctx context.Context) error {
 
 // DeleteShootState deletes the ShootState resource for the corresponding shoot.
 func (o *Operation) DeleteShootState(ctx context.Context) error {
-	shootState := &gardencorev1alpha1.ShootState{
+	shootState := &gardencorev1beta1.ShootState{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      o.Shoot.GetInfo().Name,
 			Namespace: o.Shoot.GetInfo().Namespace,
 		},
 	}
 
-	if err := gutil.ConfirmDeletion(ctx, o.GardenClient, shootState); err != nil {
+	if err := gardenerutils.ConfirmDeletion(ctx, o.GardenClient, shootState); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
@@ -518,8 +491,8 @@ func (o *Operation) DeleteShootState(ctx context.Context) error {
 // This method should be used only for reading the data of the returned shootstate resource. The returned shootstate
 // resource MUST NOT BE MODIFIED (except in test code) since this might interfere with other concurrent reads and writes.
 // To properly update the shootstate resource of this Shoot use SaveGardenerResourceDataInShootState.
-func (o *Operation) GetShootState() *gardencorev1alpha1.ShootState {
-	shootState, ok := o.shootState.Load().(*gardencorev1alpha1.ShootState)
+func (o *Operation) GetShootState() *gardencorev1beta1.ShootState {
+	shootState, ok := o.shootState.Load().(*gardencorev1beta1.ShootState)
 	if !ok {
 		return nil
 	}
@@ -531,7 +504,7 @@ func (o *Operation) GetShootState() *gardencorev1alpha1.ShootState {
 // should be used only in exceptional situations, or as a convenience in test code. The shootstate passed as a parameter
 // MUST NOT BE MODIFIED after the call to SetShootState (except in test code) since this might interfere with other concurrent reads and writes.
 // To properly update the shootstate resource of this Shoot use SaveGardenerResourceDataInShootState.
-func (o *Operation) SetShootState(shootState *gardencorev1alpha1.ShootState) {
+func (o *Operation) SetShootState(shootState *gardencorev1beta1.ShootState) {
 	o.shootState.Store(shootState)
 }
 
@@ -540,7 +513,7 @@ func (o *Operation) SetShootState(shootState *gardencorev1alpha1.ShootState) {
 // The mutate function should modify the passed GardenerResourceData so that changes are persisted.
 // This method is protected by a mutex, so only a single SaveGardenerResourceDataInShootState operation can be
 // executed at any point in time.
-func (o *Operation) SaveGardenerResourceDataInShootState(ctx context.Context, f func(*[]gardencorev1alpha1.GardenerResourceData) error) error {
+func (o *Operation) SaveGardenerResourceDataInShootState(ctx context.Context, f func(*[]gardencorev1beta1.GardenerResourceData) error) error {
 	o.shootStateMutex.Lock()
 	defer o.shootStateMutex.Unlock()
 
@@ -566,11 +539,10 @@ func (o *Operation) DeleteClusterResourceFromSeed(ctx context.Context) error {
 	return client.IgnoreNotFound(o.SeedClientSet.Client().Delete(ctx, &extensionsv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: o.Shoot.SeedNamespace}}))
 }
 
-// ComputeGrafanaHosts computes the host for both grafanas.
+// ComputeGrafanaHosts computes the host for grafana.
 func (o *Operation) ComputeGrafanaHosts() []string {
 	return []string{
-		o.ComputeGrafanaOperatorsHost(),
-		o.ComputeGrafanaUsersHost(),
+		o.ComputeGrafanaHost(),
 	}
 }
 
@@ -586,11 +558,6 @@ func (o *Operation) ComputeAlertManagerHosts() []string {
 	return []string{
 		o.ComputeAlertManagerHost(),
 	}
-}
-
-// ComputeGrafanaOperatorsHost computes the host for users Grafana.
-func (o *Operation) ComputeGrafanaOperatorsHost() string {
-	return o.ComputeIngressHost(common.GrafanaOperatorsPrefix)
 }
 
 // ComputeLokiHosts computes the host for loki.
@@ -610,8 +577,8 @@ func (o *Operation) WantsGrafana() bool {
 	return o.Shoot.Purpose != gardencorev1beta1.ShootPurposeTesting && (helper.IsMonitoringEnabled(o.Config) || helper.IsLokiEnabled(o.Config))
 }
 
-// ComputeGrafanaUsersHost computes the host for operators Grafana.
-func (o *Operation) ComputeGrafanaUsersHost() string {
+// ComputeGrafanaHost computes the host for Grafana.
+func (o *Operation) ComputeGrafanaHost() string {
 	return o.ComputeIngressHost(common.GrafanaUsersPrefix)
 }
 
@@ -630,9 +597,12 @@ func (o *Operation) ComputeLokiHost() string {
 	return o.ComputeIngressHost(common.LokiPrefix)
 }
 
+// technicalIDPattern addresses the ambiguity that one or two dashes could follow the prefix "shoot" in the technical ID of the shoot.
+var technicalIDPattern = regexp.MustCompile(fmt.Sprintf("^%s-?", v1beta1constants.TechnicalIDPrefix))
+
 // ComputeIngressHost computes the host for a given prefix.
 func (o *Operation) ComputeIngressHost(prefix string) string {
-	shortID := strings.Replace(o.Shoot.GetInfo().Status.TechnicalID, v1beta1constants.TechnicalIDPrefix, "", 1)
+	shortID := technicalIDPattern.ReplaceAllString(o.Shoot.GetInfo().Status.TechnicalID, "")
 	return fmt.Sprintf("%s-%s.%s", prefix, shortID, o.Seed.IngressDomain())
 }
 
@@ -647,14 +617,14 @@ func (o *Operation) ToAdvertisedAddresses() []gardencorev1beta1.ShootAdvertisedA
 	if o.Shoot.ExternalClusterDomain != nil && len(*o.Shoot.ExternalClusterDomain) > 0 {
 		addresses = append(addresses, gardencorev1beta1.ShootAdvertisedAddress{
 			Name: "external",
-			URL:  "https://" + gutil.GetAPIServerDomain(*o.Shoot.ExternalClusterDomain),
+			URL:  "https://" + gardenerutils.GetAPIServerDomain(*o.Shoot.ExternalClusterDomain),
 		})
 	}
 
 	if len(o.Shoot.InternalClusterDomain) > 0 {
 		addresses = append(addresses, gardencorev1beta1.ShootAdvertisedAddress{
 			Name: "internal",
-			URL:  "https://" + gutil.GetAPIServerDomain(o.Shoot.InternalClusterDomain),
+			URL:  "https://" + gardenerutils.GetAPIServerDomain(o.Shoot.InternalClusterDomain),
 		})
 	}
 

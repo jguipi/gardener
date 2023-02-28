@@ -19,11 +19,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	versionutils "github.com/gardener/gardener/pkg/utils/version"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/pointer"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	versionutils "github.com/gardener/gardener/pkg/utils/version"
 )
 
 // GetWarnings returns warnings for the provided shoot.
@@ -50,6 +50,10 @@ func GetWarnings(_ context.Context, shoot, oldShoot *core.Shoot, credentialsRota
 				warnings = append(warnings, warning)
 			}
 		}
+	}
+
+	if kubeControllerManager := shoot.Spec.Kubernetes.KubeControllerManager; kubeControllerManager != nil && kubeControllerManager.PodEvictionTimeout != nil {
+		warnings = append(warnings, "you are setting the spec.kubernetes.kubeControllerManager.podEvictionTimeout field. The field does not have effect since Kubernetes 1.13. Instead, use the spec.kubernetes.kubeAPIServer.(defaultNotReadyTolerationSeconds/defaultUnreachableTolerationSeconds) fields.")
 	}
 
 	return warnings
@@ -111,13 +115,13 @@ func getWarningsForIncompleteCredentialsRotation(shoot *core.Shoot, credentialsR
 
 	// Only consider credentials for which completion must be triggered explicitly by the user. Credentials which are
 	// rotated in "one phase" are excluded.
-	if rotation.CertificateAuthorities != nil && completionDue(rotation.CertificateAuthorities.LastInitiationTime, rotation.CertificateAuthorities.LastCompletionTime, recommendedCompletionInterval) {
+	if rotation.CertificateAuthorities != nil && completionDue(rotation.CertificateAuthorities.LastInitiationFinishedTime, rotation.CertificateAuthorities.LastCompletionTriggeredTime, recommendedCompletionInterval) {
 		warnings = append(warnings, completionWarning("certificate authorities", recommendedCompletionInterval))
 	}
-	if rotation.ETCDEncryptionKey != nil && completionDue(rotation.ETCDEncryptionKey.LastInitiationTime, rotation.ETCDEncryptionKey.LastCompletionTime, recommendedCompletionInterval) {
+	if rotation.ETCDEncryptionKey != nil && completionDue(rotation.ETCDEncryptionKey.LastInitiationFinishedTime, rotation.ETCDEncryptionKey.LastCompletionTriggeredTime, recommendedCompletionInterval) {
 		warnings = append(warnings, completionWarning("ETCD encryption key", recommendedCompletionInterval))
 	}
-	if rotation.ServiceAccountKey != nil && completionDue(rotation.ServiceAccountKey.LastInitiationTime, rotation.ServiceAccountKey.LastCompletionTime, recommendedCompletionInterval) {
+	if rotation.ServiceAccountKey != nil && completionDue(rotation.ServiceAccountKey.LastInitiationFinishedTime, rotation.ServiceAccountKey.LastCompletionTriggeredTime, recommendedCompletionInterval) {
 		warnings = append(warnings, completionWarning("ServiceAccount token signing key", recommendedCompletionInterval))
 	}
 
@@ -128,14 +132,14 @@ func initiationDue(lastInitiationTime *metav1.Time, threshold time.Duration) boo
 	return lastInitiationTime == nil || isOldEnough(lastInitiationTime.Time, threshold)
 }
 
-func completionDue(lastInitiationTime, lastCompletionTime *metav1.Time, threshold time.Duration) bool {
-	if lastInitiationTime == nil {
+func completionDue(lastInitiationFinishedTime, lastCompletionTriggeredTime *metav1.Time, threshold time.Duration) bool {
+	if lastInitiationFinishedTime == nil {
 		return false
 	}
-	if lastCompletionTime != nil && lastCompletionTime.Time.UTC().After(lastInitiationTime.Time.UTC()) {
+	if lastCompletionTriggeredTime != nil && lastCompletionTriggeredTime.Time.UTC().After(lastInitiationFinishedTime.Time.UTC()) {
 		return false
 	}
-	return isOldEnough(lastInitiationTime.Time, threshold)
+	return isOldEnough(lastInitiationFinishedTime.Time, threshold)
 }
 
 func isOldEnough(t time.Time, threshold time.Duration) bool {
@@ -143,7 +147,7 @@ func isOldEnough(t time.Time, threshold time.Duration) bool {
 }
 
 func completionWarning(credentials string, recommendedCompletionInterval time.Duration) string {
-	return fmt.Sprintf("the %s rotation was initiated more than %s ago and should be completed", credentials, recommendedCompletionInterval)
+	return fmt.Sprintf("the %s rotation initiation was finished more than %s ago and should be completed", credentials, recommendedCompletionInterval)
 }
 
 func getWarningsForPSPAdmissionPlugin(shoot *core.Shoot) string {

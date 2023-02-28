@@ -15,15 +15,16 @@
 package quota_test
 
 import (
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	gutil "github.com/gardener/gardener/pkg/utils"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	gardenerutils "github.com/gardener/gardener/pkg/utils"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("Quota controller tests", func() {
@@ -39,15 +40,15 @@ var _ = Describe("Quota controller tests", func() {
 
 	BeforeEach(func() {
 		providerType = "provider-type"
-		resourceName = "test-" + gutil.ComputeSHA256Hex([]byte(CurrentSpecReport().LeafNodeLocation.String()))[:8]
+		resourceName = "test-" + gardenerutils.ComputeSHA256Hex([]byte(uuid.NewUUID()))[:8]
 		objectKey = client.ObjectKey{Namespace: testNamespace.Name, Name: resourceName}
 
 		secret = &corev1.Secret{
-			ObjectMeta: kutil.ObjectMetaFromKey(objectKey),
+			ObjectMeta: kubernetesutils.ObjectMetaFromKey(objectKey),
 		}
 
 		quota = &gardencorev1beta1.Quota{
-			ObjectMeta: kutil.ObjectMetaFromKey(objectKey),
+			ObjectMeta: kubernetesutils.ObjectMetaFromKey(objectKey),
 			Spec: gardencorev1beta1.QuotaSpec{
 				Scope: corev1.ObjectReference{
 					APIVersion: "v1",
@@ -57,7 +58,7 @@ var _ = Describe("Quota controller tests", func() {
 		}
 
 		secretBinding = &gardencorev1beta1.SecretBinding{
-			ObjectMeta: kutil.ObjectMetaFromKey(objectKey),
+			ObjectMeta: kubernetesutils.ObjectMetaFromKey(objectKey),
 			Provider: &gardencorev1beta1.SecretBindingProvider{
 				Type: providerType,
 			},

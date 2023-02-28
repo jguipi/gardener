@@ -25,6 +25,7 @@ import (
 	unsafe "unsafe"
 
 	config "github.com/gardener/gardener/pkg/resourcemanager/apis/config"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	conversion "k8s.io/apimachinery/pkg/conversion"
 	runtime "k8s.io/apimachinery/pkg/runtime"
@@ -119,6 +120,26 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.AddGeneratedConversionFunc((*NetworkPolicyControllerConfig)(nil), (*config.NetworkPolicyControllerConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_NetworkPolicyControllerConfig_To_config_NetworkPolicyControllerConfig(a.(*NetworkPolicyControllerConfig), b.(*config.NetworkPolicyControllerConfig), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*config.NetworkPolicyControllerConfig)(nil), (*NetworkPolicyControllerConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_config_NetworkPolicyControllerConfig_To_v1alpha1_NetworkPolicyControllerConfig(a.(*config.NetworkPolicyControllerConfig), b.(*NetworkPolicyControllerConfig), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*NodeControllerConfig)(nil), (*config.NodeControllerConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_NodeControllerConfig_To_config_NodeControllerConfig(a.(*NodeControllerConfig), b.(*config.NodeControllerConfig), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*config.NodeControllerConfig)(nil), (*NodeControllerConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_config_NodeControllerConfig_To_v1alpha1_NodeControllerConfig(a.(*config.NodeControllerConfig), b.(*NodeControllerConfig), scope)
+	}); err != nil {
+		return err
+	}
 	if err := s.AddGeneratedConversionFunc((*PodSchedulerNameWebhookConfig)(nil), (*config.PodSchedulerNameWebhookConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1alpha1_PodSchedulerNameWebhookConfig_To_config_PodSchedulerNameWebhookConfig(a.(*PodSchedulerNameWebhookConfig), b.(*config.PodSchedulerNameWebhookConfig), scope)
 	}); err != nil {
@@ -179,16 +200,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.AddGeneratedConversionFunc((*RootCAPublisherControllerConfig)(nil), (*config.RootCAPublisherControllerConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1alpha1_RootCAPublisherControllerConfig_To_config_RootCAPublisherControllerConfig(a.(*RootCAPublisherControllerConfig), b.(*config.RootCAPublisherControllerConfig), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*config.RootCAPublisherControllerConfig)(nil), (*RootCAPublisherControllerConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_config_RootCAPublisherControllerConfig_To_v1alpha1_RootCAPublisherControllerConfig(a.(*config.RootCAPublisherControllerConfig), b.(*RootCAPublisherControllerConfig), scope)
-	}); err != nil {
-		return err
-	}
 	if err := s.AddGeneratedConversionFunc((*SeccompProfileWebhookConfig)(nil), (*config.SeccompProfileWebhookConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1alpha1_SeccompProfileWebhookConfig_To_config_SeccompProfileWebhookConfig(a.(*SeccompProfileWebhookConfig), b.(*config.SeccompProfileWebhookConfig), scope)
 	}); err != nil {
@@ -236,6 +247,16 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}
 	if err := s.AddGeneratedConversionFunc((*config.SourceClientConnection)(nil), (*SourceClientConnection)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_config_SourceClientConnection_To_v1alpha1_SourceClientConnection(a.(*config.SourceClientConnection), b.(*SourceClientConnection), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*SystemComponentsConfigWebhookConfig)(nil), (*config.SystemComponentsConfigWebhookConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_SystemComponentsConfigWebhookConfig_To_config_SystemComponentsConfigWebhookConfig(a.(*SystemComponentsConfigWebhookConfig), b.(*config.SystemComponentsConfigWebhookConfig), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddGeneratedConversionFunc((*config.SystemComponentsConfigWebhookConfig)(nil), (*SystemComponentsConfigWebhookConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_config_SystemComponentsConfigWebhookConfig_To_v1alpha1_SystemComponentsConfigWebhookConfig(a.(*config.SystemComponentsConfigWebhookConfig), b.(*SystemComponentsConfigWebhookConfig), scope)
 	}); err != nil {
 		return err
 	}
@@ -474,6 +495,54 @@ func Convert_config_ManagedResourceControllerConfig_To_v1alpha1_ManagedResourceC
 	return autoConvert_config_ManagedResourceControllerConfig_To_v1alpha1_ManagedResourceControllerConfig(in, out, s)
 }
 
+func autoConvert_v1alpha1_NetworkPolicyControllerConfig_To_config_NetworkPolicyControllerConfig(in *NetworkPolicyControllerConfig, out *config.NetworkPolicyControllerConfig, s conversion.Scope) error {
+	out.Enabled = in.Enabled
+	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
+	out.NamespaceSelectors = *(*[]v1.LabelSelector)(unsafe.Pointer(&in.NamespaceSelectors))
+	return nil
+}
+
+// Convert_v1alpha1_NetworkPolicyControllerConfig_To_config_NetworkPolicyControllerConfig is an autogenerated conversion function.
+func Convert_v1alpha1_NetworkPolicyControllerConfig_To_config_NetworkPolicyControllerConfig(in *NetworkPolicyControllerConfig, out *config.NetworkPolicyControllerConfig, s conversion.Scope) error {
+	return autoConvert_v1alpha1_NetworkPolicyControllerConfig_To_config_NetworkPolicyControllerConfig(in, out, s)
+}
+
+func autoConvert_config_NetworkPolicyControllerConfig_To_v1alpha1_NetworkPolicyControllerConfig(in *config.NetworkPolicyControllerConfig, out *NetworkPolicyControllerConfig, s conversion.Scope) error {
+	out.Enabled = in.Enabled
+	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
+	out.NamespaceSelectors = *(*[]v1.LabelSelector)(unsafe.Pointer(&in.NamespaceSelectors))
+	return nil
+}
+
+// Convert_config_NetworkPolicyControllerConfig_To_v1alpha1_NetworkPolicyControllerConfig is an autogenerated conversion function.
+func Convert_config_NetworkPolicyControllerConfig_To_v1alpha1_NetworkPolicyControllerConfig(in *config.NetworkPolicyControllerConfig, out *NetworkPolicyControllerConfig, s conversion.Scope) error {
+	return autoConvert_config_NetworkPolicyControllerConfig_To_v1alpha1_NetworkPolicyControllerConfig(in, out, s)
+}
+
+func autoConvert_v1alpha1_NodeControllerConfig_To_config_NodeControllerConfig(in *NodeControllerConfig, out *config.NodeControllerConfig, s conversion.Scope) error {
+	out.Enabled = in.Enabled
+	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
+	out.Backoff = (*v1.Duration)(unsafe.Pointer(in.Backoff))
+	return nil
+}
+
+// Convert_v1alpha1_NodeControllerConfig_To_config_NodeControllerConfig is an autogenerated conversion function.
+func Convert_v1alpha1_NodeControllerConfig_To_config_NodeControllerConfig(in *NodeControllerConfig, out *config.NodeControllerConfig, s conversion.Scope) error {
+	return autoConvert_v1alpha1_NodeControllerConfig_To_config_NodeControllerConfig(in, out, s)
+}
+
+func autoConvert_config_NodeControllerConfig_To_v1alpha1_NodeControllerConfig(in *config.NodeControllerConfig, out *NodeControllerConfig, s conversion.Scope) error {
+	out.Enabled = in.Enabled
+	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
+	out.Backoff = (*v1.Duration)(unsafe.Pointer(in.Backoff))
+	return nil
+}
+
+// Convert_config_NodeControllerConfig_To_v1alpha1_NodeControllerConfig is an autogenerated conversion function.
+func Convert_config_NodeControllerConfig_To_v1alpha1_NodeControllerConfig(in *config.NodeControllerConfig, out *NodeControllerConfig, s conversion.Scope) error {
+	return autoConvert_config_NodeControllerConfig_To_v1alpha1_NodeControllerConfig(in, out, s)
+}
+
 func autoConvert_v1alpha1_PodSchedulerNameWebhookConfig_To_config_PodSchedulerNameWebhookConfig(in *PodSchedulerNameWebhookConfig, out *config.PodSchedulerNameWebhookConfig, s conversion.Scope) error {
 	out.Enabled = in.Enabled
 	out.SchedulerName = (*string)(unsafe.Pointer(in.SchedulerName))
@@ -629,19 +698,22 @@ func Convert_config_ResourceManagerConfiguration_To_v1alpha1_ResourceManagerConf
 func autoConvert_v1alpha1_ResourceManagerControllerConfiguration_To_config_ResourceManagerControllerConfiguration(in *ResourceManagerControllerConfiguration, out *config.ResourceManagerControllerConfiguration, s conversion.Scope) error {
 	out.ClusterID = (*string)(unsafe.Pointer(in.ClusterID))
 	out.ResourceClass = (*string)(unsafe.Pointer(in.ResourceClass))
-	if err := Convert_v1alpha1_KubeletCSRApproverControllerConfig_To_config_KubeletCSRApproverControllerConfig(&in.KubeletCSRApprover, &out.KubeletCSRApprover, s); err != nil {
-		return err
-	}
 	if err := Convert_v1alpha1_GarbageCollectorControllerConfig_To_config_GarbageCollectorControllerConfig(&in.GarbageCollector, &out.GarbageCollector, s); err != nil {
 		return err
 	}
 	if err := Convert_v1alpha1_HealthControllerConfig_To_config_HealthControllerConfig(&in.Health, &out.Health, s); err != nil {
 		return err
 	}
+	if err := Convert_v1alpha1_KubeletCSRApproverControllerConfig_To_config_KubeletCSRApproverControllerConfig(&in.KubeletCSRApprover, &out.KubeletCSRApprover, s); err != nil {
+		return err
+	}
 	if err := Convert_v1alpha1_ManagedResourceControllerConfig_To_config_ManagedResourceControllerConfig(&in.ManagedResource, &out.ManagedResource, s); err != nil {
 		return err
 	}
-	if err := Convert_v1alpha1_RootCAPublisherControllerConfig_To_config_RootCAPublisherControllerConfig(&in.RootCAPublisher, &out.RootCAPublisher, s); err != nil {
+	if err := Convert_v1alpha1_NetworkPolicyControllerConfig_To_config_NetworkPolicyControllerConfig(&in.NetworkPolicy, &out.NetworkPolicy, s); err != nil {
+		return err
+	}
+	if err := Convert_v1alpha1_NodeControllerConfig_To_config_NodeControllerConfig(&in.Node, &out.Node, s); err != nil {
 		return err
 	}
 	if err := Convert_v1alpha1_SecretControllerConfig_To_config_SecretControllerConfig(&in.Secret, &out.Secret, s); err != nil {
@@ -664,19 +736,22 @@ func Convert_v1alpha1_ResourceManagerControllerConfiguration_To_config_ResourceM
 func autoConvert_config_ResourceManagerControllerConfiguration_To_v1alpha1_ResourceManagerControllerConfiguration(in *config.ResourceManagerControllerConfiguration, out *ResourceManagerControllerConfiguration, s conversion.Scope) error {
 	out.ClusterID = (*string)(unsafe.Pointer(in.ClusterID))
 	out.ResourceClass = (*string)(unsafe.Pointer(in.ResourceClass))
-	if err := Convert_config_KubeletCSRApproverControllerConfig_To_v1alpha1_KubeletCSRApproverControllerConfig(&in.KubeletCSRApprover, &out.KubeletCSRApprover, s); err != nil {
-		return err
-	}
 	if err := Convert_config_GarbageCollectorControllerConfig_To_v1alpha1_GarbageCollectorControllerConfig(&in.GarbageCollector, &out.GarbageCollector, s); err != nil {
 		return err
 	}
 	if err := Convert_config_HealthControllerConfig_To_v1alpha1_HealthControllerConfig(&in.Health, &out.Health, s); err != nil {
 		return err
 	}
+	if err := Convert_config_KubeletCSRApproverControllerConfig_To_v1alpha1_KubeletCSRApproverControllerConfig(&in.KubeletCSRApprover, &out.KubeletCSRApprover, s); err != nil {
+		return err
+	}
 	if err := Convert_config_ManagedResourceControllerConfig_To_v1alpha1_ManagedResourceControllerConfig(&in.ManagedResource, &out.ManagedResource, s); err != nil {
 		return err
 	}
-	if err := Convert_config_RootCAPublisherControllerConfig_To_v1alpha1_RootCAPublisherControllerConfig(&in.RootCAPublisher, &out.RootCAPublisher, s); err != nil {
+	if err := Convert_config_NetworkPolicyControllerConfig_To_v1alpha1_NetworkPolicyControllerConfig(&in.NetworkPolicy, &out.NetworkPolicy, s); err != nil {
+		return err
+	}
+	if err := Convert_config_NodeControllerConfig_To_v1alpha1_NodeControllerConfig(&in.Node, &out.Node, s); err != nil {
 		return err
 	}
 	if err := Convert_config_SecretControllerConfig_To_v1alpha1_SecretControllerConfig(&in.Secret, &out.Secret, s); err != nil {
@@ -704,6 +779,9 @@ func autoConvert_v1alpha1_ResourceManagerWebhookConfiguration_To_config_Resource
 		return err
 	}
 	if err := Convert_v1alpha1_HighAvailabilityConfigWebhookConfig_To_config_HighAvailabilityConfigWebhookConfig(&in.HighAvailabilityConfig, &out.HighAvailabilityConfig, s); err != nil {
+		return err
+	}
+	if err := Convert_v1alpha1_SystemComponentsConfigWebhookConfig_To_config_SystemComponentsConfigWebhookConfig(&in.SystemComponentsConfig, &out.SystemComponentsConfig, s); err != nil {
 		return err
 	}
 	if err := Convert_v1alpha1_PodSchedulerNameWebhookConfig_To_config_PodSchedulerNameWebhookConfig(&in.PodSchedulerName, &out.PodSchedulerName, s); err != nil {
@@ -751,6 +829,9 @@ func autoConvert_config_ResourceManagerWebhookConfiguration_To_v1alpha1_Resource
 	if err := Convert_config_SeccompProfileWebhookConfig_To_v1alpha1_SeccompProfileWebhookConfig(&in.SeccompProfile, &out.SeccompProfile, s); err != nil {
 		return err
 	}
+	if err := Convert_config_SystemComponentsConfigWebhookConfig_To_v1alpha1_SystemComponentsConfigWebhookConfig(&in.SystemComponentsConfig, &out.SystemComponentsConfig, s); err != nil {
+		return err
+	}
 	if err := Convert_config_TokenInvalidatorWebhookConfig_To_v1alpha1_TokenInvalidatorWebhookConfig(&in.TokenInvalidator, &out.TokenInvalidator, s); err != nil {
 		return err
 	}
@@ -760,30 +841,6 @@ func autoConvert_config_ResourceManagerWebhookConfiguration_To_v1alpha1_Resource
 // Convert_config_ResourceManagerWebhookConfiguration_To_v1alpha1_ResourceManagerWebhookConfiguration is an autogenerated conversion function.
 func Convert_config_ResourceManagerWebhookConfiguration_To_v1alpha1_ResourceManagerWebhookConfiguration(in *config.ResourceManagerWebhookConfiguration, out *ResourceManagerWebhookConfiguration, s conversion.Scope) error {
 	return autoConvert_config_ResourceManagerWebhookConfiguration_To_v1alpha1_ResourceManagerWebhookConfiguration(in, out, s)
-}
-
-func autoConvert_v1alpha1_RootCAPublisherControllerConfig_To_config_RootCAPublisherControllerConfig(in *RootCAPublisherControllerConfig, out *config.RootCAPublisherControllerConfig, s conversion.Scope) error {
-	out.Enabled = in.Enabled
-	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
-	out.RootCAFile = (*string)(unsafe.Pointer(in.RootCAFile))
-	return nil
-}
-
-// Convert_v1alpha1_RootCAPublisherControllerConfig_To_config_RootCAPublisherControllerConfig is an autogenerated conversion function.
-func Convert_v1alpha1_RootCAPublisherControllerConfig_To_config_RootCAPublisherControllerConfig(in *RootCAPublisherControllerConfig, out *config.RootCAPublisherControllerConfig, s conversion.Scope) error {
-	return autoConvert_v1alpha1_RootCAPublisherControllerConfig_To_config_RootCAPublisherControllerConfig(in, out, s)
-}
-
-func autoConvert_config_RootCAPublisherControllerConfig_To_v1alpha1_RootCAPublisherControllerConfig(in *config.RootCAPublisherControllerConfig, out *RootCAPublisherControllerConfig, s conversion.Scope) error {
-	out.Enabled = in.Enabled
-	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
-	out.RootCAFile = (*string)(unsafe.Pointer(in.RootCAFile))
-	return nil
-}
-
-// Convert_config_RootCAPublisherControllerConfig_To_v1alpha1_RootCAPublisherControllerConfig is an autogenerated conversion function.
-func Convert_config_RootCAPublisherControllerConfig_To_v1alpha1_RootCAPublisherControllerConfig(in *config.RootCAPublisherControllerConfig, out *RootCAPublisherControllerConfig, s conversion.Scope) error {
-	return autoConvert_config_RootCAPublisherControllerConfig_To_v1alpha1_RootCAPublisherControllerConfig(in, out, s)
 }
 
 func autoConvert_v1alpha1_SeccompProfileWebhookConfig_To_config_SeccompProfileWebhookConfig(in *SeccompProfileWebhookConfig, out *config.SeccompProfileWebhookConfig, s conversion.Scope) error {
@@ -902,6 +959,32 @@ func autoConvert_config_SourceClientConnection_To_v1alpha1_SourceClientConnectio
 // Convert_config_SourceClientConnection_To_v1alpha1_SourceClientConnection is an autogenerated conversion function.
 func Convert_config_SourceClientConnection_To_v1alpha1_SourceClientConnection(in *config.SourceClientConnection, out *SourceClientConnection, s conversion.Scope) error {
 	return autoConvert_config_SourceClientConnection_To_v1alpha1_SourceClientConnection(in, out, s)
+}
+
+func autoConvert_v1alpha1_SystemComponentsConfigWebhookConfig_To_config_SystemComponentsConfigWebhookConfig(in *SystemComponentsConfigWebhookConfig, out *config.SystemComponentsConfigWebhookConfig, s conversion.Scope) error {
+	out.Enabled = in.Enabled
+	out.NodeSelector = *(*map[string]string)(unsafe.Pointer(&in.NodeSelector))
+	out.PodNodeSelector = *(*map[string]string)(unsafe.Pointer(&in.PodNodeSelector))
+	out.PodTolerations = *(*[]corev1.Toleration)(unsafe.Pointer(&in.PodTolerations))
+	return nil
+}
+
+// Convert_v1alpha1_SystemComponentsConfigWebhookConfig_To_config_SystemComponentsConfigWebhookConfig is an autogenerated conversion function.
+func Convert_v1alpha1_SystemComponentsConfigWebhookConfig_To_config_SystemComponentsConfigWebhookConfig(in *SystemComponentsConfigWebhookConfig, out *config.SystemComponentsConfigWebhookConfig, s conversion.Scope) error {
+	return autoConvert_v1alpha1_SystemComponentsConfigWebhookConfig_To_config_SystemComponentsConfigWebhookConfig(in, out, s)
+}
+
+func autoConvert_config_SystemComponentsConfigWebhookConfig_To_v1alpha1_SystemComponentsConfigWebhookConfig(in *config.SystemComponentsConfigWebhookConfig, out *SystemComponentsConfigWebhookConfig, s conversion.Scope) error {
+	out.Enabled = in.Enabled
+	out.NodeSelector = *(*map[string]string)(unsafe.Pointer(&in.NodeSelector))
+	out.PodNodeSelector = *(*map[string]string)(unsafe.Pointer(&in.PodNodeSelector))
+	out.PodTolerations = *(*[]corev1.Toleration)(unsafe.Pointer(&in.PodTolerations))
+	return nil
+}
+
+// Convert_config_SystemComponentsConfigWebhookConfig_To_v1alpha1_SystemComponentsConfigWebhookConfig is an autogenerated conversion function.
+func Convert_config_SystemComponentsConfigWebhookConfig_To_v1alpha1_SystemComponentsConfigWebhookConfig(in *config.SystemComponentsConfigWebhookConfig, out *SystemComponentsConfigWebhookConfig, s conversion.Scope) error {
+	return autoConvert_config_SystemComponentsConfigWebhookConfig_To_v1alpha1_SystemComponentsConfigWebhookConfig(in, out, s)
 }
 
 func autoConvert_v1alpha1_TLSServer_To_config_TLSServer(in *TLSServer, out *config.TLSServer, s conversion.Scope) error {

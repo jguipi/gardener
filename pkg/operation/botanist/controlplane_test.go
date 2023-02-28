@@ -18,18 +18,17 @@ import (
 	"context"
 	"fmt"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
+	"github.com/golang/mock/gomock"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/runtime"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	"github.com/gardener/gardener/pkg/operation"
 	mockcontrolplane "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/controlplane/mock"
 	mockdnsrecord "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/dnsrecord/mock"
 	mockinfrastructure "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/infrastructure/mock"
 	"github.com/gardener/gardener/pkg/operation/shoot"
-
-	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/runtime"
 )
 
 var _ = Describe("controlplane", func() {
@@ -99,7 +98,7 @@ var _ = Describe("controlplane", func() {
 		})
 
 		Context("restore", func() {
-			var shootState = &gardencorev1alpha1.ShootState{}
+			var shootState = &gardencorev1beta1.ShootState{}
 
 			BeforeEach(func() {
 				botanist.SetShootState(shootState)
@@ -138,7 +137,7 @@ var _ = Describe("controlplane", func() {
 		})
 
 		Context("restore", func() {
-			var shootState = &gardencorev1alpha1.ShootState{}
+			var shootState = &gardencorev1beta1.ShootState{}
 
 			BeforeEach(func() {
 				botanist.SetShootState(shootState)

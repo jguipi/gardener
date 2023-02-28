@@ -18,16 +18,6 @@ import (
 	"context"
 	"fmt"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap"
-	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap/internal"
-	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap/keys"
-	fakeclientset "github.com/gardener/gardener/pkg/client/kubernetes/fake"
-	. "github.com/gardener/gardener/pkg/client/kubernetes/test"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
@@ -38,9 +28,19 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientcmdlatest "k8s.io/client-go/tools/clientcmd/api/latest"
 	clientcmdv1 "k8s.io/client-go/tools/clientcmd/api/v1"
-	baseconfig "k8s.io/component-base/config"
+	componentbaseconfig "k8s.io/component-base/config"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap"
+	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap/internal"
+	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap/keys"
+	kubernetesfake "github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	. "github.com/gardener/gardener/pkg/client/kubernetes/test"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 var _ = Describe("ShootClientMap", func() {
@@ -53,7 +53,7 @@ var _ = Describe("ShootClientMap", func() {
 		cm                     clientmap.ClientMap
 		key                    clientmap.ClientSetKey
 		factory                *internal.ShootClientSetFactory
-		clientConnectionConfig baseconfig.ClientConnectionConfiguration
+		clientConnectionConfig componentbaseconfig.ClientConnectionConfiguration
 		clientOptions          client.Options
 
 		shoot *gardencorev1beta1.Shoot
@@ -94,7 +94,7 @@ var _ = Describe("ShootClientMap", func() {
 
 		key = keys.ForShoot(shoot)
 
-		clientConnectionConfig = baseconfig.ClientConnectionConfiguration{
+		clientConnectionConfig = componentbaseconfig.ClientConnectionConfiguration{
 			Kubeconfig:         "/var/run/secrets/kubeconfig",
 			AcceptContentTypes: "application/vnd.kubernetes.protobuf;application/json",
 			ContentType:        "application/vnd.kubernetes.protobuf",
@@ -228,7 +228,7 @@ var _ = Describe("ShootClientMap", func() {
 		})
 
 		It("should fail constructing a new ClientSet (in-cluster) because token is not populated", func() {
-			fakeCS := fakeclientset.NewClientSet()
+			fakeCS := kubernetesfake.NewClientSet()
 
 			gomock.InOrder(
 				mockGardenClient.EXPECT().Get(ctx, client.ObjectKey{Namespace: shoot.Namespace, Name: shoot.Name}, gomock.AssignableToTypeOf(&gardencorev1beta1.Shoot{})).
@@ -259,7 +259,7 @@ var _ = Describe("ShootClientMap", func() {
 		})
 
 		It("should correctly construct a new ClientSet (in-cluster)", func() {
-			fakeCS := fakeclientset.NewClientSet()
+			fakeCS := kubernetesfake.NewClientSet()
 			changedTechnicalID := "foo"
 			gomock.InOrder(
 				mockGardenClient.EXPECT().Get(ctx, client.ObjectKey{Namespace: shoot.Namespace, Name: shoot.Name}, gomock.AssignableToTypeOf(&gardencorev1beta1.Shoot{})).
@@ -398,7 +398,7 @@ var _ = Describe("ShootClientMap", func() {
 })
 
 func dataWithPopulatedToken() map[string][]byte {
-	kubeconfigRaw, err := runtime.Encode(clientcmdlatest.Codec, kutil.NewKubeconfig(
+	kubeconfigRaw, err := runtime.Encode(clientcmdlatest.Codec, kubernetesutils.NewKubeconfig(
 		"context",
 		clientcmdv1.Cluster{Server: "server", CertificateAuthorityData: []byte("cacert")},
 		clientcmdv1.AuthInfo{Token: "some-token"},

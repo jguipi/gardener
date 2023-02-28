@@ -15,12 +15,12 @@
 package validation
 
 import (
-	"github.com/gardener/gardener/pkg/controllermanager/apis/config"
-	"github.com/gardener/gardener/pkg/logger"
-
 	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+
+	"github.com/gardener/gardener/pkg/controllermanager/apis/config"
+	"github.com/gardener/gardener/pkg/logger"
 )
 
 // ValidateControllerManagerConfiguration validates the given `ControllerManagerConfiguration`.
@@ -28,13 +28,13 @@ func ValidateControllerManagerConfiguration(conf *config.ControllerManagerConfig
 	allErrs := field.ErrorList{}
 
 	if conf.LogLevel != "" {
-		if !sets.NewString(logger.AllLogLevels...).Has(conf.LogLevel) {
+		if !sets.New[string](logger.AllLogLevels...).Has(conf.LogLevel) {
 			allErrs = append(allErrs, field.NotSupported(field.NewPath("logLevel"), conf.LogLevel, logger.AllLogLevels))
 		}
 	}
 
 	if conf.LogFormat != "" {
-		if !sets.NewString(logger.AllLogFormats...).Has(conf.LogFormat) {
+		if !sets.New[string](logger.AllLogFormats...).Has(conf.LogFormat) {
 			allErrs = append(allErrs, field.NotSupported(field.NewPath("logFormat"), conf.LogFormat, logger.AllLogFormats))
 		}
 	}
@@ -174,7 +174,7 @@ func validateProjectControllerConfiguration(conf *config.ProjectControllerConfig
 func validateProjectQuotaConfiguration(conf config.QuotaConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	allErrs = append(allErrs, metav1validation.ValidateLabelSelector(conf.ProjectSelector, fldPath.Child("projectSelector"))...)
+	allErrs = append(allErrs, metav1validation.ValidateLabelSelector(conf.ProjectSelector, metav1validation.LabelSelectorValidationOptions{AllowInvalidLabelValueInSelector: true}, fldPath.Child("projectSelector"))...)
 
 	if conf.Config == nil {
 		allErrs = append(allErrs, field.Required(fldPath.Child("config"), "must provide a quota config"))

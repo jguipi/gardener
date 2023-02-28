@@ -18,17 +18,17 @@ import (
 	"strings"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/pkg/utils/timewindow"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/timewindow"
 )
 
 var _ = Describe("Shoot Maintenance controller tests", func() {
@@ -67,6 +67,8 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 	)
 
 	BeforeEach(func() {
+		fakeClock.SetTime(time.Now().Round(time.Second))
+
 		cloudProfile = &gardencorev1beta1.CloudProfile{
 			ObjectMeta: metav1.ObjectMeta{
 				GenerateName: testID + "-",
@@ -199,12 +201,12 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 	})
 
 	It("should add task annotations", func() {
-		By("trigger maintenance")
-		Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+		By("Trigger maintenance")
+		Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 		waitForShootToBeMaintained(shoot)
 
-		By("ensuring task annotations are present")
+		By("Ensure task annotations are present")
 		Expect(shoot.Annotations).To(HaveKey("shoot.gardener.cloud/tasks"))
 		Expect(strings.Split(shoot.Annotations["shoot.gardener.cloud/tasks"], ",")).To(And(
 			ContainElement("deployInfrastructure"),
@@ -223,36 +225,36 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 
 		Context("failed last operation state", func() {
 			BeforeEach(func() {
-				By("prepare shoot")
+				By("Prepare shoot")
 				patch := client.MergeFrom(shoot.DeepCopy())
 				shoot.Status.LastOperation = &gardencorev1beta1.LastOperation{State: gardencorev1beta1.LastOperationStateFailed}
 				Expect(testClient.Status().Patch(ctx, shoot, patch)).To(Succeed())
 			})
 
 			It("should not set the retry operation annotation due to missing 'needs-retry-operation' annotation", func() {
-				By("trigger maintenance")
-				Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+				By("Trigger maintenance")
+				Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 				waitForShootToBeMaintained(shoot)
 
-				By("ensuring proper operation annotation handling")
+				By("Ensure proper operation annotation handling")
 				Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
 				Expect(shoot.Generation).To(Equal(oldGeneration))
 				Expect(shoot.Annotations["gardener.cloud/operation"]).To(BeEmpty())
 			})
 
 			It("should set the retry operation annotation due to 'needs-retry-operation' annotation (implicitly increasing the generation)", func() {
-				By("prepare shoot")
+				By("Prepare shoot")
 				patch := client.MergeFrom(shoot.DeepCopy())
 				metav1.SetMetaDataAnnotation(&shoot.ObjectMeta, "maintenance.shoot.gardener.cloud/needs-retry-operation", "true")
 				Expect(testClient.Patch(ctx, shoot, patch)).To(Succeed())
 
-				By("trigger maintenance")
-				Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+				By("Trigger maintenance")
+				Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 				waitForShootToBeMaintained(shoot)
 
-				By("ensuring proper operation annotation handling")
+				By("Ensure proper operation annotation handling")
 				Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
 				Expect(shoot.Generation).To(Equal(oldGeneration + 1))
 				Expect(shoot.Annotations["gardener.cloud/operation"]).To(BeEmpty())
@@ -262,36 +264,36 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 
 		Context("non-failed last operation states", func() {
 			BeforeEach(func() {
-				By("prepare shoot")
+				By("Prepare shoot")
 				patch := client.MergeFrom(shoot.DeepCopy())
 				shoot.Status.LastOperation = &gardencorev1beta1.LastOperation{}
 				Expect(testClient.Status().Patch(ctx, shoot, patch)).To(Succeed())
 			})
 
 			It("should set the reconcile operation annotation (implicitly increasing the generation)", func() {
-				By("trigger maintenance")
-				Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+				By("Trigger maintenance")
+				Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 				waitForShootToBeMaintained(shoot)
 
-				By("ensuring proper operation annotation handling")
+				By("Ensure proper operation annotation handling")
 				Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
 				Expect(shoot.Generation).To(Equal(oldGeneration + 1))
 				Expect(shoot.Annotations["gardener.cloud/operation"]).To(BeEmpty())
 			})
 
 			It("should set the maintenance operation annotation if it's valid", func() {
-				By("prepare shoot")
+				By("Prepare shoot")
 				patch := client.MergeFrom(shoot.DeepCopy())
 				metav1.SetMetaDataAnnotation(&shoot.ObjectMeta, "maintenance.gardener.cloud/operation", "rotate-kubeconfig-credentials")
 				Expect(testClient.Patch(ctx, shoot, patch)).To(Succeed())
 
-				By("trigger maintenance")
-				Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+				By("Trigger maintenance")
+				Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 				waitForShootToBeMaintained(shoot)
 
-				By("ensuring proper operation annotation handling")
+				By("Ensure proper operation annotation handling")
 				Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
 				Expect(shoot.Generation).To(Equal(oldGeneration + 1))
 				Expect(shoot.Annotations["gardener.cloud/operation"]).To(Equal("rotate-kubeconfig-credentials"))
@@ -299,18 +301,18 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 			})
 
 			It("should not set the maintenance operation annotation if it's invalid and use the reconcile operation instead", func() {
-				By("prepare shoot")
+				By("Prepare shoot")
 				patch := client.MergeFrom(shoot.DeepCopy())
 				metav1.SetMetaDataAnnotation(&shoot.ObjectMeta, "maintenance.gardener.cloud/operation", "foo-bar-does-not-exist")
 				err := testClient.Patch(ctx, shoot, patch)
 				Expect(apierrors.IsInvalid(err)).To(Equal(true))
 
-				By("trigger maintenance")
-				Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+				By("Trigger maintenance")
+				Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 				waitForShootToBeMaintained(shoot)
 
-				By("ensuring proper operation annotation handling")
+				By("Ensure proper operation annotation handling")
 				Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
 				Expect(shoot.Generation).To(Equal(oldGeneration + 1))
 				Expect(shoot.Annotations["gardener.cloud/operation"]).To(BeEmpty())
@@ -321,7 +323,7 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 
 	Describe("Machine image maintenance tests", func() {
 		It("Do not update Shoot machine image in maintenance time: AutoUpdate.MachineImageVersion == false && expirationDate does not apply", func() {
-			Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+			Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 			Consistently(func(g Gomega) {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
@@ -336,7 +338,7 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 			shoot.Spec.Maintenance.AutoUpdate.MachineImageVersion = true
 			Expect(testClient.Patch(ctx, shoot, patch)).To(Succeed())
 
-			Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+			Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 			Eventually(func(g Gomega) {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
@@ -359,7 +361,7 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 			By("Wait until manager has observed the CloudProfile update")
 			waitMachineImageVersionToBeExpiredInCloudProfile(shoot.Spec.CloudProfileName, testMachineImage.Name, *testMachineImage.Version, &expirationDateInThePast)
 
-			Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+			Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 			Eventually(func(g Gomega) {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
@@ -378,7 +380,7 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 
 	Describe("Kubernetes version maintenance tests", func() {
 		It("Kubernetes version should not be updated: auto update not enabled", func() {
-			Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+			Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 			Consistently(func(g Gomega) string {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
@@ -392,7 +394,7 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 			shoot.Spec.Maintenance.AutoUpdate.KubernetesVersion = true
 			Expect(testClient.Patch(ctx, shoot, patch)).To(Succeed())
 
-			Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+			Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 			Eventually(func(g Gomega) string {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
@@ -413,7 +415,7 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 			By("Wait until manager has observed the CloudProfile update")
 			waitKubernetesVersionToBeExpiredInCloudProfile(shoot.Spec.CloudProfileName, testKubernetesVersionLowPatchLowMinor.Version, &expirationDateInThePast)
 
-			Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+			Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 			Eventually(func(g Gomega) string {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
@@ -439,7 +441,7 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 			By("Wait until manager has observed the CloudProfile update")
 			waitKubernetesVersionToBeExpiredInCloudProfile(shoot.Spec.CloudProfileName, testKubernetesVersionHighestPatchLowMinor.Version, &expirationDateInThePast)
 
-			Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+			Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 			// expect shoot to have updated to latest patch version of next minor version
 			Eventually(func(g Gomega) string {
@@ -457,7 +459,7 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 
 	Describe("Worker Pool Kubernetes version maintenance tests", func() {
 		It("Kubernetes version should not be updated: auto update not enabled", func() {
-			Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+			Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 			Consistently(func(g Gomega) string {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
@@ -472,7 +474,7 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 			shoot.Spec.Provider.Workers[0].Kubernetes = &gardencorev1beta1.WorkerKubernetes{Version: pointer.String(testKubernetesVersionLowPatchLowMinor.Version)}
 			Expect(testClient.Patch(ctx, shoot, patch)).To(Succeed())
 
-			Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+			Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 			Eventually(func(g Gomega) string {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
@@ -499,7 +501,7 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 			By("Wait until manager has observed the CloudProfile update")
 			waitKubernetesVersionToBeExpiredInCloudProfile(shoot.Spec.CloudProfileName, testKubernetesVersionLowPatchLowMinor.Version, &expirationDateInThePast)
 
-			Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+			Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 			Eventually(func(g Gomega) string {
 				g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(shoot), shoot)).To(Succeed())
@@ -528,7 +530,7 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 			By("Wait until manager has observed the CloudProfile update")
 			waitKubernetesVersionToBeExpiredInCloudProfile(shoot.Spec.CloudProfileName, testKubernetesVersionHighestPatchLowMinor.Version, &expirationDateInThePast)
 
-			Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+			Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 			// expect worker pool to have updated to latest patch version of next minor version
 			Eventually(func(g Gomega) string {
@@ -558,7 +560,7 @@ var _ = Describe("Shoot Maintenance controller tests", func() {
 			By("Wait until manager has observed the CloudProfile update")
 			waitKubernetesVersionToBeExpiredInCloudProfile(shoot.Spec.CloudProfileName, testKubernetesVersionHighestPatchLowMinor.Version, &expirationDateInThePast)
 
-			Expect(kutil.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
+			Expect(kubernetesutils.SetAnnotationAndUpdate(ctx, testClient, shoot, v1beta1constants.GardenerOperation, v1beta1constants.ShootOperationMaintain)).To(Succeed())
 
 			// expect worker pool to have updated to latest patch version of next minor version
 			Eventually(func(g Gomega) string {

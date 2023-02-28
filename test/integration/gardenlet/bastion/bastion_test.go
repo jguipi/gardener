@@ -16,14 +16,7 @@ package bastion_test
 
 import (
 	"fmt"
-
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	operationsv1alpha1 "github.com/gardener/gardener/pkg/apis/operations/v1alpha1"
-	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -34,6 +27,14 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	operationsv1alpha1 "github.com/gardener/gardener/pkg/apis/operations/v1alpha1"
+	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
+	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
 var _ = Describe("Bastion controller tests", func() {
@@ -75,6 +76,8 @@ var _ = Describe("Bastion controller tests", func() {
 	)
 
 	BeforeEach(func() {
+		fakeClock.SetTime(time.Now())
+
 		providerType := "foo-provider"
 
 		seed = &gardencorev1beta1.Seed{
@@ -177,7 +180,7 @@ var _ = Describe("Bastion controller tests", func() {
 		shoot.Status.TechnicalID = technicalID
 		Expect(testClient.Status().Patch(ctx, shoot, patch)).To(Succeed())
 
-		By("creating seed namespace for test")
+		By("Create seed namespace for test")
 		seedNamespace = &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: technicalID,
@@ -188,11 +191,11 @@ var _ = Describe("Bastion controller tests", func() {
 		log.Info("Created shoot namespace in seed for test", "namespaceName", seedNamespace.Name)
 
 		DeferCleanup(func() {
-			By("deleting shoot namespace in seed")
+			By("Delete shoot namespace in seed")
 			Expect(testClient.Delete(ctx, seedNamespace)).To(Or(Succeed(), BeNotFoundError()))
 		})
 
-		By("create Cluster extension resource")
+		By("Create Cluster extension resource")
 		cluster = &extensionsv1alpha1.Cluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: technicalID,
@@ -255,7 +258,7 @@ var _ = Describe("Bastion controller tests", func() {
 			}).Should(BeNotFoundError())
 		})
 
-		By("ensure finalizer is added to Bastion")
+		By("Ensure finalizer is added to Bastion")
 		Eventually(func(g Gomega) {
 			g.Expect(testClient.Get(ctx, client.ObjectKeyFromObject(operationsBastion), operationsBastion)).To(Succeed())
 			g.Expect(operationsBastion.Finalizers).To(ConsistOf("gardener"))

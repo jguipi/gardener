@@ -3,7 +3,12 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ .Release.Namespace }}
+{{- if .Values.ignoreMode }}
+  annotations:
+    resources.gardener.cloud/mode: Ignore
+{{- end }}
   labels:
     istio-operator-managed: Reconcile
     istio-injection: disabled
-{{- end }}
+    gardener.cloud/role: istio-system
+{{ end -}}

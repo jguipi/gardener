@@ -17,133 +17,29 @@ package istio
 import (
 	"fmt"
 
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/coredns"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/nodelocaldns"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnauthzserver"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnshoot"
-
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	kubeapiserverconstants "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/constants"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnauthzserver"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnseedserver"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/vpnshoot"
+	"github.com/gardener/gardener/pkg/utils"
 )
 
 const (
 	istiodAppLabelValue = "istiod"
 )
 
-// IstioNetworkPolicyValues contains deployment parameters for the istio-ingress and istio-system network policies.
-type IstioNetworkPolicyValues struct {
-	// NodeLocalIPVSAddress is the CIDR of the node-local IPVS address.
-	NodeLocalIPVSAddress *string
-	// DNSServerAddress is the CIDR of the usual DNS server address.
-	DNSServerAddress *string
-}
-
 type networkPolicyTransformer struct {
 	name      string
 	transform func(*networkingv1.NetworkPolicy) func() error
 }
 
-func getIstioSystemNetworkPolicyTransformers(values IstioNetworkPolicyValues) []networkPolicyTransformer {
+func getIstioSystemNetworkPolicyTransformers() []networkPolicyTransformer {
 	return []networkPolicyTransformer{
-		{
-			name: "deny-all",
-			transform: func(obj *networkingv1.NetworkPolicy) func() error {
-				return func() error {
-					obj.Annotations = map[string]string{
-						v1beta1constants.GardenerDescription: "Disables all Ingress and Egress traffic into/from this " +
-							"namespace.",
-					}
-					obj.Spec = networkingv1.NetworkPolicySpec{
-						PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress, networkingv1.PolicyTypeIngress},
-					}
-
-					return nil
-				}
-			},
-		},
-		{
-			name: "allow-to-dns",
-			transform: func(obj *networkingv1.NetworkPolicy) func() error {
-				return func() error {
-					obj.Annotations = map[string]string{
-						v1beta1constants.GardenerDescription: fmt.Sprintf("Allows Egress from pods labeled with "+
-							"'%s=%s' to DNS running in '%s'.", v1beta1constants.LabelApp, v1beta1constants.DefaultIngressGatewayAppLabelValue,
-							metav1.NamespaceSystem),
-					}
-					obj.Spec = networkingv1.NetworkPolicySpec{
-						PodSelector: metav1.LabelSelector{
-							MatchLabels: map[string]string{
-								v1beta1constants.LabelApp: istiodAppLabelValue,
-							},
-						},
-						Egress: []networkingv1.NetworkPolicyEgressRule{{
-							To: []networkingv1.NetworkPolicyPeer{
-								{
-									NamespaceSelector: &metav1.LabelSelector{
-										MatchLabels: map[string]string{
-											v1beta1constants.LabelRole: metav1.NamespaceSystem,
-										},
-									},
-									PodSelector: &metav1.LabelSelector{
-										MatchExpressions: []metav1.LabelSelectorRequirement{{
-											Key:      coredns.LabelKey,
-											Operator: metav1.LabelSelectorOpIn,
-											Values:   []string{coredns.LabelValue},
-										}},
-									},
-								},
-								{
-									NamespaceSelector: &metav1.LabelSelector{
-										MatchLabels: map[string]string{
-											v1beta1constants.LabelRole: metav1.NamespaceSystem,
-										},
-									},
-									PodSelector: &metav1.LabelSelector{
-										MatchExpressions: []metav1.LabelSelectorRequirement{{
-											Key:      coredns.LabelKey,
-											Operator: metav1.LabelSelectorOpIn,
-											Values:   []string{nodelocaldns.LabelValue},
-										}},
-									},
-								},
-							},
-							Ports: []networkingv1.NetworkPolicyPort{
-								{Protocol: protocolPtr(corev1.ProtocolUDP), Port: intStrPtr(coredns.PortServiceServer)},
-								{Protocol: protocolPtr(corev1.ProtocolTCP), Port: intStrPtr(coredns.PortServiceServer)},
-								{Protocol: protocolPtr(corev1.ProtocolUDP), Port: intStrPtr(coredns.PortServer)},
-								{Protocol: protocolPtr(corev1.ProtocolTCP), Port: intStrPtr(coredns.PortServer)},
-							},
-						}},
-						PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
-					}
-
-					if values.DNSServerAddress != nil {
-						obj.Spec.Egress[0].To = append(obj.Spec.Egress[0].To, networkingv1.NetworkPolicyPeer{
-							IPBlock: &networkingv1.IPBlock{
-								// required for node local dns feature, allows egress traffic to CoreDNS
-								CIDR: fmt.Sprintf("%s/32", *values.DNSServerAddress),
-							},
-						})
-					}
-
-					if values.NodeLocalIPVSAddress != nil {
-						obj.Spec.Egress[0].To = append(obj.Spec.Egress[0].To, networkingv1.NetworkPolicyPeer{
-							IPBlock: &networkingv1.IPBlock{
-								// required for node local dns feature, allows egress traffic to node local dns cache
-								CIDR: fmt.Sprintf("%s/32", *values.NodeLocalIPVSAddress),
-							},
-						})
-					}
-
-					return nil
-				}
-			},
-		},
 		{
 			name: "allow-to-istiod-webhook-server-port",
 			transform: func(obj *networkingv1.NetworkPolicy) func() error {
@@ -166,7 +62,7 @@ func getIstioSystemNetworkPolicyTransformers(values IstioNetworkPolicyValues) []
 								},
 							},
 							Ports: []networkingv1.NetworkPolicyPort{
-								{Protocol: protocolPtr(corev1.ProtocolTCP), Port: intStrPtr(portWebhookServer)},
+								{Protocol: utils.ProtocolPtr(corev1.ProtocolTCP), Port: utils.IntStrPtrFromInt(portWebhookServer)},
 							},
 						}},
 						PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
@@ -243,8 +139,8 @@ func getIstioSystemNetworkPolicyTransformers(values IstioNetworkPolicyValues) []
 								},
 							}},
 							Ports: []networkingv1.NetworkPolicyPort{{
-								Protocol: protocolPtr(corev1.ProtocolTCP),
-								Port:     intStrPtr(15014),
+								Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+								Port:     utils.IntStrPtrFromInt(15014),
 							}},
 						},
 						},
@@ -287,7 +183,7 @@ func getIstioSystemNetworkPolicyTransformers(values IstioNetworkPolicyValues) []
 	}
 }
 
-func getIstioIngressNetworkPolicyTransformers(values IstioNetworkPolicyValues) []networkPolicyTransformer {
+func getIstioIngressNetworkPolicyTransformers() []networkPolicyTransformer {
 	return []networkPolicyTransformer{
 		{
 			name: "deny-all-egress",
@@ -331,8 +227,8 @@ func getIstioIngressNetworkPolicyTransformers(values IstioNetworkPolicyValues) [
 								NamespaceSelector: &metav1.LabelSelector{},
 							}},
 							Ports: []networkingv1.NetworkPolicyPort{{
-								Protocol: protocolPtr(corev1.ProtocolTCP),
-								Port:     intStrPtr(kubeapiserver.Port),
+								Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+								Port:     utils.IntStrPtrFromInt(kubeapiserverconstants.Port),
 							}},
 						}},
 					}
@@ -340,6 +236,7 @@ func getIstioIngressNetworkPolicyTransformers(values IstioNetworkPolicyValues) [
 				}
 			},
 		},
+		// TODO(rfranzke): Delete this network policy in a future release.
 		{
 			name: "allow-to-shoot-vpn-seed-server",
 			transform: func(obj *networkingv1.NetworkPolicy) func() error {
@@ -367,8 +264,8 @@ func getIstioIngressNetworkPolicyTransformers(values IstioNetworkPolicyValues) [
 								NamespaceSelector: &metav1.LabelSelector{},
 							}},
 							Ports: []networkingv1.NetworkPolicyPort{{
-								Protocol: protocolPtr(corev1.ProtocolTCP),
-								Port:     intStrPtr(vpnseedserver.OpenVPNPort),
+								Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+								Port:     utils.IntStrPtrFromInt(vpnseedserver.OpenVPNPort),
 							}},
 						}},
 					}
@@ -409,8 +306,8 @@ func getIstioIngressNetworkPolicyTransformers(values IstioNetworkPolicyValues) [
 								},
 							}},
 							Ports: []networkingv1.NetworkPolicyPort{{
-								Protocol: protocolPtr(corev1.ProtocolTCP),
-								Port:     intStrPtr(vpnauthzserver.ServerPort),
+								Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+								Port:     utils.IntStrPtrFromInt(vpnauthzserver.ServerPort),
 							}},
 						}},
 					}
@@ -451,8 +348,8 @@ func getIstioIngressNetworkPolicyTransformers(values IstioNetworkPolicyValues) [
 								},
 							}},
 							Ports: []networkingv1.NetworkPolicyPort{{
-								Protocol: protocolPtr(corev1.ProtocolTCP),
-								Port:     intStrPtr(15012),
+								Protocol: utils.ProtocolPtr(corev1.ProtocolTCP),
+								Port:     utils.IntStrPtrFromInt(15012),
 							}},
 						}},
 					}
@@ -460,93 +357,5 @@ func getIstioIngressNetworkPolicyTransformers(values IstioNetworkPolicyValues) [
 				}
 			},
 		},
-		{
-			name: "allow-to-dns",
-			transform: func(obj *networkingv1.NetworkPolicy) func() error {
-				return func() error {
-					obj.Annotations = map[string]string{
-						v1beta1constants.GardenerDescription: fmt.Sprintf("Allows Egress from pods labeled with "+
-							"'%s=%s' to DNS running in '%s'.", v1beta1constants.LabelApp, v1beta1constants.DefaultIngressGatewayAppLabelValue,
-							metav1.NamespaceSystem),
-					}
-					obj.Spec = networkingv1.NetworkPolicySpec{
-						PodSelector: metav1.LabelSelector{
-							MatchLabels: map[string]string{
-								v1beta1constants.LabelApp: v1beta1constants.DefaultIngressGatewayAppLabelValue,
-							},
-						},
-
-						Egress: []networkingv1.NetworkPolicyEgressRule{{
-							To: []networkingv1.NetworkPolicyPeer{
-								{
-									NamespaceSelector: &metav1.LabelSelector{
-										MatchLabels: map[string]string{
-											v1beta1constants.LabelRole: metav1.NamespaceSystem,
-										},
-									},
-									PodSelector: &metav1.LabelSelector{
-										MatchExpressions: []metav1.LabelSelectorRequirement{{
-											Key:      coredns.LabelKey,
-											Operator: metav1.LabelSelectorOpIn,
-											Values:   []string{coredns.LabelValue},
-										}},
-									},
-								},
-								{
-									NamespaceSelector: &metav1.LabelSelector{
-										MatchLabels: map[string]string{
-											v1beta1constants.LabelRole: metav1.NamespaceSystem,
-										},
-									},
-									PodSelector: &metav1.LabelSelector{
-										MatchExpressions: []metav1.LabelSelectorRequirement{{
-											Key:      coredns.LabelKey,
-											Operator: metav1.LabelSelectorOpIn,
-											Values:   []string{nodelocaldns.LabelValue},
-										}},
-									},
-								},
-							},
-							Ports: []networkingv1.NetworkPolicyPort{
-								{Protocol: protocolPtr(corev1.ProtocolUDP), Port: intStrPtr(coredns.PortServiceServer)},
-								{Protocol: protocolPtr(corev1.ProtocolTCP), Port: intStrPtr(coredns.PortServiceServer)},
-								{Protocol: protocolPtr(corev1.ProtocolUDP), Port: intStrPtr(coredns.PortServer)},
-								{Protocol: protocolPtr(corev1.ProtocolTCP), Port: intStrPtr(coredns.PortServer)},
-							},
-						}},
-						PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
-					}
-
-					if values.DNSServerAddress != nil {
-						obj.Spec.Egress[0].To = append(obj.Spec.Egress[0].To, networkingv1.NetworkPolicyPeer{
-							IPBlock: &networkingv1.IPBlock{
-								// required for node local dns feature, allows egress traffic to CoreDNS
-								CIDR: fmt.Sprintf("%s/32", *values.DNSServerAddress),
-							},
-						})
-					}
-
-					if values.NodeLocalIPVSAddress != nil {
-						obj.Spec.Egress[0].To = append(obj.Spec.Egress[0].To, networkingv1.NetworkPolicyPeer{
-							IPBlock: &networkingv1.IPBlock{
-								// required for node local dns feature, allows egress traffic to node local dns cache
-								CIDR: fmt.Sprintf("%s/32", *values.NodeLocalIPVSAddress),
-							},
-						})
-					}
-
-					return nil
-				}
-			},
-		},
 	}
-}
-
-func protocolPtr(protocol corev1.Protocol) *corev1.Protocol {
-	return &protocol
-}
-
-func intStrPtr(port int) *intstr.IntOrString {
-	v := intstr.FromInt(port)
-	return &v
 }

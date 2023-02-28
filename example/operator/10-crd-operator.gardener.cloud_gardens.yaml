@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.10.0
+    controller-gen.kubebuilder.io/version: v0.11.3
   creationTimestamp: null
   name: gardens.operator.gardener.cloud
 spec:
@@ -64,6 +64,19 @@ spec:
                   settings:
                     description: Settings contains certain settings for this cluster.
                     properties:
+                      loadBalancerServices:
+                        description: LoadBalancerServices controls certain settings
+                          for services of type load balancer that are created in the
+                          runtime cluster.
+                        properties:
+                          annotations:
+                            additionalProperties:
+                              type: string
+                            description: Annotations is a map of annotations that
+                              will be injected/merged into every load balancer service
+                              object.
+                            type: object
+                        type: object
                       verticalPodAutoscaler:
                         description: VerticalPodAutoscaler controls certain settings
                           for the vertical pod autoscaler components deployed in the
@@ -88,6 +101,15 @@ spec:
                 description: VirtualCluster contains configuration for the virtual
                   cluster.
                 properties:
+                  controlPlane:
+                    description: ControlPlane holds information about the general
+                      settings for the control plane of the virtual cluster.
+                    properties:
+                      highAvailability:
+                        description: HighAvailability holds the configuration settings
+                          for high availability settings.
+                        type: object
+                    type: object
                   etcd:
                     description: ETCD contains configuration for the etcds of the
                       virtual garden cluster.
@@ -125,14 +147,14 @@ spec:
                                   bucket.
                                 type: string
                                 x-kubernetes-validations:
-                                - message: Value is immutable
+                                - message: BucketName is immutable
                                   rule: self == oldSelf
                               provider:
                                 description: Provider is a provider name. This field
                                   is immutable.
                                 type: string
                                 x-kubernetes-validations:
-                                - message: Value is immutable
+                                - message: Provider is immutable
                                   rule: self == oldSelf
                               secretRef:
                                 description: SecretRef is a reference to a Secret
@@ -255,6 +277,51 @@ spec:
                   - type
                   type: object
                 type: array
+              credentials:
+                description: Credentials contains information about the virtual garden
+                  cluster credentials.
+                properties:
+                  rotation:
+                    description: Rotation contains information about the credential
+                      rotations.
+                    properties:
+                      certificateAuthorities:
+                        description: CertificateAuthorities contains information about
+                          the certificate authority credential rotation.
+                        properties:
+                          lastCompletionTime:
+                            description: LastCompletionTime is the most recent time
+                              when the certificate authority credential rotation was
+                              successfully completed.
+                            format: date-time
+                            type: string
+                          lastCompletionTriggeredTime:
+                            description: LastCompletionTriggeredTime is the recent
+                              time when the certificate authority credential rotation
+                              completion was triggered.
+                            format: date-time
+                            type: string
+                          lastInitiationFinishedTime:
+                            description: LastInitiationFinishedTime is the recent
+                              time when the certificate authority credential rotation
+                              initiation was completed.
+                            format: date-time
+                            type: string
+                          lastInitiationTime:
+                            description: LastInitiationTime is the most recent time
+                              when the certificate authority credential rotation was
+                              initiated.
+                            format: date-time
+                            type: string
+                          phase:
+                            description: Phase describes the phase of the certificate
+                              authority credential rotation.
+                            type: string
+                        required:
+                        - phase
+                        type: object
+                    type: object
+                type: object
               gardener:
                 description: Gardener holds information about the Gardener which last
                   acted on the Garden.

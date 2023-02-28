@@ -51,6 +51,8 @@ spec:
 #     providerConfig:
 #       <some-optional-config-for-the-nginx-ingress-controller>
   networks: # seed and shoot networks must be disjunct
+    ipFamilies:
+    - IPv4
     nodes: 10.240.0.0/16
     pods: 10.241.128.0/17
     services: 10.241.0.0/17
@@ -69,12 +71,15 @@ spec:
       enabled: true # this seed will deploy excess-capacity-reservation pods
     scheduling:
       visible: true # the gardener-scheduler will consider this seed for shoots
-    # Deprecated: This field (`shootDNS`) is deprecated and will be removed in a future version of Gardener. Do not use it.
-    shootDNS:
-      enabled: true # all shoots on this seed will use DNS, if disabled they'll just use the plain IPs/hostnames
   # loadBalancerServices:
   #   annotations:
   #     foo: bar
+  #   externalTrafficPolicy: Local
+  #   zones:
+  #   - name: europe-1a
+  #     annotations:
+  #       foo: bar
+  #     externalTrafficPolicy: Local
     verticalPodAutoscaler:
       enabled: true # a Gardener-managed VPA deployment is enabled
     ownerChecks:

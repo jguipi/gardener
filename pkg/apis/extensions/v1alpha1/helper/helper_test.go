@@ -15,12 +15,12 @@
 package helper_test
 
 import (
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	. "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1/helper"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/utils/pointer"
+
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	. "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1/helper"
 )
 
 var _ = Describe("helper", func() {
@@ -46,6 +46,7 @@ var _ = Describe("helper", func() {
 		},
 
 		Entry("valid IPv4 address", "1.2.3.4", extensionsv1alpha1.DNSRecordTypeA),
+		Entry("valid IPv6 address", "2001:db8:f00::1", extensionsv1alpha1.DNSRecordTypeAAAA),
 		Entry("anything else", "foo", extensionsv1alpha1.DNSRecordTypeCNAME),
 	)
 
@@ -57,4 +58,21 @@ var _ = Describe("helper", func() {
 		Entry("nil value", nil, int64(120)),
 		Entry("non-nil value", pointer.Int64(300), int64(300)),
 	)
+
+	Describe("#DeterminePrimaryIPFamily", func() {
+		It("should return IPv4 for empty ipFamilies", func() {
+			Expect(DeterminePrimaryIPFamily(nil)).To(Equal(extensionsv1alpha1.IPFamilyIPv4))
+			Expect(DeterminePrimaryIPFamily([]extensionsv1alpha1.IPFamily{})).To(Equal(extensionsv1alpha1.IPFamilyIPv4))
+		})
+
+		It("should return IPv4 if it's the first entry", func() {
+			Expect(DeterminePrimaryIPFamily([]extensionsv1alpha1.IPFamily{extensionsv1alpha1.IPFamilyIPv4})).To(Equal(extensionsv1alpha1.IPFamilyIPv4))
+			Expect(DeterminePrimaryIPFamily([]extensionsv1alpha1.IPFamily{extensionsv1alpha1.IPFamilyIPv4, extensionsv1alpha1.IPFamilyIPv6})).To(Equal(extensionsv1alpha1.IPFamilyIPv4))
+		})
+
+		It("should return IPv6 if it's the first entry", func() {
+			Expect(DeterminePrimaryIPFamily([]extensionsv1alpha1.IPFamily{extensionsv1alpha1.IPFamilyIPv6})).To(Equal(extensionsv1alpha1.IPFamilyIPv6))
+			Expect(DeterminePrimaryIPFamily([]extensionsv1alpha1.IPFamily{extensionsv1alpha1.IPFamilyIPv6, extensionsv1alpha1.IPFamilyIPv4})).To(Equal(extensionsv1alpha1.IPFamilyIPv6))
+		})
+	})
 })

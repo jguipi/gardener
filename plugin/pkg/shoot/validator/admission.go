@@ -23,21 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	"github.com/gardener/gardener/pkg/apis/core/helper"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
-	externalcoreinformers "github.com/gardener/gardener/pkg/client/core/informers/externalversions"
-	coreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
-	corelisters "github.com/gardener/gardener/pkg/client/core/listers/core/internalversion"
-	corev1alpha1listers "github.com/gardener/gardener/pkg/client/core/listers/core/v1alpha1"
-	"github.com/gardener/gardener/pkg/controllerutils"
-	"github.com/gardener/gardener/pkg/features"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-	cidrvalidation "github.com/gardener/gardener/pkg/utils/validation/cidr"
-	admissionutils "github.com/gardener/gardener/plugin/pkg/utils"
-
 	"github.com/Masterminds/semver"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -54,6 +39,19 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/utils/pointer"
 	"k8s.io/utils/strings/slices"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	"github.com/gardener/gardener/pkg/apis/core/helper"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	gardencorelisters "github.com/gardener/gardener/pkg/client/core/listers/core/internalversion"
+	"github.com/gardener/gardener/pkg/controllerutils"
+	"github.com/gardener/gardener/pkg/features"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
+	cidrvalidation "github.com/gardener/gardener/pkg/utils/validation/cidr"
+	admissionutils "github.com/gardener/gardener/plugin/pkg/utils"
 )
 
 const (
@@ -74,18 +72,17 @@ func Register(plugins *admission.Plugins) {
 type ValidateShoot struct {
 	*admission.Handler
 	authorizer          authorizer.Authorizer
-	cloudProfileLister  corelisters.CloudProfileLister
-	seedLister          corelisters.SeedLister
-	shootLister         corelisters.ShootLister
-	shootStateLister    corev1alpha1listers.ShootStateLister
-	projectLister       corelisters.ProjectLister
-	secretBindingLister corelisters.SecretBindingLister
+	cloudProfileLister  gardencorelisters.CloudProfileLister
+	seedLister          gardencorelisters.SeedLister
+	shootLister         gardencorelisters.ShootLister
+	shootStateLister    gardencorelisters.ShootStateLister
+	projectLister       gardencorelisters.ProjectLister
+	secretBindingLister gardencorelisters.SecretBindingLister
 	readyFunc           admission.ReadyFunc
 }
 
 var (
 	_ = admissioninitializer.WantsInternalCoreInformerFactory(&ValidateShoot{})
-	_ = admissioninitializer.WantsExternalCoreInformerFactory(&ValidateShoot{})
 	_ = admissioninitializer.WantsAuthorizer(&ValidateShoot{})
 
 	readyFuncs = []admission.ReadyFunc{}
@@ -110,7 +107,7 @@ func (v *ValidateShoot) SetAuthorizer(authorizer authorizer.Authorizer) {
 }
 
 // SetInternalCoreInformerFactory gets Lister from SharedInformerFactory.
-func (v *ValidateShoot) SetInternalCoreInformerFactory(f coreinformers.SharedInformerFactory) {
+func (v *ValidateShoot) SetInternalCoreInformerFactory(f gardencoreinformers.SharedInformerFactory) {
 	seedInformer := f.Core().InternalVersion().Seeds()
 	v.seedLister = seedInformer.Lister()
 
@@ -126,6 +123,9 @@ func (v *ValidateShoot) SetInternalCoreInformerFactory(f coreinformers.SharedInf
 	secretBindingInformer := f.Core().InternalVersion().SecretBindings()
 	v.secretBindingLister = secretBindingInformer.Lister()
 
+	shootStateInformer := f.Core().InternalVersion().ShootStates()
+	v.shootStateLister = shootStateInformer.Lister()
+
 	readyFuncs = append(
 		readyFuncs,
 		seedInformer.Informer().HasSynced,
@@ -133,15 +133,8 @@ func (v *ValidateShoot) SetInternalCoreInformerFactory(f coreinformers.SharedInf
 		cloudProfileInformer.Informer().HasSynced,
 		projectInformer.Informer().HasSynced,
 		secretBindingInformer.Informer().HasSynced,
+		shootStateInformer.Informer().HasSynced,
 	)
-}
-
-// SetExternalCoreInformerFactory sets the external garden core informer factory.
-func (v *ValidateShoot) SetExternalCoreInformerFactory(f externalcoreinformers.SharedInformerFactory) {
-	shootStateInformer := f.Core().V1alpha1().ShootStates()
-	v.shootStateLister = shootStateInformer.Lister()
-
-	readyFuncs = append(readyFuncs, shootStateInformer.Informer().HasSynced)
 }
 
 // ValidateInitialization checks whether the plugin was correctly initialized.
@@ -370,7 +363,7 @@ func (c *validationContext) validateSeedSelectionForMultiZonalShoot() error {
 	return nil
 }
 
-func (c *validationContext) validateScheduling(ctx context.Context, a admission.Attributes, authorizer authorizer.Authorizer, shootLister corelisters.ShootLister, seedLister corelisters.SeedLister, shootStateLister corev1alpha1listers.ShootStateLister) error {
+func (c *validationContext) validateScheduling(ctx context.Context, a admission.Attributes, authorizer authorizer.Authorizer, shootLister gardencorelisters.ShootLister, seedLister gardencorelisters.SeedLister, shootStateLister gardencorelisters.ShootStateLister) error {
 	var (
 		shootIsBeingScheduled          = c.oldShoot.Spec.SeedName == nil && c.shoot.Spec.SeedName != nil
 		shootIsBeingRescheduled        = c.oldShoot.Spec.SeedName != nil && c.shoot.Spec.SeedName != nil && *c.shoot.Spec.SeedName != *c.oldShoot.Spec.SeedName
@@ -440,7 +433,7 @@ func (c *validationContext) validateScheduling(ctx context.Context, a admission.
 			}
 
 			if seedSelector.ProviderTypes != nil {
-				if !sets.NewString(seedSelector.ProviderTypes...).HasAny(c.seed.Spec.Provider.Type, "*") {
+				if !sets.New[string](seedSelector.ProviderTypes...).HasAny(c.seed.Spec.Provider.Type, "*") {
 					return admission.NewForbidden(a, fmt.Errorf("cannot schedule shoot '%s' on seed '%s' because none of the provider types in the seed selector of cloud profile '%s' is matching the provider type of the seed", c.shoot.Name, c.seed.Name, c.cloudProfile.Name))
 				}
 			}
@@ -505,7 +498,7 @@ func (c *validationContext) validateScheduling(ctx context.Context, a admission.
 			// disallow any changes to the annotations of a shoot that references a seed which is already marked for deletion
 			// except changes to the deletion confirmation annotation
 			if !apiequality.Semantic.DeepEqual(newMeta.Annotations, oldMeta.Annotations) {
-				newConfirmation, newHasConfirmation := newMeta.Annotations[gutil.ConfirmationDeletion]
+				newConfirmation, newHasConfirmation := newMeta.Annotations[gardenerutils.ConfirmationDeletion]
 
 				// copy the new confirmation value to the old annotations to see if
 				// anything else was changed other than the confirmation annotation
@@ -513,11 +506,11 @@ func (c *validationContext) validateScheduling(ctx context.Context, a admission.
 					if oldMeta.Annotations == nil {
 						oldMeta.Annotations = make(map[string]string)
 					}
-					oldMeta.Annotations[gutil.ConfirmationDeletion] = newConfirmation
+					oldMeta.Annotations[gardenerutils.ConfirmationDeletion] = newConfirmation
 				}
 
 				if !apiequality.Semantic.DeepEqual(newMeta.Annotations, oldMeta.Annotations) {
-					return admission.NewForbidden(a, fmt.Errorf("cannot update annotations of shoot '%s' on seed '%s' already marked for deletion: only the '%s' annotation can be changed", c.shoot.Name, c.seed.Name, gutil.ConfirmationDeletion))
+					return admission.NewForbidden(a, fmt.Errorf("cannot update annotations of shoot '%s' on seed '%s' already marked for deletion: only the '%s' annotation can be changed", c.shoot.Name, c.seed.Name, gardenerutils.ConfirmationDeletion))
 				}
 			}
 
@@ -530,7 +523,7 @@ func (c *validationContext) validateScheduling(ctx context.Context, a admission.
 	return nil
 }
 
-func getNumberOfShootsOnSeed(shootLister corelisters.ShootLister, seedName string) (int64, error) {
+func getNumberOfShootsOnSeed(shootLister gardencorelisters.ShootLister, seedName string) (int64, error) {
 	allShoots, err := shootLister.Shoots(metav1.NamespaceAll).List(labels.Everything())
 	if err != nil {
 		return 0, fmt.Errorf("could not list all shoots: %w", err)
@@ -579,8 +572,8 @@ func (c *validationContext) validateDeletion(a admission.Attributes) error {
 
 	// Allow removal of `gardener` finalizer only if the Shoot deletion has completed successfully
 	if len(c.shoot.Status.TechnicalID) > 0 && c.shoot.Status.LastOperation != nil {
-		oldFinalizers := sets.NewString(c.oldShoot.Finalizers...)
-		newFinalizers := sets.NewString(c.shoot.Finalizers...)
+		oldFinalizers := sets.New[string](c.oldShoot.Finalizers...)
+		newFinalizers := sets.New[string](c.shoot.Finalizers...)
 
 		if oldFinalizers.Has(core.GardenerName) && !newFinalizers.Has(core.GardenerName) {
 			lastOperation := c.shoot.Status.LastOperation
@@ -642,12 +635,19 @@ func (c *validationContext) addMetadataAnnotations(a admission.Attributes) {
 		addInfrastructureDeploymentTask(c.shoot)
 	}
 
+	// We rely that SSHAccess is defaulted in the shoot creation, that is why we do not check for nils for the new shoot object.
+	if c.oldShoot.Spec.Provider.WorkersSettings != nil &&
+		c.oldShoot.Spec.Provider.WorkersSettings.SSHAccess != nil &&
+		c.oldShoot.Spec.Provider.WorkersSettings.SSHAccess.Enabled != c.shoot.Spec.Provider.WorkersSettings.SSHAccess.Enabled {
+		addInfrastructureDeploymentTask(c.shoot)
+	}
+
 	if !reflect.DeepEqual(c.oldShoot.Spec.DNS, c.shoot.Spec.DNS) {
 		addDNSRecordDeploymentTasks(c.shoot)
 	}
 
 	if c.shoot.ObjectMeta.Annotations[v1beta1constants.GardenerOperation] == v1beta1constants.ShootOperationRotateSSHKeypair ||
-		c.shoot.ObjectMeta.Annotations[v1beta1constants.GardenerOperation] == v1beta1constants.ShootOperationRotateCredentialsStart {
+		c.shoot.ObjectMeta.Annotations[v1beta1constants.GardenerOperation] == v1beta1constants.OperationRotateCredentialsStart {
 		addInfrastructureDeploymentTask(c.shoot)
 	}
 
@@ -764,6 +764,13 @@ func (c *validationContext) validateProvider(a admission.Attributes) field.Error
 		}
 	}
 
+	controlPlaneVersion, err := semver.NewVersion(c.shoot.Spec.Kubernetes.Version)
+	if err != nil {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "kubernetes", "version"), c.shoot.Spec.Kubernetes.Version, fmt.Sprintf("cannot parse the kubernetes version: %s", err.Error())))
+		// exit early, all other validation errors will be misleading
+		return allErrs
+	}
+
 	for i, worker := range c.shoot.Spec.Provider.Workers {
 		var oldWorker = core.Worker{Machine: core.Machine{Image: &core.ShootMachineImage{}}}
 		for _, ow := range c.oldShoot.Spec.Provider.Workers {
@@ -781,8 +788,16 @@ func (c *validationContext) validateProvider(a admission.Attributes) field.Error
 				detail := fmt.Sprintf("machine type '%s' does not support CPU architecture '%s' or is unavailable in at least one zone, supported machine types are: %+v", worker.Machine.Type, *worker.Machine.Architecture, validMachineTypes)
 				allErrs = append(allErrs, field.Invalid(idxPath.Child("machine", "type"), worker.Machine.Type, detail))
 			}
-			if ok, validMachineImages := validateMachineImagesConstraints(c.cloudProfile.Spec.MachineImages, worker.Machine, oldWorker.Machine); !ok {
-				detail := fmt.Sprintf("machine image '%s' does not support CPU architecture '%s' or is expired, valid machine images are: %+v", worker.Machine.Image, *worker.Machine.Architecture, validMachineImages)
+
+			kubeletVersion, err := helper.CalculateEffectiveKubernetesVersion(controlPlaneVersion, worker.Kubernetes)
+			if err != nil {
+				allErrs = append(allErrs, field.Invalid(idxPath.Child("kubernetes", "version"), worker.Kubernetes.Version, "cannot determine effective Kubernetes version for worker pool"))
+				// exit early, all other validation errors will be misleading
+				return allErrs
+			}
+
+			if ok, validMachineImages := validateMachineImagesConstraints(c.cloudProfile.Spec.MachineImages, worker.Machine, oldWorker.Machine, kubeletVersion); !ok {
+				detail := fmt.Sprintf("machine image '%s' does not support CPU architecture '%s', is expired or does not match kubelet version constraint; valid machine images are: %+v", worker.Machine.Image, *worker.Machine.Architecture, validMachineImages)
 				allErrs = append(allErrs, field.Invalid(idxPath.Child("machine", "image"), worker.Machine.Image, detail))
 			} else {
 				allErrs = append(allErrs, validateContainerRuntimeConstraints(c.cloudProfile.Spec.MachineImages, worker, oldWorker, idxPath.Child("cri"))...)
@@ -917,7 +932,7 @@ func validateVolumeSize(volumeTypeConstraints []core.VolumeType, machineTypeCons
 	return true, ""
 }
 
-func (c *validationContext) validateDNSDomainUniqueness(shootLister corelisters.ShootLister) (field.ErrorList, error) {
+func (c *validationContext) validateDNSDomainUniqueness(shootLister gardencorelisters.ShootLister) (field.ErrorList, error) {
 	var (
 		allErrs field.ErrorList
 		dns     = c.shoot.Spec.DNS
@@ -1220,6 +1235,7 @@ func validateZones(constraints []core.Region, region, oldRegion string, worker, 
 		return allErrs
 	}
 
+	usedZones := sets.New[string]()
 	for j, zone := range worker.Zones {
 		jdxPath := fldPath.Child("zones").Index(j)
 		if ok, validZones := validateZone(constraints, region, zone); !ok {
@@ -1229,6 +1245,10 @@ func validateZones(constraints []core.Region, region, oldRegion string, worker, 
 				allErrs = append(allErrs, field.NotSupported(jdxPath, zone, validZones))
 			}
 		}
+		if usedZones.Has(zone) {
+			allErrs = append(allErrs, field.Duplicate(jdxPath, zone))
+		}
+		usedZones.Insert(zone)
 	}
 
 	return allErrs
@@ -1303,7 +1323,7 @@ func getDefaultMachineImage(machineImages []core.MachineImage, imageName string,
 	return &core.ShootMachineImage{Name: defaultImage.Name, Version: latestMachineImageVersion.Version}, nil
 }
 
-func validateMachineImagesConstraints(constraints []core.MachineImage, machine, oldMachine core.Machine) (bool, []string) {
+func validateMachineImagesConstraints(constraints []core.MachineImage, machine, oldMachine core.Machine, kubeletVersion *semver.Version) (bool, []string) {
 	if oldMachine.Image == nil ||
 		(apiequality.Semantic.DeepEqual(machine.Image, oldMachine.Image) && pointer.StringEqual(machine.Architecture, oldMachine.Architecture)) {
 		return true, nil
@@ -1318,6 +1338,13 @@ func validateMachineImagesConstraints(constraints []core.MachineImage, machine, 
 				}
 				if !slices.Contains(machineVersion.Architectures, *machine.Architecture) {
 					continue
+				}
+				if machineVersion.KubeletVersionConstraint != nil {
+					// CloudProfile cannot contain an invalid kubeletVersionConstraint
+					constraint, _ := semver.NewConstraint(*machineVersion.KubeletVersionConstraint)
+					if !constraint.Check(kubeletVersion) {
+						continue
+					}
 				}
 				validValues = append(validValues, fmt.Sprintf("machineImage(%s:%s)", machineImage.Name, machineVersion.Version))
 			}
@@ -1339,6 +1366,14 @@ func validateMachineImagesConstraints(constraints []core.MachineImage, machine, 
 				if !slices.Contains(machineVersion.Architectures, *machine.Architecture) {
 					continue
 				}
+				if machineVersion.KubeletVersionConstraint != nil {
+					// CloudProfile cannot contain an invalid kubeletVersionConstraint constraint
+					constraint, _ := semver.NewConstraint(*machineVersion.KubeletVersionConstraint)
+					if !constraint.Check(kubeletVersion) {
+						continue
+					}
+				}
+
 				validValues = append(validValues, fmt.Sprintf("machineImage(%s:%s)", machineImage.Name, machineVersion.Version))
 
 				if machineVersion.Version == machine.Image.Version {

@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/utils/clock"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
@@ -52,18 +53,20 @@ func (r *Reconciler) AddToManager(mgr manager.Manager, gardenCluster, seedCluste
 	if r.SeedClient == nil {
 		r.SeedClient = seedCluster.GetClient()
 	}
+	if r.Clock == nil {
+		r.Clock = clock.RealClock{}
+	}
 	r.Lock = &sync.RWMutex{}
-	r.KindToRequiredTypes = make(map[string]sets.String)
+	r.KindToRequiredTypes = make(map[string]sets.Set[string])
 
-	// It's not possible to overwrite the event handler when using the controller builder. Hence, we have to build up
-	// the controller manually.
+	// It's not possible to call builder.Build() without adding atleast one watch, and without this, we can't get the controller logger.
+	// Hence, we have to build up the controller manually.
 	c, err := controller.New(
 		ControllerName,
 		mgr,
 		controller.Options{
 			Reconciler:              r,
 			MaxConcurrentReconciles: pointer.IntDeref(r.Config.ConcurrentSyncs, 0),
-			RecoverPanic:            true,
 		},
 	)
 	if err != nil {
@@ -164,7 +167,7 @@ func (r *Reconciler) MapObjectKindToControllerInstallations(objectKind string, n
 		r.Lock.RLock()
 		oldRequiredTypes, kindCalculated := r.KindToRequiredTypes[objectKind]
 		r.Lock.RUnlock()
-		newRequiredTypes := sets.NewString()
+		newRequiredTypes := sets.New[string]()
 
 		if err := meta.EachListItem(listObj, func(o runtime.Object) error {
 			obj, err := extensions.Accessor(o)
@@ -197,7 +200,7 @@ func (r *Reconciler) MapObjectKindToControllerInstallations(objectKind string, n
 			return nil
 		}
 
-		controllerRegistrationNamesForKind := sets.NewString()
+		controllerRegistrationNamesForKind := sets.New[string]()
 		for _, controllerRegistration := range controllerRegistrationList.Items {
 			for _, resource := range controllerRegistration.Spec.Resources {
 				if resource.Kind == objectKind {

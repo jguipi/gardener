@@ -19,6 +19,16 @@ import (
 	"strconv"
 	"strings"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/utils/pointer"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
@@ -30,16 +40,6 @@ import (
 	"github.com/gardener/gardener/pkg/utils/test"
 	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 	"github.com/gardener/gardener/pkg/utils/version"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/utils/pointer"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 var _ = Describe("KubeProxy", func() {
@@ -189,9 +189,9 @@ type: Opaque
 
 			configMapNameFor = func(ipvsEnabled bool) string {
 				if !ipvsEnabled {
-					return "kube-proxy-config-1c3aa913"
+					return "kube-proxy-config-47550688"
 				}
-				return "kube-proxy-config-ef237614"
+				return "kube-proxy-config-e93f60cb"
 			}
 			configMapYAMLFor = func(ipvsEnabled bool) string {
 				out := `apiVersion: v1
@@ -231,6 +231,7 @@ data:
     healthzBindAddress: ""
     hostnameOverride: ""
     iptables:
+      localhostNodePorts: null
       masqueradeAll: false
       masqueradeBit: null
       minSyncPeriod: 0s
@@ -258,7 +259,6 @@ data:
     oomScoreAdj: null
     portRange: ""
     showHiddenMetricsForVersion: ""
-    udpIdleTimeout: 0s
     winkernel:
       enableDSR: false
       forwardHealthCheckVip: false
@@ -465,6 +465,7 @@ metadata:
   creationTimestamp: null
   labels:
     gardener.cloud/role: system-component
+    node.gardener.cloud/critical-component: "true"
     origin: gardener
   name: ` + daemonSetNameFor(pool) + `
   namespace: kube-system
@@ -483,6 +484,7 @@ spec:
       labels:
         app: kubernetes
         gardener.cloud/role: system-component
+        node.gardener.cloud/critical-component: "true"
         origin: gardener
         pool: ` + pool.Name + `
         role: proxy
@@ -590,8 +592,6 @@ spec:
       serviceAccountName: kube-proxy
       tolerations:
       - effect: NoSchedule
-        operator: Exists
-      - key: CriticalAddonsOnly
         operator: Exists
       - effect: NoExecute
         operator: Exists

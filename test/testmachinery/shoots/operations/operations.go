@@ -53,19 +53,20 @@ import (
 	"path/filepath"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	"github.com/gardener/gardener/pkg/utils/secrets"
-	"github.com/gardener/gardener/test/framework"
-	"github.com/gardener/gardener/test/framework/applications"
-
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/secrets"
+	"github.com/gardener/gardener/test/framework"
+	"github.com/gardener/gardener/test/framework/applications"
 )
 
 const (
@@ -91,11 +92,11 @@ var _ = ginkgo.Describe("Shoot operation testing", func() {
 		err = f.HibernateShoot(ctx)
 		framework.ExpectNoError(err)
 
-		ginkgo.By("wake up shoot")
+		ginkgo.By("Wake up shoot")
 		err = f.WakeUpShoot(ctx)
 		framework.ExpectNoError(err)
 
-		ginkgo.By("test guestbook")
+		ginkgo.By("Test guestbook")
 		guestBookTest.WaitUntilRedisIsReady(ctx)
 		guestBookTest.WaitUntilGuestbookDeploymentIsReady(ctx)
 		guestBookTest.Test(ctx)
@@ -103,14 +104,14 @@ var _ = ginkgo.Describe("Shoot operation testing", func() {
 	}, hibernationTestTimeout)
 
 	f.Default().Serial().CIt("should fully maintain and reconcile a shoot cluster", func(ctx context.Context) {
-		ginkgo.By("maintain shoot")
+		ginkgo.By("Maintain shoot")
 		err := f.UpdateShoot(ctx, func(shoot *gardencorev1beta1.Shoot) error {
 			shoot.Annotations[v1beta1constants.GardenerOperation] = v1beta1constants.ShootOperationMaintain
 			return nil
 		})
 		framework.ExpectNoError(err)
 
-		ginkgo.By("reconcile shoot")
+		ginkgo.By("Reconcile shoot")
 		err = f.UpdateShoot(ctx, func(shoot *gardencorev1beta1.Shoot) error {
 			shoot.Annotations[v1beta1constants.GardenerOperation] = v1beta1constants.GardenerOperationReconcile
 			return nil
@@ -119,7 +120,11 @@ var _ = ginkgo.Describe("Shoot operation testing", func() {
 	}, reconcileTimeout)
 
 	f.Beta().Disruptive().CIt("should rotate the kubeconfig for a shoot cluster", func(ctx context.Context) {
-		ginkgo.By("rotate kubeconfig")
+		if !pointer.BoolDeref(f.Shoot.Spec.Kubernetes.EnableStaticTokenKubeconfig, false) {
+			ginkgo.Skip("The static token kubeconfig is not enabled for this shoot")
+		}
+
+		ginkgo.By("Rotate kubeconfig")
 		var (
 			secretName = f.Shoot.Name + ".kubeconfig"
 		)
@@ -169,7 +174,7 @@ var _ = ginkgo.Describe("Shoot operation testing", func() {
 
 	f.Beta().Serial().CIt("should rotate the ssh keypair for a shoot cluster", func(ctx context.Context) {
 		secret := &corev1.Secret{}
-		gomega.Expect(f.GardenClient.Client().Get(ctx, client.ObjectKey{Namespace: f.Shoot.Namespace, Name: gutil.ComputeShootProjectSecretName(f.Shoot.Name, gutil.ShootProjectSecretSuffixSSHKeypair)}, secret)).To(gomega.Succeed())
+		gomega.Expect(f.GardenClient.Client().Get(ctx, client.ObjectKey{Namespace: f.Shoot.Namespace, Name: gardenerutils.ComputeShootProjectSecretName(f.Shoot.Name, gardenerutils.ShootProjectSecretSuffixSSHKeypair)}, secret)).To(gomega.Succeed())
 		preRotationPrivateKey := getKeyAndValidate(secret, secrets.DataKeyRSAPrivateKey)
 		preRotationPublicKey := getKeyAndValidate(secret, secrets.DataKeySSHAuthorizedKeys)
 		err := f.UpdateShoot(ctx, func(s *gardencorev1beta1.Shoot) error {
@@ -184,11 +189,11 @@ var _ = ginkgo.Describe("Shoot operation testing", func() {
 			gomega.Expect(v).NotTo(gomega.Equal(v1beta1constants.ShootOperationRotateSSHKeypair))
 		}
 
-		gomega.Expect(f.GardenClient.Client().Get(ctx, client.ObjectKey{Namespace: f.Shoot.Namespace, Name: gutil.ComputeShootProjectSecretName(f.Shoot.Name, gutil.ShootProjectSecretSuffixSSHKeypair)}, secret)).To(gomega.Succeed())
+		gomega.Expect(f.GardenClient.Client().Get(ctx, client.ObjectKey{Namespace: f.Shoot.Namespace, Name: gardenerutils.ComputeShootProjectSecretName(f.Shoot.Name, gardenerutils.ShootProjectSecretSuffixSSHKeypair)}, secret)).To(gomega.Succeed())
 		postRotationPrivateKey := getKeyAndValidate(secret, secrets.DataKeyRSAPrivateKey)
 		postRotationPublicKey := getKeyAndValidate(secret, secrets.DataKeySSHAuthorizedKeys)
 
-		gomega.Expect(f.GardenClient.Client().Get(ctx, client.ObjectKey{Namespace: f.Shoot.Namespace, Name: gutil.ComputeShootProjectSecretName(f.Shoot.Name, gutil.ShootProjectSecretSuffixOldSSHKeypair)}, secret)).To(gomega.Succeed())
+		gomega.Expect(f.GardenClient.Client().Get(ctx, client.ObjectKey{Namespace: f.Shoot.Namespace, Name: gardenerutils.ComputeShootProjectSecretName(f.Shoot.Name, gardenerutils.ShootProjectSecretSuffixOldSSHKeypair)}, secret)).To(gomega.Succeed())
 		postRotationOldPrivateKey := getKeyAndValidate(secret, secrets.DataKeyRSAPrivateKey)
 		postRotationOldPublicKey := getKeyAndValidate(secret, secrets.DataKeySSHAuthorizedKeys)
 

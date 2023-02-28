@@ -18,15 +18,7 @@ import (
 	"context"
 	"time"
 
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/pkg/utils/managedresources"
-	"github.com/gardener/gardener/pkg/utils/version"
-
+	"github.com/Masterminds/semver"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -41,6 +33,15 @@ import (
 	vpaautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/managedresources"
+	"github.com/gardener/gardener/pkg/utils/version"
 )
 
 const (
@@ -80,7 +81,7 @@ type Values struct {
 	// ImageDefaultBackend is the container image used for default ingress backend.
 	ImageDefaultBackend string
 	// KubernetesVersion is the version of kubernetes for the seed cluster.
-	KubernetesVersion string
+	KubernetesVersion *semver.Version
 	// IngressClass is the ingress class for the seed nginx-ingress controller
 	IngressClass string
 	// ConfigData contains the configuration details for the nginx-ingress controller
@@ -146,16 +147,7 @@ func (n *nginxIngress) computeResourcesData() (map[string][]byte, error) {
 		Data: n.values.ConfigData,
 	}
 
-	utilruntime.Must(kutil.MakeUnique(configMap))
-
-	k8sVersionGreaterEqual121, err := version.CompareVersions(n.values.KubernetesVersion, ">=", "1.21")
-	if err != nil {
-		return nil, err
-	}
-	k8sVersionGreaterEqual122, err := version.CompareVersions(n.values.KubernetesVersion, ">=", "1.22")
-	if err != nil {
-		return nil, err
-	}
+	utilruntime.Must(kubernetesutils.MakeUnique(configMap))
 
 	var (
 		intStrOne       = intstr.FromInt(1)
@@ -242,6 +234,11 @@ func (n *nginxIngress) computeResourcesData() (map[string][]byte, error) {
 					Resources: []string{"leases"},
 					Verbs:     []string{"create"},
 				},
+				{
+					APIGroups: []string{"discovery.k8s.io"},
+					Resources: []string{"endpointslices"},
+					Verbs:     []string{"get", "list", "watch"},
+				},
 			},
 		}
 
@@ -308,6 +305,11 @@ func (n *nginxIngress) computeResourcesData() (map[string][]byte, error) {
 					APIGroups: []string{"coordination.k8s.io"},
 					Resources: []string{"leases"},
 					Verbs:     []string{"list", "watch"},
+				},
+				{
+					APIGroups: []string{"discovery.k8s.io"},
+					Resources: []string{"endpointslices"},
+					Verbs:     []string{"get", "list", "watch"},
 				},
 			},
 		}
@@ -416,7 +418,7 @@ func (n *nginxIngress) computeResourcesData() (map[string][]byte, error) {
 							Name:            containerNameController,
 							Image:           n.values.ImageController,
 							ImagePullPolicy: corev1.PullIfNotPresent,
-							Args:            n.getArgs(configMap, k8sVersionGreaterEqual122),
+							Args:            n.getArgs(configMap),
 							SecurityContext: &corev1.SecurityContext{
 								Capabilities: &corev1.Capabilities{
 									Drop: []corev1.Capability{"ALL"},
@@ -521,7 +523,6 @@ func (n *nginxIngress) computeResourcesData() (map[string][]byte, error) {
 						{
 							ContainerName: vpaautoscalingv1.DefaultContainerResourcePolicy,
 							MinAllowed: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("25m"),
 								corev1.ResourceMemory: resource.MustParse("100Mi"),
 							},
 						},
@@ -534,7 +535,7 @@ func (n *nginxIngress) computeResourcesData() (map[string][]byte, error) {
 		podDisruptionBudget client.Object
 	)
 
-	if k8sVersionGreaterEqual121 {
+	if version.ConstraintK8sGreaterEqual121.Check(n.values.KubernetesVersion) {
 		podDisruptionBudget = &policyv1.PodDisruptionBudget{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      controllerName,
@@ -568,7 +569,7 @@ func (n *nginxIngress) computeResourcesData() (map[string][]byte, error) {
 	// and special seccomp profile is implemented for the nginx-ingress
 	deploymentController.Spec.Template.Labels[resourcesv1alpha1.SeccompProfileSkip] = "true"
 
-	if k8sVersionGreaterEqual122 {
+	if version.ConstraintK8sGreaterEqual122.Check(n.values.KubernetesVersion) {
 		ingressClass = &networkingv1.IngressClass{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   n.values.IngressClass,
@@ -610,7 +611,7 @@ func getLabels(componentLabelValue string, releaseLabelValue string) map[string]
 	return labels
 }
 
-func (n *nginxIngress) getArgs(configMap *corev1.ConfigMap, k8sVersionGreaterEqual122 bool) []string {
+func (n *nginxIngress) getArgs(configMap *corev1.ConfigMap) []string {
 	out := []string{
 		"/nginx-ingress-controller",
 		"--default-backend-service=" + n.namespace + "/" + serviceNameBackend,
@@ -622,8 +623,10 @@ func (n *nginxIngress) getArgs(configMap *corev1.ConfigMap, k8sVersionGreaterEqu
 		"--configmap=" + n.namespace + "/" + configMap.Name,
 		"--ingress-class=" + n.values.IngressClass,
 	}
-	if k8sVersionGreaterEqual122 {
+
+	if version.ConstraintK8sGreaterEqual122.Check(n.values.KubernetesVersion) {
 		out = append(out, "--controller-class=k8s.io/"+n.values.IngressClass)
 	}
+
 	return out
 }

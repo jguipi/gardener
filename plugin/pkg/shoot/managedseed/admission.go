@@ -20,18 +20,18 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	gardencorehelper "github.com/gardener/gardener/pkg/apis/core/helper"
-	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
-	coreclientset "github.com/gardener/gardener/pkg/client/core/clientset/internalversion"
-	seedmanagementclientset "github.com/gardener/gardener/pkg/client/seedmanagement/clientset/versioned"
-	"github.com/gardener/gardener/plugin/pkg/utils"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/admission"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	gardencorehelper "github.com/gardener/gardener/pkg/apis/core/helper"
+	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
+	gardencoreclientset "github.com/gardener/gardener/pkg/client/core/clientset/internalversion"
+	seedmanagementclientset "github.com/gardener/gardener/pkg/client/seedmanagement/clientset/versioned"
+	"github.com/gardener/gardener/plugin/pkg/utils"
 )
 
 const (
@@ -49,7 +49,7 @@ func Register(plugins *admission.Plugins) {
 // ManagedSeed contains listers and and admission handler.
 type ManagedSeed struct {
 	*admission.Handler
-	coreClient           coreclientset.Interface
+	coreClient           gardencoreclientset.Interface
 	seedManagementClient seedmanagementclientset.Interface
 	readyFunc            admission.ReadyFunc
 }
@@ -75,7 +75,7 @@ func (v *ManagedSeed) AssignReadyFunc(f admission.ReadyFunc) {
 }
 
 // SetInternalCoreClientset sets the garden core clientset.
-func (v *ManagedSeed) SetInternalCoreClientset(c coreclientset.Interface) {
+func (v *ManagedSeed) SetInternalCoreClientset(c gardencoreclientset.Interface) {
 	v.coreClient = c
 }
 
@@ -152,12 +152,21 @@ func (v *ManagedSeed) validateUpdate(ctx context.Context, a admission.Attributes
 		return apierrors.NewInternalError(errors.New("could not convert resource into Shoot object"))
 	}
 
+	oldShoot, ok := a.GetOldObject().(*core.Shoot)
+	if !ok {
+		return apierrors.NewInternalError(errors.New("could not convert resource into Shoot object"))
+	}
+
 	var allErrs field.ErrorList
 	if nginxIngressEnabled := gardencorehelper.NginxIngressEnabled(shoot.Spec.Addons); nginxIngressEnabled {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "addons", "nginxIngress", "enabled"), nginxIngressEnabled, "shoot ingress addon is not supported for managed seeds - use the managed seed ingress controller"))
 	}
 	if vpaEnabled := gardencorehelper.ShootWantsVerticalPodAutoscaler(shoot); !vpaEnabled {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "kubernetes", "verticalPodAutoscaler", "enabled"), vpaEnabled, "shoot VPA has to be enabled for managed seeds"))
+	}
+
+	if oldShoot.Spec.Networking.Nodes != nil && *oldShoot.Spec.Networking.Nodes != *shoot.Spec.Networking.Nodes {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "networking", "nodes"), shoot.Spec.Networking.Nodes, "field is immutable for managed seeds"))
 	}
 
 	if len(allErrs) > 0 {

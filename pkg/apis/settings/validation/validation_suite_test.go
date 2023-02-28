@@ -18,13 +18,13 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/gardener/gardener/pkg/apis/settings"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/validation/field"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+
+	"github.com/gardener/gardener/pkg/apis/settings"
 )
 
 const empty = ""
@@ -55,7 +55,7 @@ type provider interface {
 
 func TestValidation(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Settings API Validation Suite")
+	RunSpecs(t, "APIs Settings Validation Suite")
 }
 
 func validationAssertions(p provider) {
@@ -358,5 +358,4 @@ func validationAssertions(p provider) {
 			})
 		})
 	})
-
 }

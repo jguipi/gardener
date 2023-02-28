@@ -19,191 +19,44 @@ import (
 	"fmt"
 	"path/filepath"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
+
 	"github.com/gardener/gardener/charts"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	extensionsv1alpha1helper "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1/helper"
 	"github.com/gardener/gardener/pkg/chartrenderer"
-	"github.com/gardener/gardener/pkg/controllerutils"
-	netpol "github.com/gardener/gardener/pkg/operation/botanist/addons/networkpolicy"
-	extensionsdnsrecord "github.com/gardener/gardener/pkg/operation/botanist/component/extensions/dnsrecord"
 	"github.com/gardener/gardener/pkg/operation/common"
 	"github.com/gardener/gardener/pkg/utils/images"
 	"github.com/gardener/gardener/pkg/utils/managedresources"
-	"github.com/gardener/gardener/pkg/utils/secrets"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/pointer"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-const (
-	// SecretLabelKeyManagedResource is a key for a label on a secret with the value 'managed-resource'.
-	SecretLabelKeyManagedResource = "managed-resource"
-)
-
-// GenerateKubernetesDashboardConfig generates the values which are required to render the chart of
-// the kubernetes-dashboard properly.
-func (b *Botanist) GenerateKubernetesDashboardConfig() (map[string]interface{}, error) {
-	var (
-		enabled = gardencorev1beta1helper.KubernetesDashboardEnabled(b.Shoot.GetInfo().Spec.Addons)
-		values  = map[string]interface{}{}
-	)
-
-	if b.APIServerSNIEnabled() {
-		values["kubeAPIServerHost"] = b.outOfClusterAPIServerFQDN()
-	}
-
-	if enabled && b.Shoot.GetInfo().Spec.Addons.KubernetesDashboard.AuthenticationMode != nil {
-		values["authenticationMode"] = *b.Shoot.GetInfo().Spec.Addons.KubernetesDashboard.AuthenticationMode
-	}
-
-	return common.GenerateAddonConfig(values, enabled), nil
-}
-
-// NeedsIngressDNS returns true if the Shoot cluster needs ingress DNS.
-func (b *Botanist) NeedsIngressDNS() bool {
-	return b.NeedsExternalDNS() && gardencorev1beta1helper.NginxIngressEnabled(b.Shoot.GetInfo().Spec.Addons)
-}
-
-// DefaultIngressDNSRecord creates the default deployer for the ingress DNSRecord resource.
-func (b *Botanist) DefaultIngressDNSRecord() extensionsdnsrecord.Interface {
-	values := &extensionsdnsrecord.Values{
-		Name:              b.Shoot.GetInfo().Name + "-" + common.ShootDNSIngressName,
-		SecretName:        DNSRecordSecretPrefix + "-" + b.Shoot.GetInfo().Name + "-" + v1beta1constants.DNSRecordExternalName,
-		Namespace:         b.Shoot.SeedNamespace,
-		TTL:               b.Config.Controllers.Shoot.DNSEntryTTLSeconds,
-		AnnotateOperation: controllerutils.HasTask(b.Shoot.GetInfo().Annotations, v1beta1constants.ShootTaskDeployDNSRecordIngress) || b.isRestorePhase(),
-	}
-
-	// Set component values even if the nginx-ingress addons is not enabled.
-	if b.NeedsExternalDNS() {
-		values.Type = b.Shoot.ExternalDomain.Provider
-		if b.Shoot.ExternalDomain.Zone != "" {
-			values.Zone = &b.Shoot.ExternalDomain.Zone
-		}
-		values.SecretData = b.Shoot.ExternalDomain.SecretData
-		values.DNSName = b.Shoot.GetIngressFQDN("*")
-	}
-
-	return extensionsdnsrecord.New(
-		b.Logger,
-		b.SeedClientSet.Client(),
-		values,
-		extensionsdnsrecord.DefaultInterval,
-		extensionsdnsrecord.DefaultSevereThreshold,
-		extensionsdnsrecord.DefaultTimeout,
-	)
-}
-
-// DeployOrDestroyIngressDNSRecord deploys, restores, or destroys the ingress DNSRecord and waits for the operation to complete.
-func (b *Botanist) DeployOrDestroyIngressDNSRecord(ctx context.Context) error {
-	if b.NeedsIngressDNS() {
-		return b.deployIngressDNSRecord(ctx)
-	}
-	return b.DestroyIngressDNSRecord(ctx)
-}
-
-// deployIngressDNSRecord deploys or restores the ingress DNSRecord and waits for the operation to complete.
-func (b *Botanist) deployIngressDNSRecord(ctx context.Context) error {
-	if err := b.deployOrRestoreDNSRecord(ctx, b.Shoot.Components.Extensions.IngressDNSRecord); err != nil {
-		return err
-	}
-	return b.Shoot.Components.Extensions.IngressDNSRecord.Wait(ctx)
-}
-
-// DestroyIngressDNSRecord destroys the ingress DNSRecord and waits for the operation to complete.
-func (b *Botanist) DestroyIngressDNSRecord(ctx context.Context) error {
-	if err := b.Shoot.Components.Extensions.IngressDNSRecord.Destroy(ctx); err != nil {
-		return err
-	}
-	return b.Shoot.Components.Extensions.IngressDNSRecord.WaitCleanup(ctx)
-}
-
-// MigrateIngressDNSRecord migrates the ingress DNSRecord and waits for the operation to complete.
-func (b *Botanist) MigrateIngressDNSRecord(ctx context.Context) error {
-	if err := b.Shoot.Components.Extensions.IngressDNSRecord.Migrate(ctx); err != nil {
-		return err
-	}
-	return b.Shoot.Components.Extensions.IngressDNSRecord.WaitMigrate(ctx)
-}
-
-// SetNginxIngressAddress sets the IP address of the API server's LoadBalancer.
-func (b *Botanist) SetNginxIngressAddress(address string, seedClient client.Client) {
-	if b.NeedsIngressDNS() {
-		b.Shoot.Components.Extensions.IngressDNSRecord.SetRecordType(extensionsv1alpha1helper.GetDNSRecordType(address))
-		b.Shoot.Components.Extensions.IngressDNSRecord.SetValues([]string{address})
-	}
-}
-
-// GenerateNginxIngressConfig generates the values which are required to render the chart of
-// the nginx-ingress properly.
-func (b *Botanist) GenerateNginxIngressConfig() (map[string]interface{}, error) {
-	var (
-		enabled = gardencorev1beta1helper.NginxIngressEnabled(b.Shoot.GetInfo().Spec.Addons)
-		values  map[string]interface{}
-	)
-
-	if enabled {
-		values = map[string]interface{}{
-			"controller": map[string]interface{}{
-				"customConfig": b.Shoot.GetInfo().Spec.Addons.NginxIngress.Config,
-				"service": map[string]interface{}{
-					"loadBalancerSourceRanges": b.Shoot.GetInfo().Spec.Addons.NginxIngress.LoadBalancerSourceRanges,
-					"externalTrafficPolicy":    *b.Shoot.GetInfo().Spec.Addons.NginxIngress.ExternalTrafficPolicy,
-				},
-			},
-		}
-
-		if b.APIServerSNIEnabled() {
-			values["kubeAPIServerHost"] = b.outOfClusterAPIServerFQDN()
-		}
-	}
-
-	return common.GenerateAddonConfig(values, enabled), nil
-}
 
 // DeployManagedResourceForAddons deploys all the ManagedResource CRDs for the gardener-resource-manager.
 func (b *Botanist) DeployManagedResourceForAddons(ctx context.Context) error {
-	for name, chartRenderFunc := range map[string]func(context.Context) (*chartrenderer.RenderedChart, error){
-		common.ManagedResourceShootCoreName: b.generateCoreAddonsChart,
-		common.ManagedResourceAddonsName:    b.generateOptionalAddonsChart,
-	} {
-		renderedChart, err := chartRenderFunc(ctx)
-		if err != nil {
-			return fmt.Errorf("error rendering %q chart: %+v", name, err)
-		}
-
-		if err := managedresources.CreateForShoot(ctx, b.SeedClientSet.Client(), b.Shoot.SeedNamespace, name, managedresources.LabelValueGardener, false, renderedChart.AsSecretData()); err != nil {
-			return err
-		}
+	// TODO(rfranzke): Delete this code in a future release.
+	if err := managedresources.DeleteForShoot(ctx, b.SeedClientSet.Client(), b.Shoot.SeedNamespace, "addons"); err != nil {
+		return err
 	}
 
-	return nil
+	renderedChart, err := b.generateCoreAddonsChart()
+	if err != nil {
+		return fmt.Errorf("error rendering shoot-core chart: %w", err)
+	}
+
+	return managedresources.CreateForShoot(ctx, b.SeedClientSet.Client(), b.Shoot.SeedNamespace, "shoot-core", managedresources.LabelValueGardener, false, renderedChart.AsSecretData())
 }
 
 // generateCoreAddonsChart renders the gardener-resource-manager configuration for the core addons. After that it
 // creates a ManagedResource CRD that references the rendered manifests and creates it.
-func (b *Botanist) generateCoreAddonsChart(ctx context.Context) (*chartrenderer.RenderedChart, error) {
+func (b *Botanist) generateCoreAddonsChart() (*chartrenderer.RenderedChart, error) {
 	var (
-		kasFQDN           = b.outOfClusterAPIServerFQDN()
-		kubernetesVersion = b.Shoot.GetInfo().Spec.Kubernetes.Version
-		global            = map[string]interface{}{
-			"kubernetesVersion": kubernetesVersion,
-			"podNetwork":        b.Shoot.Networks.Pods.String(),
-			"vpaEnabled":        b.Shoot.WantsVerticalPodAutoscaler,
-			"pspDisabled":       b.Shoot.PSPDisabled,
+		global = map[string]interface{}{
+			"vpaEnabled":  b.Shoot.WantsVerticalPodAutoscaler,
+			"pspDisabled": b.Shoot.PSPDisabled,
 		}
-
 		podSecurityPolicies = map[string]interface{}{
 			"allowPrivilegedContainers": pointer.BoolDeref(b.Shoot.GetInfo().Spec.Kubernetes.AllowPrivilegedContainers, false),
 		}
-
 		nodeExporterConfig     = map[string]interface{}{}
 		blackboxExporterConfig = map[string]interface{}{}
-		networkPolicyConfig    = netpol.ShootNetworkPolicyValues{
-			Enabled: true,
-		}
 	)
 
 	nodeExporter, err := b.InjectShootShootImages(nodeExporterConfig, images.ImageNameNodeExporter)
@@ -215,84 +68,16 @@ func (b *Botanist) generateCoreAddonsChart(ctx context.Context) (*chartrenderer.
 		return nil, err
 	}
 
-	clusterCASecret, found := b.SecretsManager.Get(v1beta1constants.SecretNameCACluster)
-	if !found {
-		return nil, fmt.Errorf("secret %q not found", v1beta1constants.SecretNameCACluster)
-	}
-
-	apiserverProxyConfig := map[string]interface{}{
-		"advertiseIPAddress": b.APIServerClusterIP,
-		"proxySeedServer": map[string]interface{}{
-			"host": kasFQDN,
-			"port": "8443",
-		},
-		"webhook": map[string]interface{}{
-			"caBundle": clusterCASecret.Data[secrets.DataKeyCertificateBundle],
-		},
-		"podMutatorEnabled": b.APIServerSNIPodMutatorEnabled(),
-	}
-
-	apiserverProxy, err := b.InjectShootShootImages(apiserverProxyConfig, images.ImageNameApiserverProxySidecar, images.ImageNameApiserverProxy)
-	if err != nil {
-		return nil, err
-	}
-
 	values := map[string]interface{}{
 		"global":          global,
-		"apiserver-proxy": common.GenerateAddonConfig(apiserverProxy, b.APIServerSNIEnabled()),
+		"apiserver-proxy": common.GenerateAddonConfig(nil, b.APIServerSNIEnabled()),
 		"monitoring": common.GenerateAddonConfig(map[string]interface{}{
 			"node-exporter":     nodeExporter,
 			"blackbox-exporter": blackboxExporter,
 		}, b.Operation.IsShootMonitoringEnabled()),
-		"network-policies":    networkPolicyConfig,
+		"network-policies":    common.GenerateAddonConfig(nil, true),
 		"podsecuritypolicies": common.GenerateAddonConfig(podSecurityPolicies, !b.Shoot.PSPDisabled),
-		"cluster-identity":    map[string]interface{}{"clusterIdentity": b.Shoot.GetInfo().Status.ClusterIdentity},
 	}
 
 	return b.ShootClientSet.ChartRenderer().Render(filepath.Join(charts.Path, "shoot-core", "components"), "shoot-core", metav1.NamespaceSystem, values)
-}
-
-// generateOptionalAddonsChart renders the gardener-resource-manager chart for the optional addons. After that it
-// creates a ManagedResource CRD that references the rendered manifests and creates it.
-func (b *Botanist) generateOptionalAddonsChart(_ context.Context) (*chartrenderer.RenderedChart, error) {
-	global := map[string]interface{}{
-		"vpaEnabled":  b.Shoot.WantsVerticalPodAutoscaler,
-		"pspDisabled": b.Shoot.PSPDisabled,
-	}
-
-	kubernetesDashboardConfig, err := b.GenerateKubernetesDashboardConfig()
-	if err != nil {
-		return nil, err
-	}
-	kubernetesDashboardImagesToInject := []string{
-		images.ImageNameKubernetesDashboard,
-		images.ImageNameKubernetesDashboardMetricsScraper,
-	}
-
-	kubernetesDashboard, err := b.InjectShootShootImages(kubernetesDashboardConfig, kubernetesDashboardImagesToInject...)
-	if err != nil {
-		return nil, err
-	}
-
-	nginxIngressConfig, err := b.GenerateNginxIngressConfig()
-	if err != nil {
-		return nil, err
-	}
-	nginxIngress, err := b.InjectShootShootImages(nginxIngressConfig, images.ImageNameNginxIngressController, images.ImageNameIngressDefaultBackend)
-	if err != nil {
-		return nil, err
-	}
-
-	return b.ShootClientSet.ChartRenderer().Render(filepath.Join(charts.Path, "shoot-addons"), "addons", metav1.NamespaceSystem, map[string]interface{}{
-		"global":               global,
-		"kubernetes-dashboard": kubernetesDashboard,
-		"nginx-ingress":        nginxIngress,
-	})
-}
-
-// outOfClusterAPIServerFQDN returns the Fully Qualified Domain Name of the apiserver
-// with dot "." suffix. It'll prevent extra requests to the DNS in case the record is not
-// available.
-func (b *Botanist) outOfClusterAPIServerFQDN() string {
-	return fmt.Sprintf("%s.", b.Shoot.ComputeOutOfClusterAPIServerAddress(b.APIServerAddress, true))
 }

@@ -160,6 +160,8 @@ global:
     featureGates:
       SeedChange: true
       HAControlPlanes: true
+      IPv6SingleStack: true
+      MutableShootSpecNetworkingNodes: true
     resources: {}
 
   # Gardener admission controller configuration values

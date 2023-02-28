@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
+	testclock "k8s.io/utils/clock/testing"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -35,24 +36,25 @@ import (
 
 	"github.com/gardener/gardener/pkg/logger"
 	"github.com/gardener/gardener/pkg/resourcemanager/apis/config"
-	resourcemanagerconfigv1alpha1 "github.com/gardener/gardener/pkg/resourcemanager/apis/config/v1alpha1"
+	resourcemanagerv1alpha1 "github.com/gardener/gardener/pkg/resourcemanager/apis/config/v1alpha1"
 	resourcemanagerclient "github.com/gardener/gardener/pkg/resourcemanager/client"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/managedresource"
 	"github.com/gardener/gardener/pkg/resourcemanager/predicate"
-	managerpredicate "github.com/gardener/gardener/pkg/resourcemanager/predicate"
+	resourcemanagerpredicate "github.com/gardener/gardener/pkg/resourcemanager/predicate"
 	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
 
-func TestManagedResourceController(t *testing.T) {
+func TestManagedResource(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "ManagedResource Controller Integration Test Suite")
+	RunSpecs(t, "Test Integration ResourceManager ManagedResource Suite")
 }
 
 const testID = "resource-controller-test"
 
 var (
-	ctx = context.Background()
-	log logr.Logger
+	ctx       = context.Background()
+	log       logr.Logger
+	fakeClock *testclock.FakeClock
 
 	restConfig *rest.Config
 	testEnv    *envtest.Environment
@@ -60,14 +62,14 @@ var (
 
 	testNamespace *corev1.Namespace
 
-	filter *managerpredicate.ClassFilter
+	filter *resourcemanagerpredicate.ClassFilter
 )
 
 var _ = BeforeSuite(func() {
 	logf.SetLogger(logger.MustNewZapLogger(logger.DebugLevel, logger.FormatJSON, zap.WriteTo(GinkgoWriter)))
 	log = logf.Log.WithName(testID)
 
-	By("starting test environment")
+	By("Start test environment")
 	testEnv = &envtest.Environment{
 		CRDInstallOptions: envtest.CRDInstallOptions{
 			Paths: []string{
@@ -84,15 +86,15 @@ var _ = BeforeSuite(func() {
 	Expect(restConfig).NotTo(BeNil())
 
 	DeferCleanup(func() {
-		By("stopping test environment")
+		By("Stop test environment")
 		Expect(testEnv.Stop()).To(Succeed())
 	})
 
-	By("creating test client")
+	By("Create test client")
 	testClient, err = client.New(restConfig, client.Options{Scheme: resourcemanagerclient.CombinedScheme})
 	Expect(err).NotTo(HaveOccurred())
 
-	By("creating test namespace")
+	By("Create test Namespace")
 	testNamespace = &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			// create dedicated namespace for each test run, so that we can run multiple tests concurrently for stress tests
@@ -103,11 +105,11 @@ var _ = BeforeSuite(func() {
 	log.Info("Created Namespace for test", "namespaceName", testNamespace.Name)
 
 	DeferCleanup(func() {
-		By("deleting test namespace")
+		By("Delete test Namespace")
 		Expect(testClient.Delete(ctx, testNamespace)).To(Or(Succeed(), BeNotFoundError()))
 	})
 
-	By("setting up manager")
+	By("Setup manager")
 	mgr, err := manager.New(restConfig, manager.Options{
 		Scheme:             resourcemanagerclient.CombinedScheme,
 		MetricsBindAddress: "0",
@@ -115,20 +117,25 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	By("registering controller")
-	filter = predicate.NewClassFilter(resourcemanagerconfigv1alpha1.DefaultResourceClass)
+	By("Register controller")
+	fakeClock = testclock.NewFakeClock(time.Now())
+	filter = predicate.NewClassFilter(resourcemanagerv1alpha1.DefaultResourceClass)
+
 	Expect((&managedresource.Reconciler{
 		Config: config.ManagedResourceControllerConfig{
-			ConcurrentSyncs:     pointer.Int(5),
-			SyncPeriod:          &metav1.Duration{Duration: 500 * time.Millisecond},
+			ConcurrentSyncs: pointer.Int(5),
+			// Higher sync period is used because in some tests, we want to assert an intermediate state of the
+			// resource, which won't be possible if the controller reconciles it back too quickly.
+			SyncPeriod:          &metav1.Duration{Duration: time.Minute},
 			ManagedByLabelValue: pointer.String("gardener"),
 		},
+		Clock:                         fakeClock,
 		ClassFilter:                   filter,
 		RequeueAfterOnDeletionPending: pointer.Duration(50 * time.Millisecond),
 		GarbageCollectorActivated:     true,
 	}).AddToManager(mgr, mgr, mgr)).To(Succeed())
 
-	By("starting manager")
+	By("Start manager")
 	mgrContext, mgrCancel := context.WithCancel(ctx)
 
 	go func() {
@@ -137,7 +144,7 @@ var _ = BeforeSuite(func() {
 	}()
 
 	DeferCleanup(func() {
-		By("stopping manager")
+		By("Stop manager")
 		mgrCancel()
 	})
 })

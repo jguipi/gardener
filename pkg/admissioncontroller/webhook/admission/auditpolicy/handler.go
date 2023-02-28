@@ -19,17 +19,6 @@ import (
 	"fmt"
 	"net/http"
 
-	acadmission "github.com/gardener/gardener/pkg/admissioncontroller/webhook/admission"
-	gardencore "github.com/gardener/gardener/pkg/apis/core"
-	gardencorehelper "github.com/gardener/gardener/pkg/apis/core/helper"
-	gardencoreinstall "github.com/gardener/gardener/pkg/apis/core/install"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/pkg/utils/version"
-	auditv1alpha1 "github.com/gardener/gardener/third_party/apiserver/pkg/apis/audit/v1alpha1"
-	auditv1beta1 "github.com/gardener/gardener/third_party/apiserver/pkg/apis/audit/v1beta1"
-
 	"github.com/Masterminds/semver"
 	"github.com/go-logr/logr"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -46,6 +35,17 @@ import (
 	auditvalidation "k8s.io/apiserver/pkg/apis/audit/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	admissionwebhook "github.com/gardener/gardener/pkg/admissioncontroller/webhook/admission"
+	gardencore "github.com/gardener/gardener/pkg/apis/core"
+	gardencorehelper "github.com/gardener/gardener/pkg/apis/core/helper"
+	gardencoreinstall "github.com/gardener/gardener/pkg/apis/core/install"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/version"
+	auditv1alpha1 "github.com/gardener/gardener/third_party/apiserver/pkg/apis/audit/v1alpha1"
+	auditv1beta1 "github.com/gardener/gardener/third_party/apiserver/pkg/apis/audit/v1beta1"
 )
 
 const auditPolicyConfigMapDataKey = "policy"
@@ -102,7 +102,7 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 	case configmapGK:
 		return h.admitConfigMap(ctx, req)
 	}
-	return acadmission.Allowed("resource is not *core.gardener.cloud/v1beta1.Shoot or *corev1.ConfigMap")
+	return admissionwebhook.Allowed("resource is not *core.gardener.cloud/v1beta1.Shoot or *corev1.ConfigMap")
 }
 
 func (h *Handler) admitShoot(ctx context.Context, request admission.Request) admission.Response {
@@ -114,10 +114,10 @@ func (h *Handler) admitShoot(ctx context.Context, request admission.Request) adm
 	if shoot.DeletionTimestamp != nil {
 		// don't mutate shoot if it's already marked for deletion, otherwise gardener-apiserver will deny the user's/
 		// controller's request, because we changed the spec
-		return acadmission.Allowed("shoot is already marked for deletion")
+		return admissionwebhook.Allowed("shoot is already marked for deletion")
 	}
 
-	var oldAuditPolicyConfigMapName, newAuditPolicyConfigMapName string
+	var oldAuditPolicyConfigMapName, newAuditPolicyConfigMapName, oldShootKubernetesVersion, newShootKubernetesVersion string
 
 	if request.Operation == admissionv1.Update {
 		oldShoot := &gardencore.Shoot{}
@@ -128,24 +128,28 @@ func (h *Handler) admitShoot(ctx context.Context, request admission.Request) adm
 		// skip verification if spec wasn't changed
 		// this way we make sure, that users/gardenlet can always annotate/label the shoot if the spec doesn't change
 		if apiequality.Semantic.DeepEqual(oldShoot.Spec, shoot.Spec) {
-			return acadmission.Allowed("shoot spec was not changed")
+			return admissionwebhook.Allowed("shoot spec was not changed")
 		}
 
+		oldShootKubernetesVersion = oldShoot.Spec.Kubernetes.Version
 		oldAuditPolicyConfigMapName = gardencorehelper.GetShootAuditPolicyConfigMapName(oldShoot.Spec.Kubernetes.KubeAPIServer)
 	}
+	newShootKubernetesVersion = shoot.Spec.Kubernetes.Version
 	newAuditPolicyConfigMapName = gardencorehelper.GetShootAuditPolicyConfigMapName(shoot.Spec.Kubernetes.KubeAPIServer)
 
 	if newAuditPolicyConfigMapName == "" {
-		return acadmission.Allowed("shoot resource is not specifying any audit policy")
+		return admissionwebhook.Allowed("shoot resource is not specifying any audit policy")
 	}
 
 	// oldAuditPolicyConfigMapName is empty for CREATE shoot requests that specify audit policy reference
-	if oldAuditPolicyConfigMapName == newAuditPolicyConfigMapName {
-		return acadmission.Allowed("audit policy configmap was not changed")
+	// if Kubernetes version is changed we need to revalidate if the audit policy API version is compatible with
+	// new Kubernetes version
+	if oldAuditPolicyConfigMapName == newAuditPolicyConfigMapName && oldShootKubernetesVersion == newShootKubernetesVersion {
+		return admissionwebhook.Allowed("audit policy configmap was not changed")
 	}
 
 	auditPolicyCm := &corev1.ConfigMap{}
-	if err := h.APIReader.Get(ctx, kutil.Key(shoot.Namespace, newAuditPolicyConfigMapName), auditPolicyCm); err != nil {
+	if err := h.APIReader.Get(ctx, kubernetesutils.Key(shoot.Namespace, newAuditPolicyConfigMapName), auditPolicyCm); err != nil {
 		if apierrors.IsNotFound(err) {
 			return admission.Errored(http.StatusUnprocessableEntity, fmt.Errorf("referenced audit policy does not exist: namespace: %s, name: %s", shoot.Namespace, newAuditPolicyConfigMapName))
 		}
@@ -158,8 +162,8 @@ func (h *Handler) admitShoot(ctx context.Context, request admission.Request) adm
 	}
 
 	var errCode int32
-	if request.Operation == admissionv1.Create {
-		errCode, err = validateAuditPolicySemanticsForKubernetesVersion(auditPolicy, &shoot.Spec.Kubernetes.Version)
+	if request.Operation == admissionv1.Create || request.Operation == admissionv1.Update {
+		errCode, err = validateAuditPolicySemanticsForKubernetesVersions(auditPolicy, map[string]string{shoot.Name: shoot.Spec.Kubernetes.Version})
 	} else {
 		errCode, err = validateAuditPolicySemantics(auditPolicy)
 	}
@@ -167,7 +171,7 @@ func (h *Handler) admitShoot(ctx context.Context, request admission.Request) adm
 		return admission.Errored(errCode, err)
 	}
 
-	return acadmission.Allowed("referenced audit policy is valid")
+	return admissionwebhook.Allowed("referenced audit policy is valid")
 }
 
 func (h *Handler) admitConfigMap(ctx context.Context, request admission.Request) admission.Response {
@@ -177,7 +181,7 @@ func (h *Handler) admitConfigMap(ctx context.Context, request admission.Request)
 	)
 
 	if request.Operation != admissionv1.Update {
-		return acadmission.Allowed("operation is not update")
+		return admissionwebhook.Allowed("operation is not update")
 	}
 
 	if err := h.decoder.Decode(request, cm); err != nil {
@@ -190,16 +194,15 @@ func (h *Handler) admitConfigMap(ctx context.Context, request admission.Request)
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
 
-	configMapIsReferenced := false
+	var shootNameToKubernetesVersion = make(map[string]string, len(shootList.Items))
 	for _, shoot := range shootList.Items {
-		if gardencorev1beta1helper.GetShootAuditPolicyConfigMapName(shoot.Spec.Kubernetes.KubeAPIServer) == request.Name {
-			configMapIsReferenced = true
-			break
+		if v1beta1helper.GetShootAuditPolicyConfigMapName(shoot.Spec.Kubernetes.KubeAPIServer) == request.Name {
+			shootNameToKubernetesVersion[shoot.Name] = shoot.Spec.Kubernetes.Version
 		}
 	}
 
-	if !configMapIsReferenced {
-		return acadmission.Allowed("configmap is not referenced by a Shoot")
+	if len(shootNameToKubernetesVersion) == 0 {
+		return admissionwebhook.Allowed("configmap is not referenced by a Shoot")
 	}
 
 	auditPolicy, err := getAuditPolicy(cm)
@@ -212,15 +215,15 @@ func (h *Handler) admitConfigMap(ctx context.Context, request admission.Request)
 	}
 	oldAuditPolicy, ok := oldCm.Data[auditPolicyConfigMapDataKey]
 	if ok && oldAuditPolicy == auditPolicy {
-		return acadmission.Allowed("audit policy not changed")
+		return admissionwebhook.Allowed("audit policy not changed")
 	}
 
-	errCode, err := validateAuditPolicySemantics(auditPolicy)
+	errCode, err := validateAuditPolicySemanticsForKubernetesVersions(auditPolicy, shootNameToKubernetesVersion)
 	if err != nil {
 		return admission.Errored(errCode, err)
 	}
 
-	return acadmission.Allowed("configmap change is valid")
+	return admissionwebhook.Allowed("configmap change is valid")
 }
 
 func (h *Handler) getOldObject(request admission.Request, oldObj runtime.Object) error {
@@ -231,10 +234,10 @@ func (h *Handler) getOldObject(request admission.Request, oldObj runtime.Object)
 }
 
 func validateAuditPolicySemantics(auditPolicy string) (errCode int32, err error) {
-	return validateAuditPolicySemanticsForKubernetesVersion(auditPolicy, nil)
+	return validateAuditPolicySemanticsForKubernetesVersions(auditPolicy, nil)
 }
 
-func validateAuditPolicySemanticsForKubernetesVersion(auditPolicy string, kubernetesVersion *string) (errCode int32, err error) {
+func validateAuditPolicySemanticsForKubernetesVersions(auditPolicy string, shootNameToKubernetesVersion map[string]string) (errCode int32, err error) {
 	auditPolicyObj, schemaVersion, err := policyDecoder.Decode([]byte(auditPolicy), nil, nil)
 	if err != nil {
 		return http.StatusUnprocessableEntity, fmt.Errorf("failed to decode the provided audit policy: %w", err)
@@ -248,13 +251,15 @@ func validateAuditPolicySemanticsForKubernetesVersion(auditPolicy string, kubern
 		return http.StatusUnprocessableEntity, fmt.Errorf("provided invalid audit policy: %v", errList)
 	}
 
-	if kubernetesVersion != nil && schemaVersion.Version != "v1" {
-		v, err := semver.NewVersion(*kubernetesVersion)
-		if err != nil {
-			return http.StatusUnprocessableEntity, fmt.Errorf("unable to build version: %w", err)
-		}
-		if !version.ConstraintK8sLess124.Check(v) {
-			return http.StatusUnprocessableEntity, fmt.Errorf("audit policy with apiVersion '%s' is not supported for kubernetes version >= 1.24.0", schemaVersion.Version)
+	if schemaVersion.Version != "v1" {
+		for shootName, k8sVersion := range shootNameToKubernetesVersion {
+			v, err := semver.NewVersion(k8sVersion)
+			if err != nil {
+				return http.StatusUnprocessableEntity, fmt.Errorf("unable to parse kubernetes version of shoot '%s': %w", shootName, err)
+			}
+			if !version.ConstraintK8sLess124.Check(v) {
+				return http.StatusUnprocessableEntity, fmt.Errorf("audit policy with apiVersion '%s' is not supported for shoot '%s' with Kubernetes version >= 1.24.0", schemaVersion.Version, shootName)
+			}
 		}
 	}
 

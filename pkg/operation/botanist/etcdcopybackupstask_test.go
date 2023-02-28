@@ -19,19 +19,6 @@ import (
 	"errors"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	fakeclientset "github.com/gardener/gardener/pkg/client/kubernetes/fake"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	"github.com/gardener/gardener/pkg/operation"
-	. "github.com/gardener/gardener/pkg/operation/botanist"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/etcdcopybackupstask"
-	mockedcdcopybackupstask "github.com/gardener/gardener/pkg/operation/botanist/component/etcdcopybackupstask/mock"
-	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
-	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
-	"github.com/gardener/gardener/pkg/utils/test"
-
 	druidv1alpha1 "github.com/gardener/etcd-druid/api/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/golang/mock/gomock"
@@ -43,6 +30,19 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	kubernetesfake "github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	"github.com/gardener/gardener/pkg/operation"
+	. "github.com/gardener/gardener/pkg/operation/botanist"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/etcdcopybackupstask"
+	mocketcdcopybackupstask "github.com/gardener/gardener/pkg/operation/botanist/component/etcdcopybackupstask/mock"
+	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
+	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
+	"github.com/gardener/gardener/pkg/utils/test"
 )
 
 var _ = Describe("EtcdCopyBackupsTask", func() {
@@ -66,7 +66,7 @@ var _ = Describe("EtcdCopyBackupsTask", func() {
 		ctrl = gomock.NewController(GinkgoT())
 		c = mockclient.NewMockClient(ctrl)
 		reader = mockclient.NewMockReader(ctrl)
-		kubernetesClient = fakeclientset.NewClientSetBuilder().
+		kubernetesClient = kubernetesfake.NewClientSetBuilder().
 			WithClient(c).
 			WithAPIReader(reader).
 			Build()
@@ -129,7 +129,7 @@ var _ = Describe("EtcdCopyBackupsTask", func() {
 
 	Describe("#DeployEtcdCopyBackupsTask", func() {
 		var (
-			etcdCopyBackupsTask    *mockedcdcopybackupstask.MockInterface
+			etcdCopyBackupsTask    *mocketcdcopybackupstask.MockInterface
 			etcdBackupSecret       *corev1.Secret
 			sourceEtcdBackupSecret *corev1.Secret
 			sourceBackupEntry      *extensionsv1alpha1.BackupEntry
@@ -140,7 +140,7 @@ var _ = Describe("EtcdCopyBackupsTask", func() {
 		)
 
 		BeforeEach(func() {
-			etcdCopyBackupsTask = mockedcdcopybackupstask.NewMockInterface(ctrl)
+			etcdCopyBackupsTask = mocketcdcopybackupstask.NewMockInterface(ctrl)
 			botanist.Shoot.Components = &shootpkg.Components{
 				ControlPlane: &shootpkg.ControlPlane{
 					EtcdCopyBackupsTask: etcdCopyBackupsTask,

@@ -15,16 +15,20 @@
 package controlplane
 
 import (
+	"context"
 	"path/filepath"
 	"time"
 
+	extensionscontroller "github.com/gardener/gardener/extensions/pkg/controller"
 	"github.com/gardener/gardener/extensions/pkg/controller/controlplane/genericactuator"
 	extensionssecretsmanager "github.com/gardener/gardener/extensions/pkg/util/secret/manager"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	localimagevector "github.com/gardener/gardener/pkg/provider-local/imagevector"
 	"github.com/gardener/gardener/pkg/provider-local/local"
 	"github.com/gardener/gardener/pkg/utils/chart"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
 	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
 )
 
@@ -42,36 +46,36 @@ type valuesProvider struct {
 func getSecretConfigs(namespace string) []extensionssecretsmanager.SecretConfigWithOptions {
 	return []extensionssecretsmanager.SecretConfigWithOptions{
 		{
-			Config: &secretutils.CertificateSecretConfig{
+			Config: &secretsutils.CertificateSecretConfig{
 				Name:       caNameControlPlane,
 				CommonName: caNameControlPlane,
-				CertType:   secretutils.CACert,
+				CertType:   secretsutils.CACert,
 			},
 			Options: []secretsmanager.GenerateOption{secretsmanager.Persist()},
 		},
 		{
-			Config: &secretutils.CertificateSecretConfig{
+			Config: &secretsutils.CertificateSecretConfig{
 				Name:       local.Name + "-dummy-server",
 				CommonName: local.Name + "-dummy-server",
-				DNSNames:   kutil.DNSNamesForService(local.Name+"-dummy-server", namespace),
-				CertType:   secretutils.ServerCert,
+				DNSNames:   kubernetesutils.DNSNamesForService(local.Name+"-dummy-server", namespace),
+				CertType:   secretsutils.ServerCert,
 			},
 			Options: []secretsmanager.GenerateOption{secretsmanager.SignedByCA(caNameControlPlane)},
 		},
 		{
-			Config: &secretutils.CertificateSecretConfig{
+			Config: &secretsutils.CertificateSecretConfig{
 				Name:                        local.Name + "-dummy-client",
 				CommonName:                  "extensions.gardener.cloud:" + local.Name + ":dummy-client",
 				Organization:                []string{"extensions.gardener.cloud:" + local.Name + ":dummy"},
-				CertType:                    secretutils.ClientCert,
+				CertType:                    secretsutils.ClientCert,
 				SkipPublishingCACertificate: true,
 			},
 			Options: []secretsmanager.GenerateOption{secretsmanager.SignedByCA(caNameControlPlane)},
 		},
 		{
-			Config: &secretutils.BasicAuthSecretConfig{
+			Config: &secretsutils.BasicAuthSecretConfig{
 				Name:           local.Name + "-dummy-auth",
-				Format:         secretutils.BasicAuthFormatCSV,
+				Format:         secretsutils.BasicAuthFormatNormal,
 				PasswordLength: 32,
 			},
 			Options: []secretsmanager.GenerateOption{secretsmanager.Validity(time.Hour)},
@@ -99,3 +103,18 @@ var (
 		Path: filepath.Join(local.InternalChartsPath, "shoot-storageclasses"),
 	}
 )
+
+// GetControlPlaneShootChartValues returns the values for the control plane shoot chart applied by the generic actuator.
+func (vp *valuesProvider) GetControlPlaneShootChartValues(
+	_ context.Context,
+	cp *extensionsv1alpha1.ControlPlane,
+	cluster *extensionscontroller.Cluster,
+	secretsReader secretsmanager.Reader,
+	_ map[string]string,
+) (map[string]interface{}, error) {
+	return map[string]interface{}{
+		"local-path-provisioner": map[string]interface{}{
+			"pspDisabled": v1beta1helper.IsPSPDisabled(cluster.Shoot),
+		},
+	}, nil
+}

@@ -17,16 +17,16 @@ package tolerationrestriction_test
 import (
 	"context"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	coreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
-	. "github.com/gardener/gardener/plugin/pkg/shoot/tolerationrestriction"
-	"github.com/gardener/gardener/plugin/pkg/shoot/tolerationrestriction/apis/shoottolerationrestriction"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/utils/pointer"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	gardencoreinformers "github.com/gardener/gardener/pkg/client/core/informers/internalversion"
+	. "github.com/gardener/gardener/plugin/pkg/shoot/tolerationrestriction"
+	"github.com/gardener/gardener/plugin/pkg/shoot/tolerationrestriction/apis/shoottolerationrestriction"
 )
 
 var _ = Describe("tolerationrestriction", func() {
@@ -40,11 +40,11 @@ var _ = Describe("tolerationrestriction", func() {
 			attrs            admission.Attributes
 			admissionHandler *TolerationRestriction
 
-			gardenCoreInformerFactory coreinformers.SharedInformerFactory
+			gardenCoreInformerFactory gardencoreinformers.SharedInformerFactory
 		)
 
 		BeforeEach(func() {
-			gardenCoreInformerFactory = coreinformers.NewSharedInformerFactory(nil, 0)
+			gardenCoreInformerFactory = gardencoreinformers.NewSharedInformerFactory(nil, 0)
 
 			admissionHandler, _ = New(&shoottolerationrestriction.Configuration{})
 			admissionHandler.AssignReadyFunc(func() bool { return true })
@@ -323,7 +323,7 @@ var _ = Describe("tolerationrestriction", func() {
 
 		It("should not return error if ProjectLister is set", func() {
 			dr, _ := New(&shoottolerationrestriction.Configuration{})
-			dr.SetInternalCoreInformerFactory(coreinformers.NewSharedInformerFactory(nil, 0))
+			dr.SetInternalCoreInformerFactory(gardencoreinformers.NewSharedInformerFactory(nil, 0))
 
 			err := dr.ValidateInitialization()
 			Expect(err).ToNot(HaveOccurred())

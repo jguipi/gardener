@@ -22,30 +22,6 @@ import (
 	"time"
 
 	druidv1alpha1 "github.com/gardener/etcd-druid/api/v1alpha1"
-
-	"github.com/gardener/gardener/extensions/pkg/controller"
-	controllercmd "github.com/gardener/gardener/extensions/pkg/controller/cmd"
-	"github.com/gardener/gardener/extensions/pkg/controller/controlplane/genericactuator"
-	"github.com/gardener/gardener/extensions/pkg/controller/heartbeat"
-	heartbeatcmd "github.com/gardener/gardener/extensions/pkg/controller/heartbeat/cmd"
-	"github.com/gardener/gardener/extensions/pkg/controller/operatingsystemconfig/oscommon"
-	"github.com/gardener/gardener/extensions/pkg/controller/worker"
-	webhookcmd "github.com/gardener/gardener/extensions/pkg/webhook/cmd"
-	gardenerhealthz "github.com/gardener/gardener/pkg/healthz"
-	localinstall "github.com/gardener/gardener/pkg/provider-local/apis/local/install"
-	localbackupbucket "github.com/gardener/gardener/pkg/provider-local/controller/backupbucket"
-	localbackupentry "github.com/gardener/gardener/pkg/provider-local/controller/backupentry"
-	"github.com/gardener/gardener/pkg/provider-local/controller/backupoptions"
-	localcontrolplane "github.com/gardener/gardener/pkg/provider-local/controller/controlplane"
-	localdnsrecord "github.com/gardener/gardener/pkg/provider-local/controller/dnsrecord"
-	localhealthcheck "github.com/gardener/gardener/pkg/provider-local/controller/healthcheck"
-	localinfrastructure "github.com/gardener/gardener/pkg/provider-local/controller/infrastructure"
-	localingress "github.com/gardener/gardener/pkg/provider-local/controller/ingress"
-	localservice "github.com/gardener/gardener/pkg/provider-local/controller/service"
-	localworker "github.com/gardener/gardener/pkg/provider-local/controller/worker"
-	"github.com/gardener/gardener/pkg/provider-local/local"
-	"github.com/gardener/gardener/pkg/utils/retry"
-
 	machinev1alpha1 "github.com/gardener/machine-controller-manager/pkg/apis/machine/v1alpha1"
 	"github.com/spf13/cobra"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
@@ -62,6 +38,29 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	"github.com/gardener/gardener/extensions/pkg/controller"
+	extensionscmdcontroller "github.com/gardener/gardener/extensions/pkg/controller/cmd"
+	"github.com/gardener/gardener/extensions/pkg/controller/controlplane/genericactuator"
+	"github.com/gardener/gardener/extensions/pkg/controller/heartbeat"
+	extensionsheartbeatcmd "github.com/gardener/gardener/extensions/pkg/controller/heartbeat/cmd"
+	"github.com/gardener/gardener/extensions/pkg/controller/operatingsystemconfig/oscommon"
+	"github.com/gardener/gardener/extensions/pkg/controller/worker"
+	extensionscmdwebhook "github.com/gardener/gardener/extensions/pkg/webhook/cmd"
+	gardenerhealthz "github.com/gardener/gardener/pkg/healthz"
+	localinstall "github.com/gardener/gardener/pkg/provider-local/apis/local/install"
+	localbackupbucket "github.com/gardener/gardener/pkg/provider-local/controller/backupbucket"
+	localbackupentry "github.com/gardener/gardener/pkg/provider-local/controller/backupentry"
+	"github.com/gardener/gardener/pkg/provider-local/controller/backupoptions"
+	localcontrolplane "github.com/gardener/gardener/pkg/provider-local/controller/controlplane"
+	localdnsrecord "github.com/gardener/gardener/pkg/provider-local/controller/dnsrecord"
+	localhealthcheck "github.com/gardener/gardener/pkg/provider-local/controller/healthcheck"
+	localinfrastructure "github.com/gardener/gardener/pkg/provider-local/controller/infrastructure"
+	localingress "github.com/gardener/gardener/pkg/provider-local/controller/ingress"
+	localservice "github.com/gardener/gardener/pkg/provider-local/controller/service"
+	localworker "github.com/gardener/gardener/pkg/provider-local/controller/worker"
+	"github.com/gardener/gardener/pkg/provider-local/local"
+	"github.com/gardener/gardener/pkg/utils/retry"
 )
 
 var hostIP string
@@ -83,26 +82,26 @@ func init() {
 // NewControllerManagerCommand creates a new command for running a local provider controller.
 func NewControllerManagerCommand(ctx context.Context) *cobra.Command {
 	var (
-		restOpts = &controllercmd.RESTOptions{}
-		mgrOpts  = &controllercmd.ManagerOptions{
+		restOpts = &extensionscmdcontroller.RESTOptions{}
+		mgrOpts  = &extensionscmdcontroller.ManagerOptions{
 			LeaderElection:             true,
 			LeaderElectionResourceLock: resourcelock.LeasesResourceLock,
-			LeaderElectionID:           controllercmd.LeaderElectionNameID(local.Name),
+			LeaderElectionID:           extensionscmdcontroller.LeaderElectionNameID(local.Name),
 			LeaderElectionNamespace:    os.Getenv("LEADER_ELECTION_NAMESPACE"),
 			WebhookServerPort:          443,
 			WebhookCertDir:             "/tmp/gardener-extensions-cert",
 			MetricsBindAddress:         ":8080",
 			HealthBindAddress:          ":8081",
 		}
-		generalOpts = &controllercmd.GeneralOptions{}
+		generalOpts = &extensionscmdcontroller.GeneralOptions{}
 
 		// options for the health care controller
-		healthCheckCtrlOpts = &controllercmd.ControllerOptions{
+		healthCheckCtrlOpts = &extensionscmdcontroller.ControllerOptions{
 			MaxConcurrentReconciles: 5,
 		}
 
 		// options for the controlplane controller
-		controlPlaneCtrlOpts = &controllercmd.ControllerOptions{
+		controlPlaneCtrlOpts = &extensionscmdcontroller.ControllerOptions{
 			MaxConcurrentReconciles: 5,
 		}
 
@@ -130,39 +129,39 @@ func NewControllerManagerCommand(ctx context.Context) *cobra.Command {
 		}
 
 		// options for the operatingsystemconfig controller
-		operatingSystemConfigCtrlOpts = &controllercmd.ControllerOptions{
+		operatingSystemConfigCtrlOpts = &extensionscmdcontroller.ControllerOptions{
 			MaxConcurrentReconciles: 5,
 		}
 
 		// options for the infrastructure controller
-		infraCtrlOpts = &controllercmd.ControllerOptions{
+		infraCtrlOpts = &extensionscmdcontroller.ControllerOptions{
 			MaxConcurrentReconciles: 5,
 		}
-		reconcileOpts = &controllercmd.ReconcilerOptions{}
+		reconcileOpts = &extensionscmdcontroller.ReconcilerOptions{}
 
 		// options for the worker controller
-		workerCtrlOpts = &controllercmd.ControllerOptions{
+		workerCtrlOpts = &extensionscmdcontroller.ControllerOptions{
 			MaxConcurrentReconciles: 5,
 		}
 		workerReconcileOpts = &worker.Options{
 			DeployCRDs: true,
 		}
-		workerCtrlOptsUnprefixed = controllercmd.NewOptionAggregator(workerCtrlOpts, workerReconcileOpts)
+		workerCtrlOptsUnprefixed = extensionscmdcontroller.NewOptionAggregator(workerCtrlOpts, workerReconcileOpts)
 
-		heartbeatCtrlOptions = &heartbeatcmd.Options{
+		heartbeatCtrlOptions = &extensionsheartbeatcmd.Options{
 			ExtensionName:        local.Name,
 			RenewIntervalSeconds: 30,
 			Namespace:            os.Getenv("LEADER_ELECTION_NAMESPACE"),
 		}
 
 		// options for the webhook server
-		webhookServerOptions = &webhookcmd.ServerOptions{
+		webhookServerOptions = &extensionscmdwebhook.ServerOptions{
 			Namespace: os.Getenv("WEBHOOK_CONFIG_NAMESPACE"),
 		}
 
 		controllerSwitches = ControllerSwitchOptions()
 		webhookSwitches    = WebhookSwitchOptions()
-		webhookOptions     = webhookcmd.NewAddToManagerOptions(
+		webhookOptions     = extensionscmdwebhook.NewAddToManagerOptions(
 			local.Name,
 			genericactuator.ShootWebhooksResourceName,
 			genericactuator.ShootWebhookNamespaceSelector(local.Type),
@@ -170,20 +169,20 @@ func NewControllerManagerCommand(ctx context.Context) *cobra.Command {
 			webhookSwitches,
 		)
 
-		aggOption = controllercmd.NewOptionAggregator(
+		aggOption = extensionscmdcontroller.NewOptionAggregator(
 			restOpts,
 			mgrOpts,
 			generalOpts,
-			controllercmd.PrefixOption("controlplane-", controlPlaneCtrlOpts),
-			controllercmd.PrefixOption("dnsrecord-", dnsRecordCtrlOpts),
-			controllercmd.PrefixOption("infrastructure-", infraCtrlOpts),
-			controllercmd.PrefixOption("worker-", &workerCtrlOptsUnprefixed),
-			controllercmd.PrefixOption("ingress-", ingressCtrlOpts),
-			controllercmd.PrefixOption("service-", serviceCtrlOpts),
-			controllercmd.PrefixOption("backupbucket-", localBackupBucketOptions),
-			controllercmd.PrefixOption("operatingsystemconfig-", operatingSystemConfigCtrlOpts),
-			controllercmd.PrefixOption("healthcheck-", healthCheckCtrlOpts),
-			controllercmd.PrefixOption("heartbeat-", heartbeatCtrlOptions),
+			extensionscmdcontroller.PrefixOption("controlplane-", controlPlaneCtrlOpts),
+			extensionscmdcontroller.PrefixOption("dnsrecord-", dnsRecordCtrlOpts),
+			extensionscmdcontroller.PrefixOption("infrastructure-", infraCtrlOpts),
+			extensionscmdcontroller.PrefixOption("worker-", &workerCtrlOptsUnprefixed),
+			extensionscmdcontroller.PrefixOption("ingress-", ingressCtrlOpts),
+			extensionscmdcontroller.PrefixOption("service-", serviceCtrlOpts),
+			extensionscmdcontroller.PrefixOption("backupbucket-", localBackupBucketOptions),
+			extensionscmdcontroller.PrefixOption("operatingsystemconfig-", operatingSystemConfigCtrlOpts),
+			extensionscmdcontroller.PrefixOption("healthcheck-", healthCheckCtrlOpts),
+			extensionscmdcontroller.PrefixOption("heartbeat-", heartbeatCtrlOptions),
 			controllerSwitches,
 			reconcileOpts,
 			webhookOptions,
@@ -325,20 +324,25 @@ func (w *webhookTriggerer) Start(ctx context.Context) error {
 		return err
 	}
 
-	if err := w.trigger(ctx, w.client, w.client.Status(), &corev1.NodeList{}); err != nil {
+	if err := w.trigger(ctx, w.client, nil, w.client.Status(), &corev1.NodeList{}); err != nil {
 		return err
 	}
 
-	return w.trigger(ctx, w.client, w.client, &appsv1.DeploymentList{}, client.MatchingLabels{"app": "dependency-watchdog-probe"})
+	return w.trigger(ctx, w.client, w.client, nil, &appsv1.DeploymentList{}, client.MatchingLabels{"app": "dependency-watchdog-probe"})
 }
 
-func (w *webhookTriggerer) trigger(ctx context.Context, reader client.Reader, writer client.StatusWriter, objectList client.ObjectList, opts ...client.ListOption) error {
+func (w *webhookTriggerer) trigger(ctx context.Context, reader client.Reader, writer client.Writer, statusWriter client.StatusWriter, objectList client.ObjectList, opts ...client.ListOption) error {
 	if err := reader.List(ctx, objectList, opts...); err != nil {
 		return err
 	}
 
 	return meta.EachListItem(objectList, func(obj runtime.Object) error {
-		object := obj.(client.Object)
-		return writer.Patch(ctx, object, client.RawPatch(types.StrategicMergePatchType, []byte("{}")))
+		switch object := obj.(type) {
+		case *appsv1.Deployment:
+			return writer.Patch(ctx, object, client.RawPatch(types.StrategicMergePatchType, []byte("{}")))
+		case *corev1.Node:
+			return statusWriter.Patch(ctx, object, client.RawPatch(types.StrategicMergePatchType, []byte("{}")))
+		}
+		return nil
 	})
 }

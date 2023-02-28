@@ -19,22 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	fakekubernetes "github.com/gardener/gardener/pkg/client/kubernetes/fake"
-	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-	"github.com/gardener/gardener/pkg/operation"
-	. "github.com/gardener/gardener/pkg/operation/botanist"
-	mockkubeapiserver "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/mock"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/resourcemanager"
-	mockresourcemanager "github.com/gardener/gardener/pkg/operation/botanist/component/resourcemanager/mock"
-	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
-	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
-	"github.com/gardener/gardener/pkg/utils/test"
-
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -43,9 +27,24 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	vpaautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	kubernetesfake "github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
+	"github.com/gardener/gardener/pkg/operation"
+	. "github.com/gardener/gardener/pkg/operation/botanist"
+	mockkubeapiserver "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver/mock"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/resourcemanager"
+	mockresourcemanager "github.com/gardener/gardener/pkg/operation/botanist/component/resourcemanager/mock"
+	shootpkg "github.com/gardener/gardener/pkg/operation/shoot"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
+	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
+	"github.com/gardener/gardener/pkg/utils/test"
 )
 
 var _ = Describe("ResourceManager", func() {
@@ -87,11 +86,11 @@ var _ = Describe("ResourceManager", func() {
 			resourceManager = mockresourcemanager.NewMockInterface(ctrl)
 
 			c = mockclient.NewMockClient(ctrl)
-			k8sSeedClient = fakekubernetes.NewClientSetBuilder().WithClient(c).Build()
+			k8sSeedClient = kubernetesfake.NewClientSetBuilder().WithClient(c).Build()
 			sm = fakesecretsmanager.New(c, seedNamespace)
 
-			By("expecting secrets managed outside of this function for whose secretsmanager.Get() will be called")
-			c.EXPECT().Get(gomock.Any(), kutil.Key(seedNamespace, "ca"), gomock.AssignableToTypeOf(&corev1.Secret{})).AnyTimes()
+			By("Ensure secrets managed outside of this function for whose secretsmanager.Get() will be called")
+			c.EXPECT().Get(gomock.Any(), kubernetesutils.Key(seedNamespace, "ca"), gomock.AssignableToTypeOf(&corev1.Secret{})).AnyTimes()
 
 			botanist.SeedClientSet = k8sSeedClient
 			botanist.SecretsManager = sm
@@ -146,12 +145,6 @@ var _ = Describe("ResourceManager", func() {
 
 						// set secrets
 						resourceManager.EXPECT().SetSecrets(secrets),
-
-						c.EXPECT().Delete(ctx, gomock.AssignableToTypeOf(&vpaautoscalingv1.VerticalPodAutoscaler{})).DoAndReturn(func(_ context.Context, obj *vpaautoscalingv1.VerticalPodAutoscaler, opts ...client.DeleteOption) error {
-							Expect(obj.Name).To(Equal("kube-addon-manager-vpa"))
-							Expect(obj.Namespace).To(Equal(seedNamespace))
-							return nil
-						}),
 					)
 
 					resourceManager.EXPECT().Deploy(ctx)
@@ -176,7 +169,7 @@ var _ = Describe("ResourceManager", func() {
 
 					gomock.InOrder(
 						resourceManager.EXPECT().GetReplicas(),
-						c.EXPECT().Get(ctx, kutil.Key(seedNamespace, "gardener-resource-manager"), gomock.AssignableToTypeOf(&appsv1.Deployment{})),
+						c.EXPECT().Get(ctx, kubernetesutils.Key(seedNamespace, "gardener-resource-manager"), gomock.AssignableToTypeOf(&appsv1.Deployment{})),
 						resourceManager.EXPECT().SetReplicas(pointer.Int32(0)),
 					)
 				})
@@ -215,7 +208,7 @@ var _ = Describe("ResourceManager", func() {
 
 					gomock.InOrder(
 						resourceManager.EXPECT().GetReplicas(),
-						c.EXPECT().Get(ctx, kutil.Key(seedNamespace, "gardener-resource-manager"), gomock.AssignableToTypeOf(&appsv1.Deployment{})),
+						c.EXPECT().Get(ctx, kubernetesutils.Key(seedNamespace, "gardener-resource-manager"), gomock.AssignableToTypeOf(&appsv1.Deployment{})),
 						resourceManager.EXPECT().SetReplicas(pointer.Int32(0)),
 					)
 				})
@@ -238,7 +231,7 @@ var _ = Describe("ResourceManager", func() {
 
 					gomock.InOrder(
 						resourceManager.EXPECT().GetReplicas(),
-						c.EXPECT().Get(ctx, kutil.Key(seedNamespace, "gardener-resource-manager"), gomock.AssignableToTypeOf(&appsv1.Deployment{})),
+						c.EXPECT().Get(ctx, kubernetesutils.Key(seedNamespace, "gardener-resource-manager"), gomock.AssignableToTypeOf(&appsv1.Deployment{})),
 						resourceManager.EXPECT().SetReplicas(pointer.Int32(0)),
 					)
 				})
@@ -265,12 +258,6 @@ var _ = Describe("ResourceManager", func() {
 				})
 
 				It("should set the secrets and deploy", func() {
-					c.EXPECT().Delete(ctx, gomock.AssignableToTypeOf(&vpaautoscalingv1.VerticalPodAutoscaler{})).DoAndReturn(func(_ context.Context, obj *vpaautoscalingv1.VerticalPodAutoscaler, opts ...client.DeleteOption) error {
-						Expect(obj.Name).To(Equal("kube-addon-manager-vpa"))
-						Expect(obj.Namespace).To(Equal(seedNamespace))
-						return nil
-					})
-
 					resourceManager.EXPECT().Deploy(ctx)
 					Expect(botanist.DeployGardenerResourceManager(ctx)).To(Succeed())
 				})
@@ -324,12 +311,6 @@ var _ = Describe("ResourceManager", func() {
 						// set secrets and deploy with shoot access token
 						resourceManager.EXPECT().SetSecrets(secrets),
 						resourceManager.EXPECT().Deploy(ctx),
-
-						c.EXPECT().Delete(ctx, gomock.AssignableToTypeOf(&vpaautoscalingv1.VerticalPodAutoscaler{})).DoAndReturn(func(_ context.Context, obj *vpaautoscalingv1.VerticalPodAutoscaler, opts ...client.DeleteOption) error {
-							Expect(obj.Name).To(Equal("kube-addon-manager-vpa"))
-							Expect(obj.Namespace).To(Equal(seedNamespace))
-							return nil
-						}),
 					)
 
 					Expect(botanist.DeployGardenerResourceManager(ctx)).To(Succeed())

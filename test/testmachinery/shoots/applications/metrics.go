@@ -32,11 +32,6 @@ import (
 	"fmt"
 	"time"
 
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	"github.com/gardener/gardener/pkg/utils/retry"
-	"github.com/gardener/gardener/test/framework"
-	"github.com/gardener/gardener/test/framework/resources/templates"
-
 	"github.com/onsi/ginkgo/v2"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -45,6 +40,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/retry"
+	"github.com/gardener/gardener/test/framework"
+	"github.com/gardener/gardener/test/framework/resources/templates"
 )
 
 const (
@@ -85,7 +85,7 @@ var _ = ginkgo.Describe("Shoot application metrics testing", func() {
 		framework.ExpectNoError(
 			retry.Until(ctx, 30*time.Second, func(ctx context.Context) (bool, error) {
 				podMetrics := &metricsv1beta1.PodMetrics{}
-				if err := f.ShootClient.Client().Get(ctx, kutil.Key(f.Namespace, podName), podMetrics); err != nil {
+				if err := f.ShootClient.Client().Get(ctx, kubernetesutils.Key(f.Namespace, podName), podMetrics); err != nil {
 					if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) || apierrors.IsServiceUnavailable(err) {
 						f.Logger.Error(err, "No metrics for pod available yet", "pod", client.ObjectKeyFromObject(podMetrics))
 						return retry.MinorError(err)
@@ -109,7 +109,7 @@ var _ = ginkgo.Describe("Shoot application metrics testing", func() {
 			}),
 		)
 	}, metricsTestTimeout, framework.WithCAfterTest(func(ctx context.Context) {
-		ginkgo.By("cleanup metrics test deployment")
+		ginkgo.By("Cleanup metrics test deployment")
 		err := f.ShootClient.Client().Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: f.Namespace}})
 		framework.ExpectNoError(client.IgnoreNotFound(err))
 	}, cleanupTimeout))

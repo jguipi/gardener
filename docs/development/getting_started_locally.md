@@ -1,4 +1,4 @@
-# Running Gardener locally
+# Developing Gardener Locally
 
 This document will walk you through running Gardener on your local machine for development purposes.
 If you encounter difficulties, please open an issue so that we can make this process easier.
@@ -9,6 +9,18 @@ In this guide, we will start a [KinD](https://kind.sigs.k8s.io/) cluster which i
 The Gardener components, however, will be run as regular processes on your machine (hence, no container images are being built).
 
 ![Architecture Diagram](content/getting_started_locally.png)
+
+## Alternatives
+
+When developing Gardener on your local machine you might face several limitations:
+
+- Your machine doesn't have enough compute resources (see [prerequisites](#prerequisites)) for hosting a second seed cluster or multiple shoot clusters.
+- Developing Gardener's [IPv6 features](../usage/ipv6.md) requires a Linux machine and native IPv6 connectivity to the internet, but you're on macOS or don't have IPv6 connectivity in your office environment or via your home ISP.
+
+In these cases, you might want to check out one of the following options that run the setup described in this guide elsewhere for circumventing these limitations:
+
+- [remote local setup](#remote-local-setup): develop on a remote pod for more compute resources
+- [dev box on Google Cloud](https://github.com/gardener-community/dev-box-gcp): develop on a Google Cloud machine for more compute resource and/or simple IPv4/IPv6 dual-stack networking
 
 ## Prerequisites
 
@@ -33,11 +45,13 @@ The Gardener components, however, will be run as regular processes on your machi
 
     and reload the terminal.
 
-## Setting up the KinD cluster (garden and seed)
+## Setting Up the KinD Cluster (Garden and Seed)
 
 ```bash
 make kind-up KIND_ENV=local
 ```
+
+> If you want to setup an IPv6 KinD cluster, use `make kind-up IPFAMILY=ipv6` instead.
 
 This command sets up a new KinD cluster named `gardener-local` and stores the kubeconfig in the `./example/gardener-local/kind/local/kubeconfig` file.
 
@@ -55,7 +69,32 @@ With this, mirrored images don't have to be pulled again after recreating the cl
 The command also deploys a default [calico](https://github.com/projectcalico/calico) installation as the cluster's CNI implementation with `NetworkPolicy` support (the default `kindnet` CNI doesn't provide `NetworkPolicy` support).
 Furthermore, it deploys the [metrics-server](https://github.com/kubernetes-sigs/metrics-server) in order to support HPA and VPA on the seed cluster.
 
-## Setting up Gardener
+## Outgoing IPv6 Single-Stack Networking (optional)
+
+If you want to test IPv6-related features, we need to configure NAT for outgoing traffic from the kind network to the internet.
+After `make kind-up IPFAMILY=ipv6`, check the network created by kind:
+
+```bash
+$ docker network inspect kind | jq '.[].IPAM.Config[].Subnet'
+"172.18.0.0/16"
+"fc00:f853:ccd:e793::/64"
+```
+
+Determine which device is used for outgoing internet traffic by looking at the default route:
+
+```bash
+$ ip route show default
+default via 192.168.195.1 dev enp3s0 proto dhcp src 192.168.195.34 metric 100
+```
+
+Configure NAT for traffic from the kind cluster to the internet using the IPv6 range and the network device from the previous two steps:
+```bash
+ip6tables -t nat -A POSTROUTING -o enp3s0 -s fc00:f853:ccd:e793::/64 -j MASQUERADE
+```
+
+## Setting Up Gardener
+
+In a terminal pane, run:
 
 ```bash
 make dev-setup                                                                # preparing the environment (without webhooks for now)
@@ -63,34 +102,34 @@ kubectl wait --for=condition=ready pod -l run=etcd -n garden --timeout 2m     # 
 make start-apiserver                                                          # starting gardener-apiserver
 ```
 
-In a new terminal pane, run
+In a new terminal pane, run:
 
 ```bash
 kubectl wait --for=condition=available apiservice v1beta1.core.gardener.cloud # wait for gardener-apiserver to be ready
 make start-admission-controller                                               # starting gardener-admission-controller
 ```
 
-In a new terminal pane, run
+In a new terminal pane, run:
 
 ```bash
 make dev-setup DEV_SETUP_WITH_WEBHOOKS=true                                   # preparing the environment with webhooks
 make start-controller-manager                                                 # starting gardener-controller-manager
 ```
 
-(Optional): In a new terminal pane, run
+(Optional): In a new terminal pane, run:
 
 ```bash
 make start-scheduler                                                          # starting gardener-scheduler
 ```
 
-In a new terminal pane, run
+In a new terminal pane, run:
 
 ```bash
 make register-local-env                                                       # registering the local environment (CloudProfile, Seed, etc.)
 make start-gardenlet SEED_NAME=local                                          # starting gardenlet
 ```
 
-In a new terminal pane, run
+In a new terminal pane, run:
 
 ```bash
 make start-extension-provider-local                                           # starting gardener-extension-provider-local
@@ -98,12 +137,12 @@ make start-extension-provider-local                                           # 
 
 ℹ️ The [`provider-local`](../extensions/provider-local.md) is started with elevated privileges since it needs to manipulate your `/etc/hosts` file to enable you accessing the created shoot clusters from your local machine, see [this](../extensions/provider-local.md#dnsrecord) for more details.
 
-## Creating a `Shoot` cluster
+## Creating a `Shoot` Cluster
 
-You can wait for the `Seed` to be ready by running
+You can wait for the `Seed` to become ready by running:
 
 ```bash
-kubectl wait --for=condition=gardenletready --for=condition=extensionsready --for=condition=bootstrapped seed local --timeout=5m
+./hack/usage/wait-for.sh seed local GardenletReady Bootstrapped SeedSystemComponentsHealthy ExtensionsReady
 ```
 
 Alternatively, you can run `kubectl get seed local` and wait for the `STATUS` to indicate readiness:
@@ -113,16 +152,16 @@ NAME    STATUS   PROVIDER   REGION   AGE     VERSION       K8S VERSION
 local   Ready    local      local    4m42s   vX.Y.Z-dev    v1.21.1
 ```
 
-In order to create a first shoot cluster, just run
+In order to create a first shoot cluster, just run:
 
 ```bash
 kubectl apply -f example/provider-local/shoot.yaml
 ```
 
-You can wait for the `Shoot` to be ready by running
+You can wait for the `Shoot` to be ready by running:
 
 ```bash
-kubectl wait --for=condition=apiserveravailable --for=condition=controlplanehealthy --for=condition=everynodeready --for=condition=systemcomponentshealthy shoot local -n garden-local --timeout=10m
+NAMESPACE=garden-local ./hack/usage/wait-for.sh shoot local APIServerAvailable ControlPlaneHealthy ObservabilityComponentsHealthy EveryNodeReady SystemComponentsHealthy
 ```
 
 Alternatively, you can run `kubectl -n garden-local get shoot local` and wait for the `LAST OPERATION` to reach `100%`:
@@ -132,24 +171,20 @@ NAME    CLOUDPROFILE   PROVIDER   REGION   K8S VERSION   HIBERNATION   LAST OPER
 local   local          local      local    1.21.0        Awake         Create Processing (43%)   healthy   94s
 ```
 
-(Optional): You could also execute a simple e2e test (creating and deleting a shoot) by running
+(Optional): You could also execute a simple e2e test (creating and deleting a shoot) by running:
 
 ```shell
 make test-e2e-local-simple KUBECONFIG="$PWD/example/gardener-local/kind/local/kubeconfig"
 ```
 
-When the shoot got successfully created you can access it as follows:
+When the `Shoot` got created successfully, you can acquire a `kubeconfig` by using the [`shoots/adminkubeconfig` subresource](../usage/shoot_access.md#shootsadminkubeconfig-subresource) to access the cluster.
 
-```bash
-kubectl -n garden-local get secret local.kubeconfig -o jsonpath={.data.kubeconfig} | base64 -d > /tmp/kubeconfig-shoot-local.yaml
-kubectl --kubeconfig=/tmp/kubeconfig-shoot-local.yaml get nodes
-```
-
-## (Optional): Setting up a second seed cluster
+## (Optional): Setting Up a Second Seed Cluster
 
 There are cases where you would want to create a second seed cluster in your local setup. For example, if you want to test the [control plane migration](../usage/control_plane_migration.md) feature. The following steps describe how to do that.
 
-Add a new IP address on your loopback device which will be necessary for the new KinD cluster that you will create. On Mac, the default loopback device is `lo0`.
+If you are on macOS, add a new IP address on your loopback device which will be necessary for the new KinD cluster that you will create. On macOS, the default loopback device is `lo0`.
+
 
 ```bash
 sudo ip addr add 127.0.0.2 dev lo0                                     # adding 127.0.0.2 ip to the loopback interface
@@ -168,7 +203,7 @@ make register-kind2-env                                           # registering 
 make start-gardenlet SEED_NAME=local2                             # starting gardenlet for the local2 seed
 ```
 
-In a new terminal pane, run
+In a new terminal pane, run:
 
 ```bash
 export KUBECONFIG=./example/gardener-local/kind/local2/kubeconfig       # setting KUBECONFIG to point to second kind cluster
@@ -180,29 +215,29 @@ make start-extension-provider-local \
   HEALTH_BIND_ADDRESS=:8083                                       # starting gardener-extension-provider-local
 ```
 
-If you want to perform a control plane migration you can follow the steps outlined [here](../usage/control_plane_migration.md) to migrate the shoot cluster to the second seed you just created.
+If you want to perform a control plane migration you can follow the steps outlined in the [Control Plane Migration](../usage/control_plane_migration.md) topic to migrate the shoot cluster to the second seed you just created.
 
-## Deleting the `Shoot` cluster
+## Deleting the `Shoot` Cluster
 
 ```shell
 ./hack/usage/delete shoot local garden-local
 ```
 
-## (Optional): Tear down the second seed cluster
+## (Optional): Tear Down the Second Seed Cluster
 
 ```bash
 make tear-down-kind2-env
 make kind2-down
 ```
 
-## Tear down the Gardener environment
+## Tear Down the Gardener Environment
 
 ```shell
 make tear-down-local-env
 make kind-down
 ```
 
-## Remote local setup
+## Remote Local Setup
 
 Just like Prow is executing the KinD based integration tests in a K8s pod, it is
 possible to interactively run this KinD based Gardener development environment
@@ -220,7 +255,7 @@ tmux -u a
 Please refer to the [TMUX documentation](https://github.com/tmux/tmux/wiki) for
 working effectively inside the remote-local-setup pod.
 
-To access Grafana, Prometheus or other components in a browser, two port forwards are needed:
+To access Grafana, Prometheus, or other components in a browser, two port forwards are needed:
 
 The port forward from the laptop to the pod:
 
@@ -231,9 +266,9 @@ k port-forward deployment/remote-local-setup 3000
 The port forward in the remote-local-setup pod to the respective component:
 
 ```shell
-k port-forward -n shoot--local--local deployment/grafana-operators 3000
+k port-forward -n shoot--local--local deployment/grafana 3000
 ```
 
-## Further reading
+## Related Links
 
-This setup makes use of the local provider extension. You can read more about it in [this document](../extensions/provider-local.md).
+- [Local Provider Extension](../extensions/provider-local.md)

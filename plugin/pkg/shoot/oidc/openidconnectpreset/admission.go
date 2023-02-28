@@ -21,17 +21,17 @@ import (
 	"io"
 	"strings"
 
-	"github.com/gardener/gardener/pkg/apis/core"
-	settingsv1alpha1 "github.com/gardener/gardener/pkg/apis/settings/v1alpha1"
-	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
-	settingsinformer "github.com/gardener/gardener/pkg/client/settings/informers/externalversions"
-	settingslister "github.com/gardener/gardener/pkg/client/settings/listers/settings/v1alpha1"
-	applier "github.com/gardener/gardener/plugin/pkg/shoot/oidc"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apiserver/pkg/admission"
+
+	"github.com/gardener/gardener/pkg/apis/core"
+	settingsv1alpha1 "github.com/gardener/gardener/pkg/apis/settings/v1alpha1"
+	admissioninitializer "github.com/gardener/gardener/pkg/apiserver/admission/initializer"
+	settingsinformers "github.com/gardener/gardener/pkg/client/settings/informers/externalversions"
+	settingsv1alpha1lister "github.com/gardener/gardener/pkg/client/settings/listers/settings/v1alpha1"
+	applier "github.com/gardener/gardener/plugin/pkg/shoot/oidc"
 )
 
 const (
@@ -50,7 +50,7 @@ func Register(plugins *admission.Plugins) {
 type OpenIDConnectPreset struct {
 	*admission.Handler
 
-	oidcLister settingslister.OpenIDConnectPresetLister
+	oidcLister settingsv1alpha1lister.OpenIDConnectPresetLister
 	readyFunc  admission.ReadyFunc
 }
 
@@ -74,7 +74,7 @@ func (o *OpenIDConnectPreset) AssignReadyFunc(f admission.ReadyFunc) {
 }
 
 // SetSettingsInformerFactory gets Lister from SharedInformerFactory.
-func (o *OpenIDConnectPreset) SetSettingsInformerFactory(f settingsinformer.SharedInformerFactory) {
+func (o *OpenIDConnectPreset) SetSettingsInformerFactory(f settingsinformers.SharedInformerFactory) {
 	oidc := f.Settings().V1alpha1().OpenIDConnectPresets()
 	o.oidcLister = oidc.Lister()
 

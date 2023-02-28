@@ -67,6 +67,7 @@ const (
 	// owner: @ScheererJ @DockToFuture
 	// alpha: v1.22.0
 	// beta: v1.42.0
+	// GA: v1.63.0
 	ReversedVPN featuregate.Feature = "ReversedVPN"
 
 	// CopyEtcdBackupsDuringControlPlaneMigration enables the copy of etcd backups from the object store of the source seed
@@ -75,13 +76,6 @@ const (
 	// alpha: v1.37.0
 	// beta: v1.53.0
 	CopyEtcdBackupsDuringControlPlaneMigration featuregate.Feature = "CopyEtcdBackupsDuringControlPlaneMigration"
-
-	// ForceRestore enables forcing the shoot's restoration to the destination seed during control plane migration
-	// if the preparation for migration in the source seed is not finished after a certain grace period
-	// and is considered unlikely to succeed ("bad case" scenario).
-	// owner: @plkokanov
-	// alpha: v1.39.0
-	ForceRestore featuregate.Feature = "ForceRestore"
 
 	// HAControlPlanes allows shoot control planes to be run in high availability mode.
 	// owner: @shreyas-s-rao @timuthy
@@ -98,20 +92,31 @@ const (
 	// owner: @ScheererJ @DockToFuture
 	// alpha: v1.55.0
 	CoreDNSQueryRewriting featuregate.Feature = "CoreDNSQueryRewriting"
+
+	// IPv6SingleStack allows creating shoot clusters with IPv6 single-stack networking (GEP-21).
+	// owner: @timebertt
+	// alpha: v1.63.0
+	IPv6SingleStack featuregate.Feature = "IPv6SingleStack"
+
+	// MutableShootSpecNetworkingNodes allows updating the field `spec.networking.nodes`.
+	// owner: @axel7born @ScheererJ @DockToFuture @kon-angelo
+	// alpha: v1.64.0
+	MutableShootSpecNetworkingNodes featuregate.Feature = "MutableShootSpecNetworkingNodes"
 )
 
 var allFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
 	HVPA:               {Default: false, PreRelease: featuregate.Alpha},
 	HVPAForShootedSeed: {Default: false, PreRelease: featuregate.Alpha},
-	ManagedIstio:       {Default: true, PreRelease: featuregate.Deprecated},
-	APIServerSNI:       {Default: true, PreRelease: featuregate.Deprecated},
+	ManagedIstio:       {Default: true, PreRelease: featuregate.Deprecated, LockToDefault: true},
+	APIServerSNI:       {Default: true, PreRelease: featuregate.Deprecated, LockToDefault: true},
 	SeedChange:         {Default: true, PreRelease: featuregate.Beta},
-	ReversedVPN:        {Default: true, PreRelease: featuregate.Beta},
+	ReversedVPN:        {Default: true, PreRelease: featuregate.GA, LockToDefault: true},
 	CopyEtcdBackupsDuringControlPlaneMigration: {Default: true, PreRelease: featuregate.Beta},
-	ForceRestore:          {Default: false, PreRelease: featuregate.Alpha},
-	HAControlPlanes:       {Default: false, PreRelease: featuregate.Alpha},
-	DefaultSeccompProfile: {Default: false, PreRelease: featuregate.Alpha},
-	CoreDNSQueryRewriting: {Default: false, PreRelease: featuregate.Alpha},
+	HAControlPlanes:                 {Default: false, PreRelease: featuregate.Alpha},
+	DefaultSeccompProfile:           {Default: false, PreRelease: featuregate.Alpha},
+	CoreDNSQueryRewriting:           {Default: false, PreRelease: featuregate.Alpha},
+	IPv6SingleStack:                 {Default: false, PreRelease: featuregate.Alpha},
+	MutableShootSpecNetworkingNodes: {Default: false, PreRelease: featuregate.Alpha},
 }
 
 // GetFeatures returns a feature gate map with the respective specifications. Non-existing feature gates are ignored.

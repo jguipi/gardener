@@ -15,6 +15,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	componentbaseconfigv1alpha1 "k8s.io/component-base/config/v1alpha1"
 )
@@ -121,16 +122,18 @@ type ResourceManagerControllerConfiguration struct {
 	// +optional
 	ResourceClass *string `json:"resourceClass,omitempty"`
 
-	// KubeletCSRApprover is the configuration for the kubelet-csr-approver controller.
-	KubeletCSRApprover KubeletCSRApproverControllerConfig `json:"kubeletCSRApprover"`
 	// GarbageCollector is the configuration for the garbage-collector controller.
 	GarbageCollector GarbageCollectorControllerConfig `json:"garbageCollector"`
 	// Health is the configuration for the health controller.
 	Health HealthControllerConfig `json:"health"`
+	// KubeletCSRApprover is the configuration for the kubelet-csr-approver controller.
+	KubeletCSRApprover KubeletCSRApproverControllerConfig `json:"kubeletCSRApprover"`
 	// ManagedResource is the configuration for the managed resource controller.
 	ManagedResource ManagedResourceControllerConfig `json:"managedResource"`
-	// RootCAPublisher is the configuration for the root-ca-publisher controller.
-	RootCAPublisher RootCAPublisherControllerConfig `json:"rootCAPublisher"`
+	// NetworkPolicy is the configuration for the networkpolicy controller.
+	NetworkPolicy NetworkPolicyControllerConfig `json:"networkPolicy"`
+	// Node is the configuration for the node controller.
+	Node NodeControllerConfig `json:"node"`
 	// Secret is the configuration for the secret controller.
 	Secret SecretControllerConfig `json:"secret"`
 	// TokenInvalidator is the configuration for the token-invalidator controller.
@@ -186,16 +189,17 @@ type ManagedResourceControllerConfig struct {
 	ManagedByLabelValue *string `json:"managedByLabelValue,omitempty"`
 }
 
-// RootCAPublisherControllerConfig is the configuration for the root-ca-publisher controller.
-type RootCAPublisherControllerConfig struct {
+// NetworkPolicyControllerConfig is the configuration for the networkpolicy controller.
+type NetworkPolicyControllerConfig struct {
 	// Enabled defines whether this controller is enabled.
 	Enabled bool `json:"enabled"`
 	// ConcurrentSyncs is the number of concurrent worker routines for this controller.
 	// +optional
 	ConcurrentSyncs *int `json:"concurrentSyncs,omitempty"`
-	// RootCAFile is the path to a file containing the root CA.
+	// NamespaceSelectors is a list of label selectors for namespaces in which the controller shall reconcile Service
+	// objects. An empty list means all namespaces.
 	// +optional
-	RootCAFile *string `json:"rootCAFile,omitempty"`
+	NamespaceSelectors []metav1.LabelSelector `json:"namespaceSelectors,omitempty"`
 }
 
 // SecretControllerConfig is the configuration for the secret controller.
@@ -223,6 +227,18 @@ type TokenRequestorControllerConfig struct {
 	ConcurrentSyncs *int `json:"concurrentSyncs,omitempty"`
 }
 
+// NodeControllerConfig is the configuration for the node controller.
+type NodeControllerConfig struct {
+	// Enabled defines whether this controller is enabled.
+	Enabled bool `json:"enabled"`
+	// ConcurrentSyncs is the number of concurrent worker routines for this controller.
+	// +optional
+	ConcurrentSyncs *int `json:"concurrentSyncs,omitempty"`
+	// Backoff is the duration to use as backoff when Nodes have non-ready node-critical pods (defaults to 10s).
+	// +optional
+	Backoff *metav1.Duration `json:"backoff,omitempty"`
+}
+
 // ResourceManagerWebhookConfiguration defines the configuration of the webhooks.
 type ResourceManagerWebhookConfiguration struct {
 	// CRDDeletionProtection is the configuration for the crd-deletion-protection webhook.
@@ -231,6 +247,8 @@ type ResourceManagerWebhookConfiguration struct {
 	ExtensionValidation ExtensionValidation `json:"extensionValidation"`
 	// HighAvailabilityConfig is the configuration for the high-availability-config webhook.
 	HighAvailabilityConfig HighAvailabilityConfigWebhookConfig `json:"highAvailabilityConfig"`
+	// SystemComponentsConfig is the configuration for the system-components-config webhook.
+	SystemComponentsConfig SystemComponentsConfigWebhookConfig `json:"systemComponentsConfig"`
 	// PodSchedulerName is the configuration for the pod-scheduler-name webhook.
 	PodSchedulerName PodSchedulerNameWebhookConfig `json:"podSchedulerName"`
 	// PodTopologySpreadConstraints is the configuration for the pod-topology-spread-constraints webhook.
@@ -259,6 +277,21 @@ type ExtensionValidation struct {
 type HighAvailabilityConfigWebhookConfig struct {
 	// Enabled defines whether this webhook is enabled.
 	Enabled bool `json:"enabled"`
+}
+
+// SystemComponentsConfigWebhookConfig is the configuration for the system-components-config webhook.
+type SystemComponentsConfigWebhookConfig struct {
+	// Enabled defines whether this webhook is enabled.
+	Enabled bool `json:"enabled"`
+	// NodeSelector is the selector used to retrieve nodes that run system components.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// PodNodeSelector is the node selector that should be added to pods.
+	// +optional
+	PodNodeSelector map[string]string `json:"podNodeSelector,omitempty"`
+	// PodTolerations are the tolerations that should be added to pods.
+	// +optional
+	PodTolerations []corev1.Toleration `json:"podTolerations,omitempty"`
 }
 
 // PodSchedulerNameWebhookConfig is the configuration for the pod-scheduler-name webhook.

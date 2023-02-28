@@ -16,25 +16,15 @@ package networkpolicy_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
-	"time"
-
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	gardenerenvtest "github.com/gardener/gardener/pkg/envtest"
-	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
-	"github.com/gardener/gardener/pkg/gardenlet/controller/networkpolicy"
-	"github.com/gardener/gardener/pkg/gardenlet/controller/networkpolicy/hostnameresolver"
-	"github.com/gardener/gardener/pkg/logger"
-	"github.com/gardener/gardener/pkg/utils"
-	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/pointer"
@@ -44,17 +34,27 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	gardencore "github.com/gardener/gardener/pkg/apis/core"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	gardenerenvtest "github.com/gardener/gardener/pkg/envtest"
+	"github.com/gardener/gardener/pkg/gardenlet/apis/config"
+	"github.com/gardener/gardener/pkg/gardenlet/controller/networkpolicy"
+	"github.com/gardener/gardener/pkg/gardenlet/controller/networkpolicy/hostnameresolver"
+	"github.com/gardener/gardener/pkg/logger"
+	"github.com/gardener/gardener/pkg/utils"
 )
 
 func TestNetworkPolicy(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Network Policy Controller Integration Test Suite")
+	RunSpecs(t, "Test Integration Gardenlet NetworkPolicy Suite")
 }
 
 const (
-	testID              = "networkpolicy-controller-test"
-	seedClusterIdentity = "seed"
-	syncPeriod          = 500 * time.Millisecond
+	testID      = "networkpolicy-controller-test"
+	blockedCIDR = "169.254.169.254/32"
 )
 
 var (
@@ -66,19 +66,20 @@ var (
 	restConfig *rest.Config
 	testEnv    *gardenerenvtest.GardenerTestEnvironment
 	testClient client.Client
-
-	gardenNamespace      *corev1.Namespace
-	istioSystemNamespace *corev1.Namespace
-	seed                 *gardencorev1beta1.Seed
 )
 
 var _ = BeforeSuite(func() {
 	logf.SetLogger(logger.MustNewZapLogger(logger.DebugLevel, logger.FormatJSON, zap.WriteTo(GinkgoWriter)))
 	log = logf.Log.WithName(testID)
 
-	By("starting test environment")
+	By("Start test environment")
 	testEnv = &gardenerenvtest.GardenerTestEnvironment{
-		Environment: &envtest.Environment{},
+		Environment: &envtest.Environment{
+			CRDInstallOptions: envtest.CRDInstallOptions{
+				Paths: []string{filepath.Join("..", "..", "..", "..", "example", "seed-crds", "10-crd-extensions.gardener.cloud_clusters.yaml")},
+			},
+			ErrorIfCRDPathMissing: true,
+		},
 		GardenerAPIServer: &gardenerenvtest.GardenerAPIServer{
 			Args: []string{"--disable-admission-plugins=DeletionConfirmation,ResourceReferenceManager,ExtensionValidator"},
 		},
@@ -90,84 +91,27 @@ var _ = BeforeSuite(func() {
 	Expect(restConfig).NotTo(BeNil())
 
 	DeferCleanup(func() {
-		By("stopping test environment")
+		By("Stop test environment")
 		Expect(testEnv.Stop()).To(Succeed())
 	})
 
-	By("creating testClient")
-	testClient, err = client.New(restConfig, client.Options{Scheme: kubernetes.GardenScheme})
+	By("Create testClient")
+	testSchemeBuilder := runtime.NewSchemeBuilder(
+		kubernetes.AddGardenSchemeToScheme,
+		extensionsv1alpha1.AddToScheme,
+	)
+	testScheme := runtime.NewScheme()
+	Expect(testSchemeBuilder.AddToScheme(testScheme)).To(Succeed())
+
+	testClient, err = client.New(restConfig, client.Options{Scheme: testScheme})
 	Expect(err).NotTo(HaveOccurred())
 
 	testRunID = utils.ComputeSHA256Hex([]byte(uuid.NewUUID()))[:8]
 	log.Info("Using test run ID for test", "testRunID", testRunID)
 
-	By("creating seed")
-	seed = &gardencorev1beta1.Seed{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "seed-",
-			Labels:       map[string]string{testID: testRunID},
-		},
-		Spec: gardencorev1beta1.SeedSpec{
-			Provider: gardencorev1beta1.SeedProvider{
-				Region: "region",
-				Type:   "providerType",
-			},
-			Networks: gardencorev1beta1.SeedNetworks{
-				Pods:     "10.0.0.0/16",
-				Services: "10.1.0.0/16",
-				Nodes:    pointer.String("10.2.0.0/16"),
-			},
-			DNS: gardencorev1beta1.SeedDNS{
-				IngressDomain: pointer.String("someingress.example.com"),
-			},
-		},
-	}
-	Expect(testClient.Create(ctx, seed)).To(Succeed())
-	log.Info("Created Seed for test", "seed", seed.Name)
-
-	patch := client.MergeFrom(seed.DeepCopy())
-	seed.Status.ClusterIdentity = pointer.String(seedClusterIdentity)
-	Expect(testClient.Status().Patch(ctx, seed, patch)).To(Succeed())
-
-	DeferCleanup(func() {
-		By("deleting seed")
-		Expect(testClient.Delete(ctx, seed)).To(Or(Succeed(), BeNotFoundError()))
-	})
-
-	By("creating garden namespace for test")
-	gardenNamespace = &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "garden-",
-			Labels:       map[string]string{testID: testRunID},
-		},
-	}
-
-	Expect(testClient.Create(ctx, gardenNamespace)).To(Succeed())
-	log.Info("Created Namespace for test", "namespaceName", gardenNamespace.Name)
-
-	DeferCleanup(func() {
-		By("deleting test namespace")
-		Expect(testClient.Delete(ctx, gardenNamespace)).To(Or(Succeed(), BeNotFoundError()))
-	})
-
-	By("creating istio-system namespace for test")
-	istioSystemNamespace = &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "istio-system-",
-			Labels:       map[string]string{testID: testRunID},
-		},
-	}
-	Expect(testClient.Create(ctx, istioSystemNamespace)).To(Succeed())
-	log.Info("Created istio-system Namespace for test", "namespaceName", istioSystemNamespace.Name)
-
-	DeferCleanup(func() {
-		By("deleting istio-system namespace")
-		Expect(testClient.Delete(ctx, istioSystemNamespace)).To(Or(Succeed(), BeNotFoundError()))
-	})
-
-	By("setup manager")
+	By("Setup manager")
 	mgr, err := manager.New(restConfig, manager.Options{
-		Scheme:             kubernetes.GardenScheme,
+		Scheme:             testScheme,
 		MetricsBindAddress: "0",
 		NewCache: cache.BuilderWithOptions(cache.Options{
 			SelectorsByObject: map[client.Object]cache.ObjectSelector{
@@ -182,15 +126,19 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	By("registering controller")
+	By("Register controller")
 	Expect((&networkpolicy.Reconciler{
-		Config:               config.SeedAPIServerNetworkPolicyControllerConfiguration{ConcurrentSyncs: pointer.Int(5)},
-		Resolver:             hostnameresolver.NewNoOpProvider(),
-		GardenNamespace:      gardenNamespace.Name,
-		IstioSystemNamespace: istioSystemNamespace.Name,
-	}).AddToManager(mgr, mgr)).To(Succeed())
+		Config:   config.NetworkPolicyControllerConfiguration{ConcurrentSyncs: pointer.Int(5)},
+		Resolver: hostnameresolver.NewNoOpProvider(),
+		SeedNetworks: gardencore.SeedNetworks{
+			Pods:       "10.0.0.0/16",
+			Services:   "10.1.0.0/16",
+			Nodes:      pointer.String("10.2.0.0/16"),
+			BlockCIDRs: []string{blockedCIDR},
+		},
+	}).AddToManager(mgr, mgr, mgr)).To(Succeed())
 
-	By("starting manager")
+	By("Start manager")
 	mgrContext, mgrCancel := context.WithCancel(ctx)
 
 	go func() {
@@ -199,7 +147,7 @@ var _ = BeforeSuite(func() {
 	}()
 
 	DeferCleanup(func() {
-		By("stopping manager")
+		By("Stop manager")
 		mgrCancel()
 	})
 })

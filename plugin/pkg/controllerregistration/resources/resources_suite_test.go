@@ -15,13 +15,13 @@
 package resources_test
 
 import (
+	"testing"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"testing"
 )
 
-func TestDeletionConfirmation(t *testing.T) {
+func TestResources(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Admission ControllerRegistration Resources Suite")
+	RunSpecs(t, "AdmissionPlugin ControllerRegistration Resources Suite")
 }

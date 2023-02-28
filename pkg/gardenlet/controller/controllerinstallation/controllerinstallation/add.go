@@ -18,7 +18,9 @@ import (
 	"context"
 	"reflect"
 
+	"k8s.io/utils/clock"
 	"k8s.io/utils/pointer"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -29,8 +31,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	contextutil "github.com/gardener/gardener/pkg/utils/context"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
+	contextutils "github.com/gardener/gardener/pkg/utils/context"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 // ControllerName is the name of this controller.
@@ -41,28 +43,25 @@ func (r *Reconciler) AddToManager(mgr manager.Manager, gardenCluster cluster.Clu
 	if r.GardenClient == nil {
 		r.GardenClient = gardenCluster.GetClient()
 	}
-
-	// It's not possible to overwrite the event handler when using the controller builder. Hence, we have to build up
-	// the controller manually.
-	c, err := controller.New(
-		ControllerName,
-		mgr,
-		controller.Options{
-			Reconciler:              r,
-			MaxConcurrentReconciles: pointer.IntDeref(r.Config.ConcurrentSyncs, 0),
-			RecoverPanic:            true,
-		},
-	)
-	if err != nil {
-		return err
+	if r.Clock == nil {
+		r.Clock = clock.RealClock{}
 	}
 
-	return c.Watch(
-		source.NewKindWithCache(&gardencorev1beta1.ControllerInstallation{}, gardenCluster.GetCache()),
-		&handler.EnqueueRequestForObject{},
-		r.ControllerInstallationPredicate(),
-		r.HelmTypePredicate(gardenCluster.GetClient()),
-	)
+	return builder.
+		ControllerManagedBy(mgr).
+		Named(ControllerName).
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: pointer.IntDeref(r.Config.ConcurrentSyncs, 0),
+		}).
+		Watches(
+			source.NewKindWithCache(&gardencorev1beta1.ControllerInstallation{}, gardenCluster.GetCache()),
+			&handler.EnqueueRequestForObject{},
+			builder.WithPredicates(
+				r.ControllerInstallationPredicate(),
+				r.HelmTypePredicate(gardenCluster.GetClient()),
+			),
+		).
+		Complete(r)
 }
 
 // ControllerInstallationPredicate returns a predicate that evaluates to true in all cases except for 'Update' events.
@@ -105,7 +104,7 @@ type helmTypePredicate struct {
 }
 
 func (p *helmTypePredicate) InjectStopChannel(stopChan <-chan struct{}) error {
-	p.ctx = contextutil.FromStopChannel(stopChan)
+	p.ctx = contextutils.FromStopChannel(stopChan)
 	return nil
 }
 
@@ -122,7 +121,7 @@ func (p *helmTypePredicate) isResponsible(obj client.Object) bool {
 
 	if deploymentName := controllerInstallation.Spec.DeploymentRef; deploymentName != nil {
 		controllerDeployment := &gardencorev1beta1.ControllerDeployment{}
-		if err := p.reader.Get(p.ctx, kutil.Key(deploymentName.Name), controllerDeployment); err != nil {
+		if err := p.reader.Get(p.ctx, kubernetesutils.Key(deploymentName.Name), controllerDeployment); err != nil {
 			return false
 		}
 		return controllerDeployment.Type == "helm"

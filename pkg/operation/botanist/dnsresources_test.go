@@ -17,6 +17,12 @@ package botanist_test
 import (
 	"context"
 
+	"github.com/go-logr/logr"
+	"github.com/golang/mock/gomock"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"k8s.io/utils/pointer"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	"github.com/gardener/gardener/pkg/operation"
 	. "github.com/gardener/gardener/pkg/operation/botanist"
@@ -24,11 +30,7 @@ import (
 	"github.com/gardener/gardener/pkg/operation/garden"
 	"github.com/gardener/gardener/pkg/operation/seed"
 	"github.com/gardener/gardener/pkg/operation/shoot"
-	"github.com/go-logr/logr"
-	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"k8s.io/utils/pointer"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 )
 
 var _ = Describe("dnsrecord", func() {
@@ -57,7 +59,7 @@ var _ = Describe("dnsrecord", func() {
 			Operation: &operation.Operation{
 				Shoot: &shoot.Shoot{
 					ExternalClusterDomain: pointer.String(externalDomain),
-					ExternalDomain: &garden.Domain{
+					ExternalDomain: &gardenerutils.Domain{
 						Provider: externalProvider,
 					},
 					Components: &shoot.Components{
@@ -72,7 +74,7 @@ var _ = Describe("dnsrecord", func() {
 				Seed: &seed.Seed{},
 
 				Garden: &garden.Garden{
-					InternalDomain: &garden.Domain{
+					InternalDomain: &gardenerutils.Domain{
 						Provider: internalProvider,
 					},
 				},

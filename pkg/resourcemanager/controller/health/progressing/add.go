@@ -16,6 +16,7 @@ package progressing
 
 import (
 	appsv1 "k8s.io/api/apps/v1"
+	"k8s.io/utils/clock"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
@@ -28,7 +29,7 @@ import (
 	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 	"github.com/gardener/gardener/pkg/controllerutils/mapper"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/health/utils"
-	managerpredicate "github.com/gardener/gardener/pkg/resourcemanager/predicate"
+	resourcemanagerpredicate "github.com/gardener/gardener/pkg/resourcemanager/predicate"
 )
 
 // ControllerName is the name of the controller.
@@ -42,16 +43,16 @@ func (r *Reconciler) AddToManager(mgr manager.Manager, sourceCluster, targetClus
 	if r.TargetClient == nil {
 		r.TargetClient = targetCluster.GetClient()
 	}
+	if r.Clock == nil {
+		r.Clock = clock.RealClock{}
+	}
 
-	// It's not possible to overwrite the event handler when using the controller builder. Hence, we have to build up
-	// the controller manually.
 	c, err := controller.New(
 		ControllerName,
 		mgr,
 		controller.Options{
 			Reconciler:              r,
 			MaxConcurrentReconciles: pointer.IntDeref(r.Config.ConcurrentSyncs, 0),
-			RecoverPanic:            true,
 		},
 	)
 	if err != nil {
@@ -63,17 +64,16 @@ func (r *Reconciler) AddToManager(mgr manager.Manager, sourceCluster, targetClus
 		Named(ControllerName).
 		For(&resourcesv1alpha1.ManagedResource{}, builder.WithPredicates(
 			predicate.Or(
-				managerpredicate.ClassChangedPredicate(),
+				resourcemanagerpredicate.ClassChangedPredicate(),
 				// start health checks immediately after MR has been reconciled
-				managerpredicate.ConditionStatusChanged(resourcesv1alpha1.ResourcesApplied, managerpredicate.DefaultConditionChange),
-				managerpredicate.NoLongerIgnored(),
+				resourcemanagerpredicate.ConditionStatusChanged(resourcesv1alpha1.ResourcesApplied, resourcemanagerpredicate.DefaultConditionChange),
+				resourcemanagerpredicate.NoLongerIgnored(),
 			),
-			managerpredicate.NotIgnored(),
+			resourcemanagerpredicate.NotIgnored(),
 			r.ClassFilter,
 		)).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: pointer.IntDeref(r.Config.ConcurrentSyncs, 0),
-			RecoverPanic:            true,
 		})
 
 	if !targetCacheDisabled {

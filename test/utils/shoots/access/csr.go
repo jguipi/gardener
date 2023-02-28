@@ -20,12 +20,6 @@ import (
 	"crypto/x509/pkix"
 	"time"
 
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/controllerutils"
-	"github.com/gardener/gardener/pkg/utils"
-	"github.com/gardener/gardener/pkg/utils/flow"
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
-
 	certificatesv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -35,6 +29,12 @@ import (
 	csrutil "k8s.io/client-go/util/certificate/csr"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/controllerutils"
+	"github.com/gardener/gardener/pkg/utils"
+	"github.com/gardener/gardener/pkg/utils/flow"
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
 )
 
 // labelsE2ETestCSRAccess is the set of labels added to all CSRs and ClusterRoleBindings for easy cleanup.
@@ -44,7 +44,7 @@ var labelsE2ETestCSRAccess = map[string]string{"e2e-test": "csr-access"}
 // You should call CleanupObjectsFromCSRAccess to clean up the objects created by this function.
 func CreateShootClientFromCSR(ctx context.Context, shootClient kubernetes.Interface, commonName string) (kubernetes.Interface, error) {
 	// use fake key to avoid building complex retry/update logic
-	privateKey, err := secretutils.FakeGenerateKey(rand.Reader, 4096)
+	privateKey, err := secretsutils.FakeGenerateKey(rand.Reader, 4096)
 	if err != nil {
 		return nil, err
 	}
@@ -114,8 +114,7 @@ func CreateShootClientFromCSR(ctx context.Context, shootClient kubernetes.Interf
 			Message: "Auto approving test CertificateSigningRequest",
 			Status:  corev1.ConditionTrue,
 		})
-		_, err = shootClient.Kubernetes().CertificatesV1().CertificateSigningRequests().UpdateApproval(ctx, reqName, csr, metav1.UpdateOptions{})
-		if err != nil {
+		if err := shootClient.Client().SubResource("approval").Update(ctx, csr); err != nil {
 			return nil, err
 		}
 	}

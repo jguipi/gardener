@@ -17,6 +17,8 @@ package managedresource
 import (
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	batchv1beta1 "k8s.io/api/batch/v1beta1"
@@ -28,9 +30,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/pointer"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 
 	"github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 )
@@ -56,14 +55,14 @@ var _ = Describe("merger", func() {
 					DeletionTimestamp:          &metav1.Time{Time: time.Now().Add(1 * time.Hour)},
 					UID:                        "8c3d49f6-e177-4938-8547-c61283a84876",
 					GenerateName:               "foo",
-					DeletionGracePeriodSeconds: pointer.Int64Ptr(30),
+					DeletionGracePeriodSeconds: pointer.Int64(30),
 					OwnerReferences: []metav1.OwnerReference{{
 						APIVersion:         "v1",
 						Kind:               "Namespace",
 						Name:               "default",
 						UID:                "18590d53-3e4d-4616-b411-88212dc69ac6",
-						Controller:         pointer.BoolPtr(true),
-						BlockOwnerDeletion: pointer.BoolPtr(true),
+						Controller:         pointer.Bool(true),
+						BlockOwnerDeletion: pointer.Bool(true),
 					}},
 				},
 			}
@@ -303,7 +302,7 @@ var _ = Describe("merger", func() {
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{"controller-uid": "1a2b3c"},
 					},
-					Replicas: pointer.Int32Ptr(1),
+					Replicas: pointer.Int32(1),
 					Template: defaultPodTemplateSpec,
 				},
 			}
@@ -321,7 +320,7 @@ var _ = Describe("merger", func() {
 		})
 
 		It("should not overwrite old .spec.replicas if preserveReplicas is true", func() {
-			new.Spec.Replicas = pointer.Int32Ptr(2)
+			new.Spec.Replicas = pointer.Int32(2)
 
 			expected := old.DeepCopy()
 
@@ -330,7 +329,7 @@ var _ = Describe("merger", func() {
 		})
 
 		It("should use new .spec.replicas if preserveReplicas is false", func() {
-			new.Spec.Replicas = pointer.Int32Ptr(2)
+			new.Spec.Replicas = pointer.Int32(2)
 
 			expected := new.DeepCopy()
 
@@ -378,7 +377,7 @@ var _ = Describe("merger", func() {
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{"controller-uid": "1a2b3c"},
 					},
-					Replicas: pointer.Int32Ptr(1),
+					Replicas: pointer.Int32(1),
 					Template: defaultPodTemplateSpec,
 				},
 			}
@@ -388,7 +387,7 @@ var _ = Describe("merger", func() {
 		})
 
 		It("should use new .spec.replicas if preserve-replicas is unset", func() {
-			new.Spec.Replicas = pointer.Int32Ptr(2)
+			new.Spec.Replicas = pointer.Int32(2)
 
 			Expect(s.Convert(old, current, nil)).Should(Succeed())
 			Expect(s.Convert(new, desired, nil)).Should(Succeed())
@@ -400,7 +399,7 @@ var _ = Describe("merger", func() {
 		})
 
 		It("should not overwrite old .spec.replicas if preserve-replicas is true", func() {
-			new.Spec.Replicas = pointer.Int32Ptr(2)
+			new.Spec.Replicas = pointer.Int32(2)
 			new.ObjectMeta.Annotations["resources.gardener.cloud/preserve-replicas"] = "true"
 
 			Expect(s.Convert(old, current, nil)).Should(Succeed())
@@ -474,7 +473,7 @@ var _ = Describe("merger", func() {
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{"controller-uid": "1a2b3c"},
 					},
-					Replicas: pointer.Int32Ptr(1),
+					Replicas: pointer.Int32(1),
 					Template: defaultPodTemplateSpec,
 				},
 			}
@@ -492,7 +491,7 @@ var _ = Describe("merger", func() {
 		})
 
 		It("should not overwrite old .spec.replicas if preserveReplicas is true", func() {
-			new.Spec.Replicas = pointer.Int32Ptr(2)
+			new.Spec.Replicas = pointer.Int32(2)
 
 			expected := old.DeepCopy()
 
@@ -501,7 +500,7 @@ var _ = Describe("merger", func() {
 		})
 
 		It("should use new .spec.replicas if preserveReplicas is false", func() {
-			new.Spec.Replicas = pointer.Int32Ptr(2)
+			new.Spec.Replicas = pointer.Int32(2)
 
 			expected := new.DeepCopy()
 
@@ -534,7 +533,7 @@ var _ = Describe("merger", func() {
 					Spec: corev1.PersistentVolumeClaimSpec{
 						AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 						VolumeName:       "pvc-foo",
-						StorageClassName: pointer.StringPtr("ultra-fast"),
+						StorageClassName: pointer.String("ultra-fast"),
 					},
 				},
 			}
@@ -552,7 +551,7 @@ var _ = Describe("merger", func() {
 					Spec: corev1.PersistentVolumeClaimSpec{
 						AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 						VolumeName:       "pvc-foo",
-						StorageClassName: pointer.StringPtr("ultra-fast"),
+						StorageClassName: pointer.String("ultra-fast"),
 					},
 				},
 			}

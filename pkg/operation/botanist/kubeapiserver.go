@@ -19,23 +19,6 @@ import (
 	"fmt"
 	"net"
 
-	gardencorev1alpha1 "github.com/gardener/gardener/pkg/apis/core/v1alpha1"
-	gardencorev1alpha1helper "github.com/gardener/gardener/pkg/apis/core/v1alpha1/helper"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	gardencorev1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap/keys"
-	"github.com/gardener/gardener/pkg/features"
-	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver"
-	"github.com/gardener/gardener/pkg/utils"
-	gutil "github.com/gardener/gardener/pkg/utils/gardener"
-	"github.com/gardener/gardener/pkg/utils/images"
-	"github.com/gardener/gardener/pkg/utils/imagevector"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	secretutils "github.com/gardener/gardener/pkg/utils/secrets"
-
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -53,6 +36,21 @@ import (
 	"k8s.io/utils/pointer"
 	"k8s.io/utils/strings/slices"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	v1beta1helper "github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap/keys"
+	"github.com/gardener/gardener/pkg/features"
+	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserver"
+	"github.com/gardener/gardener/pkg/utils"
+	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
+	"github.com/gardener/gardener/pkg/utils/images"
+	"github.com/gardener/gardener/pkg/utils/imagevector"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	secretsutils "github.com/gardener/gardener/pkg/utils/secrets"
 )
 
 var (
@@ -92,21 +90,23 @@ func (b *Botanist) DefaultKubeAPIServer(ctx context.Context) (kubeapiserver.Inte
 	var (
 		apiServerConfig = b.Shoot.GetInfo().Spec.Kubernetes.KubeAPIServer
 
-		enabledAdmissionPlugins  = kutil.GetAdmissionPluginsForVersion(b.Shoot.GetInfo().Spec.Kubernetes.Version)
-		disabledAdmissionPlugins []gardencorev1beta1.AdmissionPlugin
-		apiAudiences             = []string{"kubernetes", "gardener"}
-		auditConfig              *kubeapiserver.AuditConfig
-		eventTTL                 *metav1.Duration
-		featureGates             map[string]bool
-		oidcConfig               *gardencorev1beta1.OIDCConfig
-		requests                 *gardencorev1beta1.KubeAPIServerRequests
-		runtimeConfig            map[string]bool
-		watchCacheSizes          *gardencorev1beta1.WatchCacheSizes
-		logging                  *gardencorev1beta1.KubeAPIServerLogging
+		enabledAdmissionPlugins             = kubernetesutils.GetAdmissionPluginsForVersion(b.Shoot.GetInfo().Spec.Kubernetes.Version)
+		disabledAdmissionPlugins            []gardencorev1beta1.AdmissionPlugin
+		apiAudiences                        = []string{"kubernetes", "gardener"}
+		auditConfig                         *kubeapiserver.AuditConfig
+		defaultNotReadyTolerationSeconds    *int64
+		defaultUnreachableTolerationSeconds *int64
+		eventTTL                            *metav1.Duration
+		featureGates                        map[string]bool
+		oidcConfig                          *gardencorev1beta1.OIDCConfig
+		requests                            *gardencorev1beta1.KubeAPIServerRequests
+		runtimeConfig                       map[string]bool
+		watchCacheSizes                     *gardencorev1beta1.WatchCacheSizes
+		logging                             *gardencorev1beta1.KubeAPIServerLogging
 	)
 
 	if apiServerConfig != nil {
-		enabledAdmissionPlugins = b.computeKubeAPIServerAdmissionPlugins(enabledAdmissionPlugins, apiServerConfig.AdmissionPlugins)
+		enabledAdmissionPlugins = b.computeEnabledKubeAPIServerAdmissionPlugins(enabledAdmissionPlugins, apiServerConfig.AdmissionPlugins)
 		disabledAdmissionPlugins = b.computeDisabledKubeAPIServerAdmissionPlugins(apiServerConfig.AdmissionPlugins)
 
 		enabledAdmissionPlugins, err = b.ensureAdmissionPluginConfig(enabledAdmissionPlugins)
@@ -126,6 +126,8 @@ func (b *Botanist) DefaultKubeAPIServer(ctx context.Context) (kubeapiserver.Inte
 			return nil, err
 		}
 
+		defaultNotReadyTolerationSeconds = apiServerConfig.DefaultNotReadyTolerationSeconds
+		defaultUnreachableTolerationSeconds = apiServerConfig.DefaultUnreachableTolerationSeconds
 		eventTTL = apiServerConfig.EventTTL
 		featureGates = apiServerConfig.FeatureGates
 		oidcConfig = apiServerConfig.OIDCConfig
@@ -136,29 +138,38 @@ func (b *Botanist) DefaultKubeAPIServer(ctx context.Context) (kubeapiserver.Inte
 		logging = apiServerConfig.Logging
 	}
 
+	enabledAdmissionPluginConfigs, err := b.convertToAdmissionPluginConfigs(enabledAdmissionPlugins)
+	if err != nil {
+		return nil, err
+	}
+
 	return kubeapiserver.New(
 		b.SeedClientSet,
 		b.Shoot.SeedNamespace,
 		b.SecretsManager,
 		kubeapiserver.Values{
-			EnabledAdmissionPlugins:        enabledAdmissionPlugins,
-			DisabledAdmissionPlugins:       disabledAdmissionPlugins,
-			AnonymousAuthenticationEnabled: gardencorev1beta1helper.ShootWantsAnonymousAuthentication(b.Shoot.GetInfo().Spec.Kubernetes.KubeAPIServer),
-			APIAudiences:                   apiAudiences,
-			Audit:                          auditConfig,
-			Autoscaling:                    b.computeKubeAPIServerAutoscalingConfig(),
-			EventTTL:                       eventTTL,
-			FeatureGates:                   featureGates,
-			Images:                         images,
-			OIDC:                           oidcConfig,
-			Requests:                       requests,
-			RuntimeConfig:                  runtimeConfig,
-			StaticTokenKubeconfigEnabled:   b.Shoot.GetInfo().Spec.Kubernetes.EnableStaticTokenKubeconfig,
-			Version:                        b.Shoot.KubernetesVersion,
+			EnabledAdmissionPlugins:             enabledAdmissionPluginConfigs,
+			DisabledAdmissionPlugins:            disabledAdmissionPlugins,
+			AnonymousAuthenticationEnabled:      v1beta1helper.ShootWantsAnonymousAuthentication(b.Shoot.GetInfo().Spec.Kubernetes.KubeAPIServer),
+			APIAudiences:                        apiAudiences,
+			Audit:                               auditConfig,
+			Autoscaling:                         b.computeKubeAPIServerAutoscalingConfig(),
+			DefaultNotReadyTolerationSeconds:    defaultNotReadyTolerationSeconds,
+			DefaultUnreachableTolerationSeconds: defaultUnreachableTolerationSeconds,
+			EventTTL:                            eventTTL,
+			FeatureGates:                        featureGates,
+			Images:                              images,
+			IsNodeless:                          false,
+			OIDC:                                oidcConfig,
+			Requests:                            requests,
+			RuntimeConfig:                       runtimeConfig,
+			RuntimeVersion:                      b.Seed.KubernetesVersion,
+			ServiceNetworkCIDR:                  b.Shoot.Networks.Services.String(),
+			StaticTokenKubeconfigEnabled:        b.Shoot.GetInfo().Spec.Kubernetes.EnableStaticTokenKubeconfig,
+			Version:                             b.Shoot.KubernetesVersion,
 			VPN: kubeapiserver.VPNConfig{
-				ReversedVPNEnabled:                   b.Shoot.ReversedVPNEnabled,
+				Enabled:                              true,
 				PodNetworkCIDR:                       b.Shoot.Networks.Pods.String(),
-				ServiceNetworkCIDR:                   b.Shoot.Networks.Services.String(),
 				NodeNetworkCIDR:                      b.Shoot.GetInfo().Spec.Networking.Nodes,
 				HighAvailabilityEnabled:              b.Shoot.VPNHighAvailabilityEnabled,
 				HighAvailabilityNumberOfSeedServers:  b.Shoot.VPNHighAvailabilityNumberOfSeedServers,
@@ -170,7 +181,7 @@ func (b *Botanist) DefaultKubeAPIServer(ctx context.Context) (kubeapiserver.Inte
 	), nil
 }
 
-func (b *Botanist) computeKubeAPIServerAdmissionPlugins(defaultPlugins, configuredPlugins []gardencorev1beta1.AdmissionPlugin) []gardencorev1beta1.AdmissionPlugin {
+func (b *Botanist) computeEnabledKubeAPIServerAdmissionPlugins(defaultPlugins, configuredPlugins []gardencorev1beta1.AdmissionPlugin) []gardencorev1beta1.AdmissionPlugin {
 	for _, plugin := range configuredPlugins {
 		pluginOverwritesDefault := false
 
@@ -249,7 +260,20 @@ func (b *Botanist) ensureAdmissionPluginConfig(plugins []gardencorev1beta1.Admis
 
 		plugins[index].Config = &runtime.RawExtension{Raw: admissionConfigData}
 	}
+
 	return plugins, nil
+}
+
+func (b *Botanist) convertToAdmissionPluginConfigs(plugins []gardencorev1beta1.AdmissionPlugin) ([]kubeapiserver.AdmissionPluginConfig, error) {
+	var out []kubeapiserver.AdmissionPluginConfig
+
+	for _, plugin := range plugins {
+		out = append(out, kubeapiserver.AdmissionPluginConfig{
+			AdmissionPlugin: plugin,
+		})
+	}
+
+	return out, nil
 }
 
 func (b *Botanist) computeDisabledKubeAPIServerAdmissionPlugins(configuredPlugins []gardencorev1beta1.AdmissionPlugin) []gardencorev1beta1.AdmissionPlugin {
@@ -271,7 +295,7 @@ func (b *Botanist) computeKubeAPIServerAuditConfig(ctx context.Context, config *
 	out := &kubeapiserver.AuditConfig{}
 
 	configMap := &corev1.ConfigMap{}
-	if err := b.GardenClient.Get(ctx, kutil.Key(b.Shoot.GetInfo().Namespace, config.AuditPolicy.ConfigMapRef.Name), configMap); err != nil {
+	if err := b.GardenClient.Get(ctx, kubernetesutils.Key(b.Shoot.GetInfo().Namespace, config.AuditPolicy.ConfigMapRef.Name), configMap); err != nil {
 		// Ignore missing audit configuration on shoot deletion to prevent failing redeployments of the
 		// kube-apiserver in case the end-user deleted the configmap before/simultaneously to the shoot
 		// deletion.
@@ -304,7 +328,7 @@ func (b *Botanist) computeKubeAPIServerAutoscalingConfig() kubeapiserver.Autosca
 		minReplicas = 2
 	}
 
-	if gardencorev1beta1helper.IsHAControlPlaneConfigured(b.Shoot.GetInfo()) {
+	if v1beta1helper.IsHAControlPlaneConfigured(b.Shoot.GetInfo()) {
 		minReplicas = 3
 	}
 
@@ -352,7 +376,7 @@ func (b *Botanist) computeKubeAPIServerAutoscalingConfig() kubeapiserver.Autosca
 
 func resourcesRequirementsForKubeAPIServer(nodeCount int32, scalingClass string) corev1.ResourceRequirements {
 	var (
-		validScalingClasses = sets.NewString("small", "medium", "large", "xlarge", "2xlarge")
+		validScalingClasses = sets.New[string]("small", "medium", "large", "xlarge", "2xlarge")
 		cpuRequest          string
 		memoryRequest       string
 	)
@@ -403,22 +427,12 @@ func resourcesRequirementsForKubeAPIServer(nodeCount int32, scalingClass string)
 }
 
 func (b *Botanist) computeKubeAPIServerImages() (kubeapiserver.Images, error) {
-	imageAlpineIPTables, err := b.ImageVector.FindImage(images.ImageNameAlpineIptables, imagevector.RuntimeVersion(b.SeedVersion()), imagevector.TargetVersion(b.ShootVersion()))
-	if err != nil {
-		return kubeapiserver.Images{}, err
-	}
-
 	imageApiserverProxyPodWebhook, err := b.ImageVector.FindImage(images.ImageNameApiserverProxyPodWebhook, imagevector.RuntimeVersion(b.SeedVersion()), imagevector.TargetVersion(b.ShootVersion()))
 	if err != nil {
 		return kubeapiserver.Images{}, err
 	}
 
 	imageKubeAPIServer, err := b.ImageVector.FindImage(images.ImageNameKubeApiserver, imagevector.RuntimeVersion(b.SeedVersion()), imagevector.TargetVersion(b.ShootVersion()))
-	if err != nil {
-		return kubeapiserver.Images{}, err
-	}
-
-	imageVPNSeed, err := b.ImageVector.FindImage(images.ImageNameVpnSeed, imagevector.RuntimeVersion(b.SeedVersion()), imagevector.TargetVersion(b.ShootVersion()))
 	if err != nil {
 		return kubeapiserver.Images{}, err
 	}
@@ -432,12 +446,16 @@ func (b *Botanist) computeKubeAPIServerImages() (kubeapiserver.Images, error) {
 		vpnClient = imageVPNClient.String()
 	}
 
+	imageWatchdog, err := b.ImageVector.FindImage(images.ImageNameAlpine, imagevector.RuntimeVersion(b.SeedVersion()), imagevector.TargetVersion(b.ShootVersion()))
+	if err != nil {
+		return kubeapiserver.Images{}, err
+	}
+
 	return kubeapiserver.Images{
-		AlpineIPTables:           imageAlpineIPTables.String(),
 		APIServerProxyPodWebhook: imageApiserverProxyPodWebhook.String(),
 		KubeAPIServer:            imageKubeAPIServer.String(),
-		VPNSeed:                  imageVPNSeed.String(),
 		VPNClient:                vpnClient,
+		Watchdog:                 imageWatchdog.String(),
 	}, nil
 }
 
@@ -447,21 +465,13 @@ func (b *Botanist) computeKubeAPIServerServerCertificateConfig() kubeapiserver.S
 			b.Shoot.Networks.APIServer,
 		}
 		dnsNames = []string{
-			gutil.GetAPIServerDomain(b.Shoot.InternalClusterDomain),
+			gardenerutils.GetAPIServerDomain(b.Shoot.InternalClusterDomain),
 			b.Shoot.GetInfo().Status.TechnicalID,
 		}
 	)
 
-	if !b.Seed.GetInfo().Spec.Settings.ShootDNS.Enabled {
-		if addr := net.ParseIP(b.APIServerAddress); addr != nil {
-			ipAddresses = append(ipAddresses, addr)
-		} else {
-			dnsNames = append(dnsNames, b.APIServerAddress)
-		}
-	}
-
 	if b.Shoot.ExternalClusterDomain != nil {
-		dnsNames = append(dnsNames, *(b.Shoot.GetInfo().Spec.DNS.Domain), gutil.GetAPIServerDomain(*b.Shoot.ExternalClusterDomain))
+		dnsNames = append(dnsNames, *(b.Shoot.GetInfo().Spec.DNS.Domain), gardenerutils.GetAPIServerDomain(*b.Shoot.ExternalClusterDomain))
 	}
 
 	return kubeapiserver.ServerCertificateConfig{
@@ -477,14 +487,14 @@ const (
 
 func (b *Botanist) computeKubeAPIServerETCDEncryptionConfig(ctx context.Context) (kubeapiserver.ETCDEncryptionConfig, error) {
 	config := kubeapiserver.ETCDEncryptionConfig{
-		RotationPhase:         gardencorev1beta1helper.GetShootETCDEncryptionKeyRotationPhase(b.Shoot.GetInfo().Status.Credentials),
+		RotationPhase:         v1beta1helper.GetShootETCDEncryptionKeyRotationPhase(b.Shoot.GetInfo().Status.Credentials),
 		EncryptWithCurrentKey: true,
 	}
 
-	if gardencorev1beta1helper.GetShootETCDEncryptionKeyRotationPhase(b.Shoot.GetInfo().Status.Credentials) == gardencorev1beta1.RotationPreparing {
+	if v1beta1helper.GetShootETCDEncryptionKeyRotationPhase(b.Shoot.GetInfo().Status.Credentials) == gardencorev1beta1.RotationPreparing {
 		deployment := &metav1.PartialObjectMetadata{}
 		deployment.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind("Deployment"))
-		if err := b.SeedClientSet.Client().Get(ctx, kutil.Key(b.Shoot.SeedNamespace, v1beta1constants.DeploymentNameKubeAPIServer), deployment); err != nil {
+		if err := b.SeedClientSet.Client().Get(ctx, kubernetesutils.Key(b.Shoot.SeedNamespace, v1beta1constants.DeploymentNameKubeAPIServer), deployment); err != nil {
 			if !apierrors.IsNotFound(err) {
 				return kubeapiserver.ETCDEncryptionConfig{}, err
 			}
@@ -501,17 +511,17 @@ func (b *Botanist) computeKubeAPIServerETCDEncryptionConfig(ctx context.Context)
 	return config, nil
 }
 
-func (b *Botanist) computeKubeAPIServerServiceAccountConfig(ctx context.Context, config *gardencorev1beta1.KubeAPIServerConfig, externalHostname string) (kubeapiserver.ServiceAccountConfig, error) {
+func (b *Botanist) computeKubeAPIServerServiceAccountConfig(config *gardencorev1beta1.KubeAPIServerConfig, externalHostname string) kubeapiserver.ServiceAccountConfig {
 	var (
 		defaultIssuer = "https://" + externalHostname
 		out           = kubeapiserver.ServiceAccountConfig{
 			Issuer:        defaultIssuer,
-			RotationPhase: gardencorev1beta1helper.GetShootServiceAccountKeyRotationPhase(b.Shoot.GetInfo().Status.Credentials),
+			RotationPhase: v1beta1helper.GetShootServiceAccountKeyRotationPhase(b.Shoot.GetInfo().Status.Credentials),
 		}
 	)
 
 	if config == nil || config.ServiceAccountConfig == nil {
-		return out, nil
+		return out
 	}
 
 	out.ExtendTokenExpiration = config.ServiceAccountConfig.ExtendTokenExpiration
@@ -525,20 +535,7 @@ func (b *Botanist) computeKubeAPIServerServiceAccountConfig(ctx context.Context,
 		out.AcceptedIssuers = append(out.AcceptedIssuers, defaultIssuer)
 	}
 
-	if signingKeySecret := config.ServiceAccountConfig.SigningKeySecret; signingKeySecret != nil {
-		secret := &corev1.Secret{}
-		if err := b.GardenClient.Get(ctx, kutil.Key(b.Shoot.GetInfo().Namespace, signingKeySecret.Name), secret); err != nil {
-			return out, err
-		}
-
-		data, ok := secret.Data[kubeapiserver.SecretServiceAccountSigningKeyDataKeySigningKey]
-		if !ok {
-			return out, fmt.Errorf("no signing key in secret %s/%s at .data.%s", secret.Namespace, secret.Name, kubeapiserver.SecretServiceAccountSigningKeyDataKeySigningKey)
-		}
-		out.SigningKey = data
-	}
-
-	return out, nil
+	return out
 }
 
 func (b *Botanist) computeKubeAPIServerSNIConfig() kubeapiserver.SNIConfig {
@@ -584,7 +581,7 @@ func (b *Botanist) DeployKubeAPIServer(ctx context.Context) error {
 	values := b.Shoot.Components.ControlPlane.KubeAPIServer.GetValues()
 
 	deployment := &appsv1.Deployment{}
-	if err := b.SeedClientSet.Client().Get(ctx, kutil.Key(b.Shoot.SeedNamespace, v1beta1constants.DeploymentNameKubeAPIServer), deployment); err != nil {
+	if err := b.SeedClientSet.Client().Get(ctx, kubernetesutils.Key(b.Shoot.SeedNamespace, v1beta1constants.DeploymentNameKubeAPIServer), deployment); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return err
 		}
@@ -603,20 +600,15 @@ func (b *Botanist) DeployKubeAPIServer(ctx context.Context) error {
 		}
 	}
 
-	b.Shoot.Components.ControlPlane.KubeAPIServer.SetServerCertificateConfig(b.computeKubeAPIServerServerCertificateConfig())
-	b.Shoot.Components.ControlPlane.KubeAPIServer.SetSNIConfig(b.computeKubeAPIServerSNIConfig())
-
 	externalHostname := b.Shoot.ComputeOutOfClusterAPIServerAddress(b.APIServerAddress, true)
 	b.Shoot.Components.ControlPlane.KubeAPIServer.SetExternalHostname(externalHostname)
 
 	externalServer := b.Shoot.ComputeOutOfClusterAPIServerAddress(b.APIServerAddress, false)
 	b.Shoot.Components.ControlPlane.KubeAPIServer.SetExternalServer(externalServer)
 
-	serviceAccountConfig, err := b.computeKubeAPIServerServiceAccountConfig(ctx, b.Shoot.GetInfo().Spec.Kubernetes.KubeAPIServer, externalHostname)
-	if err != nil {
-		return err
-	}
-	b.Shoot.Components.ControlPlane.KubeAPIServer.SetServiceAccountConfig(serviceAccountConfig)
+	b.Shoot.Components.ControlPlane.KubeAPIServer.SetServerCertificateConfig(b.computeKubeAPIServerServerCertificateConfig())
+	b.Shoot.Components.ControlPlane.KubeAPIServer.SetServiceAccountConfig(b.computeKubeAPIServerServiceAccountConfig(b.Shoot.GetInfo().Spec.Kubernetes.KubeAPIServer, externalHostname))
+	b.Shoot.Components.ControlPlane.KubeAPIServer.SetSNIConfig(b.computeKubeAPIServerSNIConfig())
 
 	etcdEncryptionConfig, err := b.computeKubeAPIServerETCDEncryptionConfig(ctx)
 	if err != nil {
@@ -628,7 +620,7 @@ func (b *Botanist) DeployKubeAPIServer(ctx context.Context) error {
 		return err
 	}
 
-	switch gardencorev1beta1helper.GetShootETCDEncryptionKeyRotationPhase(b.Shoot.GetInfo().Status.Credentials) {
+	switch v1beta1helper.GetShootETCDEncryptionKeyRotationPhase(b.Shoot.GetInfo().Status.Credentials) {
 	case gardencorev1beta1.RotationPreparing:
 		if !etcdEncryptionConfig.EncryptWithCurrentKey {
 			if err := b.Shoot.Components.ControlPlane.KubeAPIServer.Wait(ctx); err != nil {
@@ -674,11 +666,11 @@ func (b *Botanist) DeployKubeAPIServer(ctx context.Context) error {
 		}
 
 		kubeconfigSecretData := userKubeconfigSecret.DeepCopy().Data
-		kubeconfigSecretData[secretutils.DataKeyCertificateCA] = caBundleSecret.Data[secretutils.DataKeyCertificateBundle]
+		kubeconfigSecretData[secretsutils.DataKeyCertificateCA] = caBundleSecret.Data[secretsutils.DataKeyCertificateBundle]
 
 		if err := b.syncShootCredentialToGarden(
 			ctx,
-			gutil.ShootProjectSecretSuffixKubeconfig,
+			gardenerutils.ShootProjectSecretSuffixKubeconfig,
 			map[string]string{v1beta1constants.GardenRole: v1beta1constants.GardenRoleKubeconfig},
 			map[string]string{"url": "https://" + externalServer},
 			kubeconfigSecretData,
@@ -686,15 +678,15 @@ func (b *Botanist) DeployKubeAPIServer(ctx context.Context) error {
 			return err
 		}
 	} else {
-		secretName := gutil.ComputeShootProjectSecretName(b.Shoot.GetInfo().Name, gutil.ShootProjectSecretSuffixKubeconfig)
-		if err := kutil.DeleteObject(ctx, b.GardenClient, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: b.Shoot.GetInfo().Namespace}}); err != nil {
+		secretName := gardenerutils.ComputeShootProjectSecretName(b.Shoot.GetInfo().Name, gardenerutils.ShootProjectSecretSuffixKubeconfig)
+		if err := kubernetesutils.DeleteObject(ctx, b.GardenClient, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: b.Shoot.GetInfo().Namespace}}); err != nil {
 			return err
 		}
 	}
 
 	// TODO(rfranzke): Remove in a future release.
-	if err := b.SaveGardenerResourceDataInShootState(ctx, func(gardenerResourceData *[]gardencorev1alpha1.GardenerResourceData) error {
-		gardenerResourceDataList := gardencorev1alpha1helper.GardenerResourceDataList(*gardenerResourceData)
+	if err := b.SaveGardenerResourceDataInShootState(ctx, func(gardenerResourceData *[]gardencorev1beta1.GardenerResourceData) error {
+		gardenerResourceDataList := v1beta1helper.GardenerResourceDataList(*gardenerResourceData)
 		gardenerResourceDataList.Delete("etcdEncryptionConfiguration")
 		gardenerResourceDataList.Delete("service-account-key")
 		*gardenerResourceData = gardenerResourceDataList
@@ -703,7 +695,7 @@ func (b *Botanist) DeployKubeAPIServer(ctx context.Context) error {
 		return err
 	}
 
-	return kutil.DeleteObjects(ctx, b.SeedClientSet.Client(),
+	return kubernetesutils.DeleteObjects(ctx, b.SeedClientSet.Client(),
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: b.Shoot.SeedNamespace, Name: "etcd-encryption-secret"}},
 	)
 }
@@ -737,7 +729,7 @@ func (b *Botanist) WakeUpKubeAPIServer(ctx context.Context) error {
 	if err := b.DeployKubeAPIServer(ctx); err != nil {
 		return err
 	}
-	if err := kubernetes.ScaleDeployment(ctx, b.SeedClientSet.Client(), kutil.Key(b.Shoot.SeedNamespace, v1beta1constants.DeploymentNameKubeAPIServer), 1); err != nil {
+	if err := kubernetes.ScaleDeployment(ctx, b.SeedClientSet.Client(), kubernetesutils.Key(b.Shoot.SeedNamespace, v1beta1constants.DeploymentNameKubeAPIServer), 1); err != nil {
 		return err
 	}
 	return b.Shoot.Components.ControlPlane.KubeAPIServer.Wait(ctx)
@@ -745,13 +737,13 @@ func (b *Botanist) WakeUpKubeAPIServer(ctx context.Context) error {
 
 // ScaleKubeAPIServerToOne scales kube-apiserver replicas to one.
 func (b *Botanist) ScaleKubeAPIServerToOne(ctx context.Context) error {
-	return kubernetes.ScaleDeployment(ctx, b.SeedClientSet.Client(), kutil.Key(b.Shoot.SeedNamespace, v1beta1constants.DeploymentNameKubeAPIServer), 1)
+	return kubernetes.ScaleDeployment(ctx, b.SeedClientSet.Client(), kubernetesutils.Key(b.Shoot.SeedNamespace, v1beta1constants.DeploymentNameKubeAPIServer), 1)
 }
 
 func (b *Botanist) patchKubeAPIServerDeploymentMeta(ctx context.Context, mutate func(deployment *metav1.PartialObjectMetadata)) error {
 	meta := &metav1.PartialObjectMetadata{}
 	meta.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind("Deployment"))
-	if err := b.SeedClientSet.Client().Get(ctx, kutil.Key(b.Shoot.SeedNamespace, v1beta1constants.DeploymentNameKubeAPIServer), meta); err != nil {
+	if err := b.SeedClientSet.Client().Get(ctx, kubernetesutils.Key(b.Shoot.SeedNamespace, v1beta1constants.DeploymentNameKubeAPIServer), meta); err != nil {
 		return err
 	}
 

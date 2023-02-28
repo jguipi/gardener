@@ -15,6 +15,7 @@
 package config
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	componentbaseconfig "k8s.io/component-base/config"
 )
@@ -109,16 +110,18 @@ type ResourceManagerControllerConfiguration struct {
 	// ResourceClass is the name of the class in ManagedResources to filter for.
 	ResourceClass *string
 
-	// KubeletCSRApprover is the configuration for the kubelet-csr-approver controller.
-	KubeletCSRApprover KubeletCSRApproverControllerConfig
 	// GarbageCollector is the configuration for the garbage-collector controller.
 	GarbageCollector GarbageCollectorControllerConfig
 	// Health is the configuration for the health controller.
 	Health HealthControllerConfig
+	// KubeletCSRApprover is the configuration for the kubelet-csr-approver controller.
+	KubeletCSRApprover KubeletCSRApproverControllerConfig
 	// ManagedResource is the configuration for the managed resource controller.
 	ManagedResource ManagedResourceControllerConfig
-	// RootCAPublisher is the configuration for the root-ca-publisher controller.
-	RootCAPublisher RootCAPublisherControllerConfig
+	// NetworkPolicy is the configuration for the networkpolicy controller.
+	NetworkPolicy NetworkPolicyControllerConfig
+	// Node is the configuration for the node controller.
+	Node NodeControllerConfig
 	// Secret is the configuration for the secret controller.
 	Secret SecretControllerConfig
 	// TokenInvalidator is the configuration for the token-invalidator controller.
@@ -166,14 +169,15 @@ type ManagedResourceControllerConfig struct {
 	ManagedByLabelValue *string
 }
 
-// RootCAPublisherControllerConfig is the configuration for the root-ca-publisher controller.
-type RootCAPublisherControllerConfig struct {
+// NetworkPolicyControllerConfig is the configuration for the networkpolicy controller.
+type NetworkPolicyControllerConfig struct {
 	// Enabled defines whether this controller is enabled.
 	Enabled bool
 	// ConcurrentSyncs is the number of concurrent worker routines for this controller.
 	ConcurrentSyncs *int
-	// RootCAFile is the path to a file containing the root CA.
-	RootCAFile *string
+	// NamespaceSelectors is a list of label selectors for namespaces in which the controller shall reconcile Service
+	// objects. An empty list means all namespaces.
+	NamespaceSelectors []metav1.LabelSelector
 }
 
 // SecretControllerConfig is the configuration for the secret controller.
@@ -198,6 +202,16 @@ type TokenRequestorControllerConfig struct {
 	ConcurrentSyncs *int
 }
 
+// NodeControllerConfig is the configuration for the node controller.
+type NodeControllerConfig struct {
+	// Enabled defines whether this controller is enabled.
+	Enabled bool
+	// ConcurrentSyncs is the number of concurrent worker routines for this controller.
+	ConcurrentSyncs *int
+	// Backoff is the duration to use as backoff when Nodes have non-ready node-critical pods.
+	Backoff *metav1.Duration
+}
+
 // ResourceManagerWebhookConfiguration defines the configuration of the webhooks.
 type ResourceManagerWebhookConfiguration struct {
 	// CRDDeletionProtection is the configuration for the crd-deletion-protection webhook.
@@ -214,6 +228,8 @@ type ResourceManagerWebhookConfiguration struct {
 	ProjectedTokenMount ProjectedTokenMountWebhookConfig
 	// SeccompProfile is the configuration for the seccomp-profile webhook.
 	SeccompProfile SeccompProfileWebhookConfig
+	// SystemComponentsConfig is the configuration for the system-components-config webhook.
+	SystemComponentsConfig SystemComponentsConfigWebhookConfig
 	// TokenInvalidator is the configuration for the token-invalidator webhook.
 	TokenInvalidator TokenInvalidatorWebhookConfig
 }
@@ -234,6 +250,18 @@ type ExtensionValidation struct {
 type HighAvailabilityConfigWebhookConfig struct {
 	// Enabled defines whether this webhook is enabled.
 	Enabled bool
+}
+
+// SystemComponentsConfigWebhookConfig is the configuration for the system-components-config webhook.
+type SystemComponentsConfigWebhookConfig struct {
+	// Enabled defines whether this webhook is enabled.
+	Enabled bool
+	// NodeSelector is the selector used to retrieve nodes that run system components.
+	NodeSelector map[string]string
+	// PodNodeSelector is the node selector that should be added to pods.
+	PodNodeSelector map[string]string
+	// PodTolerations are the tolerations that should be added to pods.
+	PodTolerations []corev1.Toleration
 }
 
 // PodSchedulerNameWebhookConfig is the configuration for the pod-scheduler-name webhook.

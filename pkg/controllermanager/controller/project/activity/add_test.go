@@ -18,12 +18,6 @@ import (
 	"context"
 	"time"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	"github.com/gardener/gardener/pkg/client/kubernetes"
-	. "github.com/gardener/gardener/pkg/controllermanager/controller/project/activity"
-	projectstrategy "github.com/gardener/gardener/pkg/registry/core/project"
-	"github.com/gardener/gardener/pkg/utils/test"
-
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -37,6 +31,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/gardener/gardener/pkg/api/indexer"
+	"github.com/gardener/gardener/pkg/apis/core"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
+	. "github.com/gardener/gardener/pkg/controllermanager/controller/project/activity"
 )
 
 var _ = Describe("Add", func() {
@@ -172,10 +172,10 @@ var _ = Describe("Add", func() {
 
 		BeforeEach(func() {
 			log = logr.Discard()
-			fakeClient = test.NewClientWithFieldSelectorSupport(
-				fakeclient.NewClientBuilder().WithScheme(kubernetes.GardenScheme).Build(),
-				projectstrategy.ToSelectableFields,
-			)
+			fakeClient = fakeclient.NewClientBuilder().
+				WithScheme(kubernetes.GardenScheme).
+				WithIndex(&gardencorev1beta1.Project{}, core.ProjectNamespace, indexer.ProjectNamespaceIndexerFunc).
+				Build()
 
 			project = &gardencorev1beta1.Project{
 				ObjectMeta: metav1.ObjectMeta{

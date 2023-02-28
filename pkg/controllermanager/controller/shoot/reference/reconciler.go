@@ -19,14 +19,6 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	"github.com/gardener/gardener/pkg/controllermanager/apis/config"
-	"github.com/gardener/gardener/pkg/controllerutils"
-	"github.com/gardener/gardener/pkg/utils"
-	"github.com/gardener/gardener/pkg/utils/flow"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -37,6 +29,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/controllermanager/apis/config"
+	"github.com/gardener/gardener/pkg/controllerutils"
+	"github.com/gardener/gardener/pkg/utils"
+	"github.com/gardener/gardener/pkg/utils/flow"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 // FinalizerName is the name of the finalizer used for the reference protection.
@@ -131,7 +131,7 @@ func (r *Reconciler) handleReferencedSecrets(ctx context.Context, log logr.Logge
 		fns = append(fns, func(ctx context.Context) error {
 			secret := &corev1.Secret{}
 			s := shoot
-			if err := c.Get(ctx, kutil.Key(s.Namespace, name), secret); err != nil {
+			if err := c.Get(ctx, kubernetesutils.Key(s.Namespace, name), secret); err != nil {
 				return err
 			}
 
@@ -160,7 +160,7 @@ func (r *Reconciler) handleReferencedSecrets(ctx context.Context, log logr.Logge
 func (r *Reconciler) handleReferencedConfigMap(ctx context.Context, log logr.Logger, c client.Client, shoot *gardencorev1beta1.Shoot) (bool, error) {
 	if configMapRef := getAuditPolicyConfigMapRef(shoot.Spec.Kubernetes.KubeAPIServer); configMapRef != nil {
 		configMap := &corev1.ConfigMap{}
-		if err := c.Get(ctx, kutil.Key(shoot.Namespace, configMapRef.Name), configMap); err != nil {
+		if err := c.Get(ctx, kubernetesutils.Key(shoot.Namespace, configMapRef.Name), configMap); err != nil {
 			return false, err
 		}
 
@@ -243,7 +243,7 @@ func (r *Reconciler) getUnreferencedSecrets(ctx context.Context, shoot *gardenco
 		return nil, err
 	}
 
-	referencedSecrets := sets.NewString()
+	referencedSecrets := sets.New[string]()
 	for _, s := range shoots.Items {
 		// Ignore own references if shoot is in deletion and references are not needed any more by Gardener.
 		if s.Name == shoot.Name && shoot.DeletionTimestamp != nil && !controllerutil.ContainsFinalizer(&s, gardencorev1beta1.GardenerName) {
@@ -284,7 +284,7 @@ func (r *Reconciler) getUnreferencedConfigMaps(ctx context.Context, shoot *garde
 		return nil, err
 	}
 
-	referencedConfigMaps := sets.NewString()
+	referencedConfigMaps := sets.New[string]()
 	for _, s := range shoots.Items {
 		// Ignore own references if shoot is in deletion and references are not needed any more by Gardener.
 		if s.Name == shoot.Name && shoot.DeletionTimestamp != nil && !controllerutil.ContainsFinalizer(&s, gardencorev1beta1.GardenerName) {

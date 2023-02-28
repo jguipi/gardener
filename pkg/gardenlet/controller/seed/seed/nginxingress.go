@@ -19,19 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
-	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
-	extensionsv1alpha1helper "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1/helper"
-	"github.com/gardener/gardener/pkg/operation/botanist/component"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/dnsrecord"
-	"github.com/gardener/gardener/pkg/operation/botanist/component/nginxingress"
-	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
-	"github.com/gardener/gardener/pkg/utils"
-	"github.com/gardener/gardener/pkg/utils/images"
-	"github.com/gardener/gardener/pkg/utils/imagevector"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-	versionutils "github.com/gardener/gardener/pkg/utils/version"
-
 	"github.com/Masterminds/semver"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -42,6 +29,19 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	extensionsv1alpha1helper "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1/helper"
+	"github.com/gardener/gardener/pkg/operation/botanist/component"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/extensions/dnsrecord"
+	"github.com/gardener/gardener/pkg/operation/botanist/component/nginxingress"
+	seedpkg "github.com/gardener/gardener/pkg/operation/seed"
+	"github.com/gardener/gardener/pkg/utils"
+	"github.com/gardener/gardener/pkg/utils/images"
+	"github.com/gardener/gardener/pkg/utils/imagevector"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	versionutils "github.com/gardener/gardener/pkg/utils/version"
 )
 
 const annotationSeedIngressClass = "seed.gardener.cloud/ingress-class"
@@ -69,7 +69,7 @@ func defaultNginxIngress(
 	values := nginxingress.Values{
 		ImageController:     imageController.String(),
 		ImageDefaultBackend: imageDefaultBackend.String(),
-		KubernetesVersion:   kubernetesVersion.String(),
+		KubernetesVersion:   kubernetesVersion,
 		IngressClass:        ingressClass,
 		ConfigData:          config,
 	}
@@ -127,24 +127,21 @@ func migrateIngressClassForShootIngresses(ctx context.Context, gardenClient, see
 		return err
 	}
 
-	if err := switchIngressClass(ctx, seedClient, kutil.Key(v1beta1constants.GardenNamespace, "aggregate-prometheus"), newClass, kubernetesVersion); err != nil {
+	if err := switchIngressClass(ctx, seedClient, kubernetesutils.Key(v1beta1constants.GardenNamespace, "aggregate-prometheus"), newClass, kubernetesVersion); err != nil {
 		return err
 	}
-	if err := switchIngressClass(ctx, seedClient, kutil.Key(v1beta1constants.GardenNamespace, "grafana"), newClass, kubernetesVersion); err != nil {
+	if err := switchIngressClass(ctx, seedClient, kubernetesutils.Key(v1beta1constants.GardenNamespace, "grafana"), newClass, kubernetesVersion); err != nil {
 		return err
 	}
 
 	for _, ns := range shootNamespaces.Items {
-		if err := switchIngressClass(ctx, seedClient, kutil.Key(ns.Name, "alertmanager"), newClass, kubernetesVersion); err != nil {
+		if err := switchIngressClass(ctx, seedClient, kubernetesutils.Key(ns.Name, "alertmanager"), newClass, kubernetesVersion); err != nil {
 			return err
 		}
-		if err := switchIngressClass(ctx, seedClient, kutil.Key(ns.Name, "prometheus"), newClass, kubernetesVersion); err != nil {
+		if err := switchIngressClass(ctx, seedClient, kubernetesutils.Key(ns.Name, "prometheus"), newClass, kubernetesVersion); err != nil {
 			return err
 		}
-		if err := switchIngressClass(ctx, seedClient, kutil.Key(ns.Name, "grafana-operators"), newClass, kubernetesVersion); err != nil {
-			return err
-		}
-		if err := switchIngressClass(ctx, seedClient, kutil.Key(ns.Name, "grafana-users"), newClass, kubernetesVersion); err != nil {
+		if err := switchIngressClass(ctx, seedClient, kubernetesutils.Key(ns.Name, "grafana"), newClass, kubernetesVersion); err != nil {
 			return err
 		}
 	}
@@ -156,16 +153,8 @@ func migrateIngressClassForShootIngresses(ctx context.Context, gardenClient, see
 }
 
 func switchIngressClass(ctx context.Context, seedClient client.Client, ingressKey types.NamespacedName, newClass string, kubernetesVersion *semver.Version) error {
-	// We need to use `versionutils.CompareVersions` because this function normalizes the seed version first.
-	// This is especially necessary if the seed cluster is a non Gardener managed cluster and thus might have some
-	// custom version suffix.
-	lessEqual121, err := versionutils.CompareVersions(kubernetesVersion.String(), "<=", "1.21.x")
-	if err != nil {
-		return err
-	}
-	if lessEqual121 {
+	if versionutils.ConstraintK8sLessEqual121.Check(kubernetesVersion) {
 		ingress := &extensionsv1beta1.Ingress{}
-
 		if err := seedClient.Get(ctx, ingressKey, ingress); err != nil {
 			if apierrors.IsNotFound(err) {
 				return nil
@@ -184,7 +173,6 @@ func switchIngressClass(ctx context.Context, seedClient client.Client, ingressKe
 	}
 
 	ingress := &networkingv1.Ingress{}
-
 	if err := seedClient.Get(ctx, ingressKey, ingress); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil

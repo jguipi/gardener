@@ -15,13 +15,13 @@
 package shoot_test
 
 import (
+	"testing"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"testing"
 )
 
 func TestManagedSeed(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Admission ManagedSeedShoot Suite")
+	RunSpecs(t, "AdmissionPlugin ManagedSeed Shoot Suite")
 }

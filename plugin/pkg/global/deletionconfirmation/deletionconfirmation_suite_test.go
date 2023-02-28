@@ -15,13 +15,13 @@
 package deletionconfirmation_test
 
 import (
+	"testing"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"testing"
 )
 
 func TestDeletionConfirmation(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Admission DeletionConfirmation Suite")
+	RunSpecs(t, "AdmissionPlugin Global DeletionConfirmation Suite")
 }

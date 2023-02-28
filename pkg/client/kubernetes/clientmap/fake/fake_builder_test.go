@@ -17,17 +17,17 @@ package fake_test
 import (
 	"context"
 
+	"github.com/golang/mock/gomock"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap"
 	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap/fake"
 	"github.com/gardener/gardener/pkg/client/kubernetes/clientmap/keys"
-	fakeclientset "github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	kubernetesfake "github.com/gardener/gardener/pkg/client/kubernetes/fake"
 	mockclient "github.com/gardener/gardener/pkg/mock/controller-runtime/client"
-
-	"github.com/golang/mock/gomock"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("FakeClientMapBuilder", func() {
@@ -52,7 +52,7 @@ var _ = Describe("FakeClientMapBuilder", func() {
 
 	Context("#WithClientSets", func() {
 		It("should correctly add ClientSets", func() {
-			fakeCS := fakeclientset.NewClientSet()
+			fakeCS := kubernetesfake.NewClientSet()
 
 			cm := builder.WithClientSets(map[clientmap.ClientSetKey]kubernetes.Interface{
 				key: fakeCS,
@@ -66,7 +66,7 @@ var _ = Describe("FakeClientMapBuilder", func() {
 
 	Context("#WithClientSetForKey", func() {
 		It("should correctly add a single ClientSet", func() {
-			fakeCS := fakeclientset.NewClientSet()
+			fakeCS := kubernetesfake.NewClientSet()
 
 			cm := builder.WithClientSetForKey(key, fakeCS).Build()
 
