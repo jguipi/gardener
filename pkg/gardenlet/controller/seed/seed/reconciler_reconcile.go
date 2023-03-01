@@ -28,7 +28,6 @@ import (
 	istiov1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	schedulingv1 "k8s.io/api/scheduling/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -200,11 +199,6 @@ func (r *Reconciler) reconcile(
 		if err := deployBackupBucketInGarden(ctx, r.GardenClient, seed); err != nil {
 			return reconcile.Result{}, err
 		}
-	}
-
-	// TODO(ialidzhikov): Remove the cleanup logic in 1.66.
-	if err := CleanupLegacyLokiPriorityClass(ctx, r.SeedClientSet.Client()); err != nil {
-		return reconcile.Result{}, err
 	}
 
 	return reconcile.Result{RequeueAfter: r.Config.Controllers.Seed.SyncPeriod.Duration}, nil
@@ -1243,6 +1237,9 @@ func cleanupOrphanIstioNamespace(
 	return nil
 }
 
+// WaitUntilLoadBalancerIsReady is an alias for kubernetesutils.WaitUntilLoadBalancerIsReady. Exposed for tests.
+var WaitUntilLoadBalancerIsReady = kubernetesutils.WaitUntilLoadBalancerIsReady
+
 func waitForNginxIngressServiceAndGetDNSComponent(
 	ctx context.Context,
 	log logr.Logger,
@@ -1277,7 +1274,7 @@ func waitForNginxIngressServiceAndGetDNSComponent(
 			return nil, err
 		}
 
-		ingressLoadBalancerAddress, err = kubernetesutils.WaitUntilLoadBalancerIsReady(
+		ingressLoadBalancerAddress, err = WaitUntilLoadBalancerIsReady(
 			ctx,
 			log,
 			seedClient,
@@ -1291,15 +1288,4 @@ func waitForNginxIngressServiceAndGetDNSComponent(
 	}
 
 	return getManagedIngressDNSRecord(log, seedClient, gardenNamespaceName, seed.GetInfo().Spec.DNS, secretData, seed.GetIngressFQDN("*"), ingressLoadBalancerAddress), nil
-}
-
-// CleanupLegacyLokiPriorityClass deletes the loki priority class.
-func CleanupLegacyLokiPriorityClass(ctx context.Context, seedClient client.Client) error {
-	priorityClass := &schedulingv1.PriorityClass{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "loki",
-		},
-	}
-
-	return client.IgnoreNotFound(seedClient.Delete(ctx, priorityClass))
 }
