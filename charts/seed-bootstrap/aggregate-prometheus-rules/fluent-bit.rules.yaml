@@ -37,19 +37,17 @@ groups:
         summary: Fluent-bit input plugins haven't process any data for the past 6 hours
         description: >
           The input plugins of Fluent-bit pod {{$labels.pod}} running on seed {{$externalLabels.seed}} haven't collected any logs for the last 6 hours.
-
-    - alert: juste_alert_test_aggragate
-      expr: ALERTS{alertname="juste_alert_test", alertstate="firing"} > 0
+    - alert: NodeKubeletDown
+      expr: ALERTS{alertname="NodeKubeletDown", alertstate="firing"} > 0
+      for: 10m
       labels:
+        service: node-exporter
         severity: warning
-        service: logging
         type: seed
-        visibility: operator
+        visibility: owner
       annotations:
-        summary: jc test
-        description: jc test
-
-
+        summary: Nodes not ready for more than 10 minutes 
+        description: Shows the number of node that are in the NotReady state for more than 10 minutes du to the kubelet not responding
     - alert: FluentBitReceivesLogsWithoutMetadata
       expr: |
         sum by (pod) (
