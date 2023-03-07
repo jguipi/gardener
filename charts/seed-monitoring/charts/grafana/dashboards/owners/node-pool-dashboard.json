@@ -905,7 +905,7 @@
       "dashLength": 10,
       "datasource": null,
       "decimals": 1,
-      "description": "Shows the average number of node that are in the NotReady state for more than 10 minutes",
+      "description": "Shows the number of node that are in the NotReady state for more than 10 minutes du to the kubelet not responding",
       "fieldConfig": {
           "defaults": {
           },
@@ -967,7 +967,7 @@
       "timeRegions": [
       ],
       "timeShift": null,
-      "title": "Node not ready for more than 10 minutes",
+      "title": "Nodes not ready for more than 10 minutes",
       "tooltip": {
           "shared": true,
           "sort": 0,
@@ -986,7 +986,7 @@
           {
               "decimals": 1,
               "format": "short",
-              "label": "Pods",
+              "label": "Node count",
               "logBase": 1,
               "max": null,
               "min": "0",
@@ -1200,3 +1200,4 @@
   "uid": "node-worker-pool-overview",
   "version": 1
 }
+
