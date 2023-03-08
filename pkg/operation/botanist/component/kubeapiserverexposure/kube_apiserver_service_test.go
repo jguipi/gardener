@@ -29,6 +29,7 @@ import (
 
 	"github.com/gardener/gardener/pkg/operation/botanist/component"
 	. "github.com/gardener/gardener/pkg/operation/botanist/component/kubeapiserverexposure"
+	"github.com/gardener/gardener/pkg/utils"
 	retryfake "github.com/gardener/gardener/pkg/utils/retry/fake"
 	. "github.com/gardener/gardener/pkg/utils/test/matchers"
 )
@@ -109,11 +110,12 @@ var _ = Describe("#Service", func() {
 		}
 
 		Expect(c.Create(ctx, sniService)).To(Succeed())
-		Expect(c.Create(ctx, expected)).To(Succeed())
-		expected.ResourceVersion = "2"
 	})
 
 	JustBeforeEach(func() {
+		Expect(c.Create(ctx, expected)).To(Succeed())
+		expected.ResourceVersion = "2"
+
 		defaultDepWaiter = NewService(
 			log,
 			c,
@@ -126,6 +128,7 @@ var _ = Describe("#Service", func() {
 			&retryfake.Ops{MaxAttempts: 1},
 			clusterIPFunc,
 			ingressIPFunc,
+			true,
 		)
 	})
 
@@ -207,12 +210,9 @@ var _ = Describe("#Service", func() {
 	Context("SNI disabled", func() {
 		BeforeEach(func() {
 			sniPhase = component.PhaseDisabled
-			expected.Annotations = map[string]string{
+			expected.Annotations = utils.MergeStringMaps(map[string]string{
 				"foo": "bar",
-				"networking.resources.gardener.cloud/from-policy-pod-label-selector": "all-scrape-targets",
-				"networking.resources.gardener.cloud/from-policy-allowed-ports":      `[{"protocol":"TCP","port":443}]`,
-				"networking.resources.gardener.cloud/from-world-to-ports":            `[{"protocol":"TCP","port":443}]`,
-			}
+			}, netpolAnnotations())
 		})
 
 		assertDisabledSNI()
@@ -221,13 +221,10 @@ var _ = Describe("#Service", func() {
 	Context("SNI being disabled", func() {
 		BeforeEach(func() {
 			sniPhase = component.PhaseDisabling
-			expected.Annotations = map[string]string{
+			expected.Annotations = utils.MergeStringMaps(map[string]string{
 				"foo":                          "bar",
 				"networking.istio.io/exportTo": "*",
-				"networking.resources.gardener.cloud/from-policy-pod-label-selector": "all-scrape-targets",
-				"networking.resources.gardener.cloud/from-policy-allowed-ports":      `[{"protocol":"TCP","port":443}]`,
-				"networking.resources.gardener.cloud/from-world-to-ports":            `[{"protocol":"TCP","port":443}]`,
-			}
+			}, netpolAnnotations())
 			expected.Spec.Type = corev1.ServiceTypeLoadBalancer
 			expected.Labels["core.gardener.cloud/apiserver-exposure"] = "gardener-managed"
 		})
@@ -238,13 +235,10 @@ var _ = Describe("#Service", func() {
 	Context("SNI enabled", func() {
 		BeforeEach(func() {
 			sniPhase = component.PhaseEnabled
-			expected.Annotations = map[string]string{
+			expected.Annotations = utils.MergeStringMaps(map[string]string{
 				"foo":                          "bar",
 				"networking.istio.io/exportTo": "*",
-				"networking.resources.gardener.cloud/from-policy-pod-label-selector": "all-scrape-targets",
-				"networking.resources.gardener.cloud/from-policy-allowed-ports":      `[{"protocol":"TCP","port":443}]`,
-				"networking.resources.gardener.cloud/from-world-to-ports":            `[{"protocol":"TCP","port":443}]`,
-			}
+			}, netpolAnnotations())
 			expected.Spec.Type = corev1.ServiceTypeClusterIP
 			expected.Labels["core.gardener.cloud/apiserver-exposure"] = "gardener-managed"
 		})
@@ -255,16 +249,95 @@ var _ = Describe("#Service", func() {
 	Context("SNI being enabled", func() {
 		BeforeEach(func() {
 			sniPhase = component.PhaseEnabling
-			expected.Annotations = map[string]string{
+			expected.Annotations = utils.MergeStringMaps(map[string]string{
 				"foo":                          "bar",
 				"networking.istio.io/exportTo": "*",
-				"networking.resources.gardener.cloud/from-policy-pod-label-selector": "all-scrape-targets",
-				"networking.resources.gardener.cloud/from-policy-allowed-ports":      `[{"protocol":"TCP","port":443}]`,
-				"networking.resources.gardener.cloud/from-world-to-ports":            `[{"protocol":"TCP","port":443}]`,
-			}
+			}, netpolAnnotations())
 			expected.Spec.Type = corev1.ServiceTypeLoadBalancer
 		})
 
 		assertEnabledSNI()
 	})
+
+	Context("when service is designed for shoots", func() {
+		BeforeEach(func() {
+			namespace := "shoot-" + expected.Namespace
+
+			sniPhase = component.PhaseEnabling
+			serviceObjKey = client.ObjectKey{Name: serviceObjKey.Name, Namespace: namespace}
+			expected.Annotations = utils.MergeStringMaps(map[string]string{
+				"foo":                          "bar",
+				"networking.istio.io/exportTo": "*",
+			}, shootNetpolAnnotations())
+			expected.Namespace = namespace
+			expected.Spec.Type = corev1.ServiceTypeLoadBalancer
+		})
+
+		assertEnabledSNI()
+	})
+
+	Describe("#Deploy", func() {
+		Context("when TopologyAwareRoutingEnabled=true", func() {
+			It("should successfully deploy with expected kube-apiserver service annotations and labels", func() {
+				sniPhase = component.PhaseEnabled
+				defaultDepWaiter = NewService(
+					log,
+					c,
+					&ServiceValues{
+						AnnotationsFunc:             func() map[string]string { return map[string]string{"foo": "bar"} },
+						SNIPhase:                    sniPhase,
+						TopologyAwareRoutingEnabled: true,
+					},
+					func() client.ObjectKey { return serviceObjKey },
+					func() client.ObjectKey { return sniServiceObjKey },
+					&retryfake.Ops{MaxAttempts: 1},
+					clusterIPFunc,
+					ingressIPFunc,
+					false,
+				)
+
+				Expect(defaultDepWaiter.Deploy(ctx)).To(Succeed())
+
+				actual := &corev1.Service{}
+				Expect(c.Get(ctx, serviceObjKey, actual)).To(Succeed())
+
+				expected.Annotations = map[string]string{
+					"foo":                          "bar",
+					"networking.istio.io/exportTo": "*",
+					"networking.resources.gardener.cloud/from-policy-pod-label-selector": "all-scrape-targets",
+					"networking.resources.gardener.cloud/from-policy-allowed-ports":      `[{"protocol":"TCP","port":443}]`,
+					"networking.resources.gardener.cloud/from-world-to-ports":            `[{"protocol":"TCP","port":443}]`,
+					"networking.resources.gardener.cloud/namespace-selectors":            `[{"matchLabels":{"gardener.cloud/role":"istio-ingress"}}]`,
+					"service.kubernetes.io/topology-aware-hints":                         "auto",
+				}
+				expected.Labels = map[string]string{
+					"app": "kubernetes",
+					"endpoint-slice-hints.resources.gardener.cloud/consider": "true",
+					"core.gardener.cloud/apiserver-exposure":                 "gardener-managed",
+					"role":                                                   "apiserver",
+				}
+				expected.Spec.Type = corev1.ServiceTypeClusterIP
+				Expect(actual).To(DeepEqual(expected))
+			})
+		})
+	})
 })
+
+func netpolAnnotations() map[string]string {
+	return map[string]string{
+		"networking.resources.gardener.cloud/from-policy-allowed-ports":      `[{"protocol":"TCP","port":443}]`,
+		"networking.resources.gardener.cloud/from-policy-pod-label-selector": "all-scrape-targets",
+		"networking.resources.gardener.cloud/from-world-to-ports":            `[{"protocol":"TCP","port":443}]`,
+		"networking.resources.gardener.cloud/namespace-selectors":            `[{"matchLabels":{"gardener.cloud/role":"istio-ingress"}}]`,
+	}
+}
+
+func shootNetpolAnnotations() map[string]string {
+	return map[string]string{
+		"networking.resources.gardener.cloud/from-policy-allowed-ports":          `[{"protocol":"TCP","port":443}]`,
+		"networking.resources.gardener.cloud/from-policy-pod-label-selector":     "all-scrape-targets",
+		"networking.resources.gardener.cloud/from-world-to-ports":                `[{"protocol":"TCP","port":443}]`,
+		"networking.resources.gardener.cloud/namespace-selectors":                `[{"matchLabels":{"gardener.cloud/role":"istio-ingress"}},{"matchExpressions":[{"key":"handler.exposureclass.gardener.cloud/name","operator":"Exists"}]},{"matchLabels":{"gardener.cloud/role":"extension"}}]`,
+		"networking.resources.gardener.cloud/pod-label-selector-namespace-alias": "all-shoots",
+	}
+}

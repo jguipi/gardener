@@ -44,6 +44,8 @@ func NewGardenerResourceManager(
 	secretNameServerCA string,
 	priorityClassName string,
 	defaultSeccompProfileEnabled bool,
+	endpointSliceHintsEnabled bool,
+	fullNetworkPoliciesEnabled bool,
 	zones []string,
 ) (
 	component.DeployWaiter,
@@ -63,6 +65,8 @@ func NewGardenerResourceManager(
 	return resourcemanager.New(c, gardenNamespaceName, secretsManager, resourcemanager.Values{
 		ConcurrentSyncs:                      pointer.Int(20),
 		DefaultSeccompProfileEnabled:         defaultSeccompProfileEnabled,
+		EndpointSliceHintsEnabled:            endpointSliceHintsEnabled,
+		FullNetworkPolicies:                  fullNetworkPoliciesEnabled,
 		HealthSyncPeriod:                     &metav1.Duration{Duration: time.Minute},
 		Image:                                image.String(),
 		LogLevel:                             logLevel,

@@ -415,6 +415,8 @@ func (r *Reconciler) runReconcileSeedFlow(
 			v1beta1constants.SecretNameCASeed,
 			v1beta1constants.PriorityClassNameSeedSystemCritical,
 			gardenletfeatures.FeatureGate.Enabled(features.DefaultSeccompProfile),
+			v1beta1helper.SeedSettingTopologyAwareRoutingEnabled(seed.GetInfo().Spec.Settings),
+			gardenletfeatures.FeatureGate.Enabled(features.FullNetworkPoliciesInRuntimeCluster),
 			seed.GetInfo().Spec.Provider.Zones,
 		)
 		if err != nil {
@@ -1163,7 +1165,7 @@ func cleanupOrphanExposureClassHandlerResources(
 	// Remove zonal, orphaned istio default namespaces
 	zonalIstioNamespaces := &corev1.NamespaceList{}
 	if err := c.List(ctx, zonalIstioNamespaces, client.MatchingLabelsSelector{
-		Selector: labels.NewSelector().Add(utils.MustNewRequirement(operation.IstioDefaultZoneKey, selection.Exists)),
+		Selector: labels.NewSelector().Add(utils.MustNewRequirement(istio.DefaultZoneKey, selection.Exists)),
 	}); err != nil {
 		return err
 	}
@@ -1220,7 +1222,7 @@ func cleanupOrphanIstioNamespace(
 			}
 		} else {
 			_, zone := operation.IsZonalIstioExtension(namespace.Labels)
-			if value, ok := gateway.Spec.Selector[operation.IstioDefaultZoneKey]; ok && strings.HasSuffix(value, zone) {
+			if value, ok := gateway.Spec.Selector[istio.DefaultZoneKey]; ok && strings.HasSuffix(value, zone) {
 				log.Info("Resources of default zonal istio handler cannot be deleted as they are still in use", "zone", zone)
 				return nil
 			}

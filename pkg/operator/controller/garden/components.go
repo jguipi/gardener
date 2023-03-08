@@ -47,6 +47,8 @@ func (r *Reconciler) newGardenerResourceManager(garden *operatorv1alpha1.Garden,
 		operatorv1alpha1.SecretNameCARuntime,
 		v1beta1constants.PriorityClassNameGardenSystemCritical,
 		operatorfeatures.FeatureGate.Enabled(features.DefaultSeccompProfile),
+		false,
+		false,
 		garden.Spec.RuntimeCluster.Provider.Zones,
 	)
 }
@@ -198,5 +200,6 @@ func (r *Reconciler) newKubeAPIServerService(log logr.Logger, garden *operatorv1
 		nil,
 		nil,
 		nil,
+		false,
 	)
 }

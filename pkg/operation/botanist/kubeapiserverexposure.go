@@ -33,8 +33,9 @@ func (b *Botanist) newKubeAPIServiceServiceComponent(sniPhase component.Phase) c
 		b.Logger,
 		b.SeedClientSet.Client(),
 		&kubeapiserverexposure.ServiceValues{
-			AnnotationsFunc: func() map[string]string { return b.IstioLoadBalancerAnnotations() },
-			SNIPhase:        sniPhase,
+			AnnotationsFunc:             func() map[string]string { return b.IstioLoadBalancerAnnotations() },
+			SNIPhase:                    sniPhase,
+			TopologyAwareRoutingEnabled: b.Shoot.TopologyAwareRoutingEnabled,
 		},
 		func() client.ObjectKey {
 			return client.ObjectKey{Name: v1beta1constants.DeploymentNameKubeAPIServer, Namespace: b.Shoot.SeedNamespace}
@@ -48,6 +49,7 @@ func (b *Botanist) newKubeAPIServiceServiceComponent(sniPhase component.Phase) c
 			b.APIServerAddress = address
 			b.newDNSComponentsTargetingAPIServerAddress()
 		},
+		gardenletfeatures.FeatureGate.Enabled(features.FullNetworkPoliciesInRuntimeCluster),
 	)
 }
 

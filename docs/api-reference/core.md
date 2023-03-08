@@ -3641,8 +3641,8 @@ Supported values are <code>horizontal</code> and <code>cluster-proportional</cod
 <p>
 (<em>Appears on:</em>
 <a href="#core.gardener.cloud/v1beta1.CARotation">CARotation</a>, 
-<a href="#core.gardener.cloud/v1beta1.ShootETCDEncryptionKeyRotation">ShootETCDEncryptionKeyRotation</a>, 
-<a href="#core.gardener.cloud/v1beta1.ShootServiceAccountKeyRotation">ShootServiceAccountKeyRotation</a>)
+<a href="#core.gardener.cloud/v1beta1.ETCDEncryptionKeyRotation">ETCDEncryptionKeyRotation</a>, 
+<a href="#core.gardener.cloud/v1beta1.ServiceAccountKeyRotation">ServiceAccountKeyRotation</a>)
 </p>
 <p>
 <p>CredentialsRotationPhase is a string alias.</p>
@@ -3915,6 +3915,97 @@ string
 </td>
 <td>
 <p>Name is the name of the <code>ControllerDeployment</code> that is being referred to.</p>
+</td>
+</tr>
+</tbody>
+</table>
+<h3 id="core.gardener.cloud/v1beta1.ETCDEncryptionKeyRotation">ETCDEncryptionKeyRotation
+</h3>
+<p>
+(<em>Appears on:</em>
+<a href="#core.gardener.cloud/v1beta1.ShootCredentialsRotation">ShootCredentialsRotation</a>)
+</p>
+<p>
+<p>ETCDEncryptionKeyRotation contains information about the ETCD encryption key credential rotation.</p>
+</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>phase</code></br>
+<em>
+<a href="#core.gardener.cloud/v1beta1.CredentialsRotationPhase">
+CredentialsRotationPhase
+</a>
+</em>
+</td>
+<td>
+<p>Phase describes the phase of the ETCD encryption key credential rotation.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>lastCompletionTime</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
+Kubernetes meta/v1.Time
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>LastCompletionTime is the most recent time when the ETCD encryption key credential rotation was successfully
+completed.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>lastInitiationTime</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
+Kubernetes meta/v1.Time
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>LastInitiationTime is the most recent time when the ETCD encryption key credential rotation was initiated.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>lastInitiationFinishedTime</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
+Kubernetes meta/v1.Time
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>LastInitiationFinishedTime is the recent time when the certificate authority credential rotation initiation was
+completed.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>lastCompletionTriggeredTime</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
+Kubernetes meta/v1.Time
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>LastCompletionTriggeredTime is the recent time when the certificate authority credential rotation completion was
+triggered.</p>
 </td>
 </tr>
 </tbody>
@@ -8975,6 +9066,38 @@ are not considered by the scheduler.</p>
 </tr>
 </tbody>
 </table>
+<h3 id="core.gardener.cloud/v1beta1.SeedSettingTopologyAwareRouting">SeedSettingTopologyAwareRouting
+</h3>
+<p>
+(<em>Appears on:</em>
+<a href="#core.gardener.cloud/v1beta1.SeedSettings">SeedSettings</a>)
+</p>
+<p>
+<p>SeedSettingTopologyAwareRouting controls certain settings for topology-aware traffic routing in the seed.
+See <a href="https://github.com/gardener/gardener/blob/master/docs/usage/topology_aware_routing.md">https://github.com/gardener/gardener/blob/master/docs/usage/topology_aware_routing.md</a>.</p>
+</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>enabled</code></br>
+<em>
+bool
+</em>
+</td>
+<td>
+<p>Enabled controls whether certain Services deployed in the seed cluster should be topology-aware.
+These Services are etcd-main-client, etcd-events-client, kube-apiserver, gardener-resource-manager and vpa-webhook.</p>
+</td>
+</tr>
+</tbody>
+</table>
 <h3 id="core.gardener.cloud/v1beta1.SeedSettingVerticalPodAutoscaler">SeedSettingVerticalPodAutoscaler
 </h3>
 <p>
@@ -9107,6 +9230,21 @@ SeedSettingDependencyWatchdog
 <td>
 <em>(Optional)</em>
 <p>DependencyWatchdog controls certain settings for the dependency-watchdog components deployed in the seed.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>topologyAwareRouting</code></br>
+<em>
+<a href="#core.gardener.cloud/v1beta1.SeedSettingTopologyAwareRouting">
+SeedSettingTopologyAwareRouting
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>TopologyAwareRouting controls certain settings for topology-aware traffic routing in the seed.
+See <a href="https://github.com/gardener/gardener/blob/master/docs/usage/topology_aware_routing.md">https://github.com/gardener/gardener/blob/master/docs/usage/topology_aware_routing.md</a>.</p>
 </td>
 </tr>
 </tbody>
@@ -9771,6 +9909,97 @@ This field is only available for Kubernetes v1.22 or later.</p>
 </tr>
 </tbody>
 </table>
+<h3 id="core.gardener.cloud/v1beta1.ServiceAccountKeyRotation">ServiceAccountKeyRotation
+</h3>
+<p>
+(<em>Appears on:</em>
+<a href="#core.gardener.cloud/v1beta1.ShootCredentialsRotation">ShootCredentialsRotation</a>)
+</p>
+<p>
+<p>ServiceAccountKeyRotation contains information about the service account key credential rotation.</p>
+</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>phase</code></br>
+<em>
+<a href="#core.gardener.cloud/v1beta1.CredentialsRotationPhase">
+CredentialsRotationPhase
+</a>
+</em>
+</td>
+<td>
+<p>Phase describes the phase of the service account key credential rotation.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>lastCompletionTime</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
+Kubernetes meta/v1.Time
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>LastCompletionTime is the most recent time when the service account key credential rotation was successfully
+completed.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>lastInitiationTime</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
+Kubernetes meta/v1.Time
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>LastInitiationTime is the most recent time when the service account key credential rotation was initiated.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>lastInitiationFinishedTime</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
+Kubernetes meta/v1.Time
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>LastInitiationFinishedTime is the recent time when the certificate authority credential rotation initiation was
+completed.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>lastCompletionTriggeredTime</code></br>
+<em>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
+Kubernetes meta/v1.Time
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>LastCompletionTriggeredTime is the recent time when the certificate authority credential rotation completion was
+triggered.</p>
+</td>
+</tr>
+</tbody>
+</table>
 <h3 id="core.gardener.cloud/v1beta1.ShootAdvertisedAddress">ShootAdvertisedAddress
 </h3>
 <p>
@@ -9922,8 +10151,8 @@ ShootObservabilityRotation
 <td>
 <code>serviceAccountKey</code></br>
 <em>
-<a href="#core.gardener.cloud/v1beta1.ShootServiceAccountKeyRotation">
-ShootServiceAccountKeyRotation
+<a href="#core.gardener.cloud/v1beta1.ServiceAccountKeyRotation">
+ServiceAccountKeyRotation
 </a>
 </em>
 </td>
@@ -9936,105 +10165,14 @@ ShootServiceAccountKeyRotation
 <td>
 <code>etcdEncryptionKey</code></br>
 <em>
-<a href="#core.gardener.cloud/v1beta1.ShootETCDEncryptionKeyRotation">
-ShootETCDEncryptionKeyRotation
+<a href="#core.gardener.cloud/v1beta1.ETCDEncryptionKeyRotation">
+ETCDEncryptionKeyRotation
 </a>
 </em>
 </td>
 <td>
 <em>(Optional)</em>
 <p>ETCDEncryptionKey contains information about the ETCD encryption key credential rotation.</p>
-</td>
-</tr>
-</tbody>
-</table>
-<h3 id="core.gardener.cloud/v1beta1.ShootETCDEncryptionKeyRotation">ShootETCDEncryptionKeyRotation
-</h3>
-<p>
-(<em>Appears on:</em>
-<a href="#core.gardener.cloud/v1beta1.ShootCredentialsRotation">ShootCredentialsRotation</a>)
-</p>
-<p>
-<p>ShootETCDEncryptionKeyRotation contains information about the ETCD encryption key credential rotation.</p>
-</p>
-<table>
-<thead>
-<tr>
-<th>Field</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>
-<code>phase</code></br>
-<em>
-<a href="#core.gardener.cloud/v1beta1.CredentialsRotationPhase">
-CredentialsRotationPhase
-</a>
-</em>
-</td>
-<td>
-<p>Phase describes the phase of the ETCD encryption key credential rotation.</p>
-</td>
-</tr>
-<tr>
-<td>
-<code>lastCompletionTime</code></br>
-<em>
-<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
-Kubernetes meta/v1.Time
-</a>
-</em>
-</td>
-<td>
-<em>(Optional)</em>
-<p>LastCompletionTime is the most recent time when the ETCD encryption key credential rotation was successfully
-completed.</p>
-</td>
-</tr>
-<tr>
-<td>
-<code>lastInitiationTime</code></br>
-<em>
-<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
-Kubernetes meta/v1.Time
-</a>
-</em>
-</td>
-<td>
-<em>(Optional)</em>
-<p>LastInitiationTime is the most recent time when the ETCD encryption key credential rotation was initiated.</p>
-</td>
-</tr>
-<tr>
-<td>
-<code>lastInitiationFinishedTime</code></br>
-<em>
-<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
-Kubernetes meta/v1.Time
-</a>
-</em>
-</td>
-<td>
-<em>(Optional)</em>
-<p>LastInitiationFinishedTime is the recent time when the certificate authority credential rotation initiation was
-completed.</p>
-</td>
-</tr>
-<tr>
-<td>
-<code>lastCompletionTriggeredTime</code></br>
-<em>
-<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
-Kubernetes meta/v1.Time
-</a>
-</em>
-</td>
-<td>
-<em>(Optional)</em>
-<p>LastCompletionTriggeredTime is the recent time when the certificate authority credential rotation completion was
-triggered.</p>
 </td>
 </tr>
 </tbody>
@@ -10286,97 +10424,6 @@ Kubernetes meta/v1.Time
 <td>
 <em>(Optional)</em>
 <p>LastCompletionTime is the most recent time when the ssh-keypair credential rotation was successfully completed.</p>
-</td>
-</tr>
-</tbody>
-</table>
-<h3 id="core.gardener.cloud/v1beta1.ShootServiceAccountKeyRotation">ShootServiceAccountKeyRotation
-</h3>
-<p>
-(<em>Appears on:</em>
-<a href="#core.gardener.cloud/v1beta1.ShootCredentialsRotation">ShootCredentialsRotation</a>)
-</p>
-<p>
-<p>ShootServiceAccountKeyRotation contains information about the service account key credential rotation.</p>
-</p>
-<table>
-<thead>
-<tr>
-<th>Field</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>
-<code>phase</code></br>
-<em>
-<a href="#core.gardener.cloud/v1beta1.CredentialsRotationPhase">
-CredentialsRotationPhase
-</a>
-</em>
-</td>
-<td>
-<p>Phase describes the phase of the service account key credential rotation.</p>
-</td>
-</tr>
-<tr>
-<td>
-<code>lastCompletionTime</code></br>
-<em>
-<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
-Kubernetes meta/v1.Time
-</a>
-</em>
-</td>
-<td>
-<em>(Optional)</em>
-<p>LastCompletionTime is the most recent time when the service account key credential rotation was successfully
-completed.</p>
-</td>
-</tr>
-<tr>
-<td>
-<code>lastInitiationTime</code></br>
-<em>
-<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
-Kubernetes meta/v1.Time
-</a>
-</em>
-</td>
-<td>
-<em>(Optional)</em>
-<p>LastInitiationTime is the most recent time when the service account key credential rotation was initiated.</p>
-</td>
-</tr>
-<tr>
-<td>
-<code>lastInitiationFinishedTime</code></br>
-<em>
-<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
-Kubernetes meta/v1.Time
-</a>
-</em>
-</td>
-<td>
-<em>(Optional)</em>
-<p>LastInitiationFinishedTime is the recent time when the certificate authority credential rotation initiation was
-completed.</p>
-</td>
-</tr>
-<tr>
-<td>
-<code>lastCompletionTriggeredTime</code></br>
-<em>
-<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.25/#time-v1-meta">
-Kubernetes meta/v1.Time
-</a>
-</em>
-</td>
-<td>
-<em>(Optional)</em>
-<p>LastCompletionTriggeredTime is the recent time when the certificate authority credential rotation completion was
-triggered.</p>
 </td>
 </tr>
 </tbody>

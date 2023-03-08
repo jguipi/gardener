@@ -472,9 +472,16 @@ const (
 	// which should be scraped by Prometheus.
 	// See https://github.com/gardener/gardener/blob/master/docs/concepts/resource-manager.md#overwriting-the-pod-selector-label.
 	LabelNetworkPolicyScrapeTargets = "all-scrape-targets"
+	// LabelNetworkPolicySeedScrapeTargets is a constant for pod selector label which can be used on Services for
+	// seed system components or extensions which should be scraped by Prometheus.
+	// See https://github.com/gardener/gardener/blob/master/docs/concepts/resource-manager.md#overwriting-the-pod-selector-label.
+	LabelNetworkPolicySeedScrapeTargets = "all-seed-scrape-targets"
 	// LabelNetworkPolicyShootNamespaceAlias is a constant for the alias for shoot namespaces used in NetworkPolicy
 	// labels.
 	LabelNetworkPolicyShootNamespaceAlias = "all-shoots"
+	// LabelNetworkPolicyIstioIngressNamespaceAlias is a constant for the alias for shoot namespaces used in
+	// NetworkPolicy labels.
+	LabelNetworkPolicyIstioIngressNamespaceAlias = "all-istio-ingresses"
 
 	// LabelApp is a constant for a label key.
 	LabelApp = "app"

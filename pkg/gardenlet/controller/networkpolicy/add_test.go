@@ -32,7 +32,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/features"
 	. "github.com/gardener/gardener/pkg/gardenlet/controller/networkpolicy"
+	gardenletfeatures "github.com/gardener/gardener/pkg/gardenlet/features"
+	"github.com/gardener/gardener/pkg/utils/test"
 )
 
 var _ = Describe("Add", func() {
@@ -84,13 +87,18 @@ var _ = Describe("Add", func() {
 			log        = logr.Discard()
 			fakeClient client.Client
 
-			gardenNamespace      *corev1.Namespace
-			istioSystemNamespace *corev1.Namespace
-			shootNamespace       *corev1.Namespace
-			fooNamespace         *corev1.Namespace
+			gardenNamespace             *corev1.Namespace
+			istioSystemNamespace        *corev1.Namespace
+			istioIngressNamespace       *corev1.Namespace
+			istioExposureClassNamespace *corev1.Namespace
+			shootNamespace              *corev1.Namespace
+			extensionNamespace          *corev1.Namespace
+			fooNamespace                *corev1.Namespace
 		)
 
 		BeforeEach(func() {
+			DeferCleanup(test.WithFeatureGate(gardenletfeatures.FeatureGate, features.FullNetworkPoliciesInRuntimeCluster, true))
+
 			fakeClient = fakeclient.NewClientBuilder().WithScheme(scheme.Scheme).Build()
 			reconciler.RuntimeClient = fakeClient
 
@@ -106,25 +114,49 @@ var _ = Describe("Add", func() {
 					Labels: map[string]string{v1beta1constants.GardenRole: v1beta1constants.GardenRoleIstioSystem},
 				},
 			}
+			istioIngressNamespace = &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "istio-ingress-123a4",
+					Labels: map[string]string{v1beta1constants.GardenRole: v1beta1constants.GardenRoleIstioIngress},
+				},
+			}
+			istioExposureClassNamespace = &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "istio-ingress-handler-foo-123a4",
+					Labels: map[string]string{v1beta1constants.LabelExposureClassHandlerName: ""},
+				},
+			}
 			shootNamespace = &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   "shoot--bar",
 					Labels: map[string]string{v1beta1constants.GardenRole: v1beta1constants.GardenRoleShoot},
 				},
 			}
+			extensionNamespace = &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "extension-baz",
+					Labels: map[string]string{v1beta1constants.GardenRole: v1beta1constants.GardenRoleExtension},
+				},
+			}
 			fooNamespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "foo"}}
 		})
 
-		It("should return a request with the shoot, garden and istio-system namespaces' names", func() {
+		It("should return a request with the relevant namespaces' names", func() {
 			Expect(fakeClient.Create(ctx, gardenNamespace)).To(Succeed())
 			Expect(fakeClient.Create(ctx, istioSystemNamespace)).To(Succeed())
+			Expect(fakeClient.Create(ctx, istioIngressNamespace)).To(Succeed())
+			Expect(fakeClient.Create(ctx, istioExposureClassNamespace)).To(Succeed())
 			Expect(fakeClient.Create(ctx, shootNamespace)).To(Succeed())
+			Expect(fakeClient.Create(ctx, extensionNamespace)).To(Succeed())
 			Expect(fakeClient.Create(ctx, fooNamespace)).To(Succeed())
 
 			Expect(reconciler.MapToNamespaces(ctx, log, nil, nil)).To(ConsistOf(
 				reconcile.Request{NamespacedName: types.NamespacedName{Name: gardenNamespace.Name}},
 				reconcile.Request{NamespacedName: types.NamespacedName{Name: istioSystemNamespace.Name}},
+				reconcile.Request{NamespacedName: types.NamespacedName{Name: istioIngressNamespace.Name}},
+				reconcile.Request{NamespacedName: types.NamespacedName{Name: istioExposureClassNamespace.Name}},
 				reconcile.Request{NamespacedName: types.NamespacedName{Name: shootNamespace.Name}},
+				reconcile.Request{NamespacedName: types.NamespacedName{Name: extensionNamespace.Name}},
 			))
 		})
 	})

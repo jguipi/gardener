@@ -107,7 +107,7 @@ var _ = Describe("ResourceManager", func() {
 		watchedNamespace                     = "fake-ns"
 		targetDisableCache                   = true
 		maxUnavailable                       = intstr.FromInt(1)
-		failurePolicy                        = admissionregistrationv1.Fail
+		failurePolicyFail                    = admissionregistrationv1.Fail
 		matchPolicyExact                     = admissionregistrationv1.Exact
 		matchPolicyEquivalent                = admissionregistrationv1.Equivalent
 		sideEffect                           = admissionregistrationv1.SideEffectClassNone
@@ -301,6 +301,7 @@ var _ = Describe("ResourceManager", func() {
 			AlwaysUpdate:                         &alwaysUpdate,
 			ClusterIdentity:                      &clusterIdentity,
 			ConcurrentSyncs:                      &concurrentSyncs,
+			FullNetworkPolicies:                  true,
 			HealthSyncPeriod:                     &healthSyncPeriod,
 			Image:                                image,
 			MaxConcurrentHealthWorkers:           &maxConcurrentHealthWorkers,
@@ -323,6 +324,7 @@ var _ = Describe("ResourceManager", func() {
 			},
 			SchedulingProfile:                   &binPackingSchedulingProfile,
 			DefaultSeccompProfileEnabled:        false,
+			EndpointSliceHintsEnabled:           false,
 			PodTopologySpreadConstraintsEnabled: true,
 			LogLevel:                            "info",
 			LogFormat:                           "json",
@@ -418,9 +420,6 @@ var _ = Describe("ResourceManager", func() {
 					ProjectedTokenMount: resourcemanagerv1alpha1.ProjectedTokenMountWebhookConfig{
 						Enabled: true,
 					},
-					SeccompProfile: resourcemanagerv1alpha1.SeccompProfileWebhookConfig{
-						Enabled: true,
-					},
 					SystemComponentsConfig: resourcemanagerv1alpha1.SystemComponentsConfigWebhookConfig{
 						Enabled: false,
 					},
@@ -439,7 +438,6 @@ var _ = Describe("ResourceManager", func() {
 				}
 
 				config.Controllers.Node.Enabled = true
-				config.Webhooks.SeccompProfile.Enabled = false
 				config.Webhooks.PodSchedulerName = resourcemanagerv1alpha1.PodSchedulerNameWebhookConfig{
 					Enabled:       true,
 					SchedulerName: pointer.String("bin-packing-scheduler"),
@@ -457,11 +455,17 @@ var _ = Describe("ResourceManager", func() {
 				config.Controllers.NetworkPolicy = resourcemanagerv1alpha1.NetworkPolicyControllerConfig{
 					Enabled: true,
 					NamespaceSelectors: []metav1.LabelSelector{
-						{MatchLabels: map[string]string{v1beta1constants.GardenRole: v1beta1constants.GardenRoleShoot}},
+						{MatchLabels: map[string]string{"gardener.cloud/role": "shoot"}},
+						{MatchLabels: map[string]string{"gardener.cloud/role": "istio-system"}},
+						{MatchLabels: map[string]string{"gardener.cloud/role": "istio-ingress"}},
+						{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "handler.exposureclass.gardener.cloud/name", Operator: metav1.LabelSelectorOpExists}}},
+						{MatchLabels: map[string]string{"gardener.cloud/role": "extension"}},
 					},
 				}
 				config.Webhooks.CRDDeletionProtection.Enabled = true
+				config.Webhooks.EndpointSliceHints.Enabled = true
 				config.Webhooks.ExtensionValidation.Enabled = true
+				config.Webhooks.SeccompProfile.Enabled = true
 			}
 
 			data, err := runtime.Encode(codec, config)
@@ -859,7 +863,7 @@ var _ = Describe("ResourceManager", func() {
 						},
 					},
 					AdmissionReviewVersions: []string{"v1beta1", "v1"},
-					FailurePolicy:           &failurePolicy,
+					FailurePolicy:           &failurePolicyFail,
 					MatchPolicy:             &matchPolicyExact,
 					SideEffects:             &sideEffect,
 					TimeoutSeconds:          pointer.Int32(10),
@@ -902,7 +906,7 @@ var _ = Describe("ResourceManager", func() {
 						},
 					},
 					AdmissionReviewVersions: []string{"v1beta1", "v1"},
-					FailurePolicy:           &failurePolicy,
+					FailurePolicy:           &failurePolicyFail,
 					MatchPolicy:             &matchPolicyExact,
 					SideEffects:             &sideEffect,
 					TimeoutSeconds:          pointer.Int32(10),
@@ -961,7 +965,7 @@ var _ = Describe("ResourceManager", func() {
 						},
 					},
 					AdmissionReviewVersions: []string{"v1beta1", "v1"},
-					FailurePolicy:           &failurePolicy,
+					FailurePolicy:           &failurePolicyFail,
 					MatchPolicy:             &matchPolicyEquivalent,
 					SideEffects:             &sideEffect,
 					TimeoutSeconds:          pointer.Int32(10),
@@ -1004,8 +1008,43 @@ var _ = Describe("ResourceManager", func() {
 						},
 					},
 					AdmissionReviewVersions: []string{"v1beta1", "v1"},
-					FailurePolicy:           &failurePolicy,
+					FailurePolicy:           &failurePolicyFail,
 					MatchPolicy:             &matchPolicyExact,
+					SideEffects:             &sideEffect,
+					TimeoutSeconds:          pointer.Int32(10),
+				},
+				{
+					Name: "endpoint-slice-hints.resources.gardener.cloud",
+					Rules: []admissionregistrationv1.RuleWithOperations{{
+						Rule: admissionregistrationv1.Rule{
+							APIGroups:   []string{"discovery.k8s.io"},
+							APIVersions: []string{"v1"},
+							Resources:   []string{"endpointslices"},
+						},
+						Operations: []admissionregistrationv1.OperationType{"CREATE", "UPDATE"},
+					}},
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{{
+							Key:      "gardener.cloud/purpose",
+							Operator: metav1.LabelSelectorOpNotIn,
+							Values:   []string{"kube-system", "kubernetes-dashboard"},
+						}},
+					},
+					ObjectSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"endpoint-slice-hints.resources.gardener.cloud/consider": "true",
+						},
+					},
+					ClientConfig: admissionregistrationv1.WebhookClientConfig{
+						Service: &admissionregistrationv1.ServiceReference{
+							Name:      "gardener-resource-manager",
+							Namespace: deployNamespace,
+							Path:      pointer.String("/webhooks/endpoint-slice-hints"),
+						},
+					},
+					AdmissionReviewVersions: []string{"v1beta1", "v1"},
+					FailurePolicy:           &failurePolicyFail,
+					MatchPolicy:             &matchPolicyEquivalent,
 					SideEffects:             &sideEffect,
 					TimeoutSeconds:          pointer.Int32(10),
 				},
@@ -1047,7 +1086,7 @@ var _ = Describe("ResourceManager", func() {
 						},
 					},
 					AdmissionReviewVersions: []string{"v1beta1", "v1"},
-					FailurePolicy:           &failurePolicy,
+					FailurePolicy:           &failurePolicyFail,
 					MatchPolicy:             &matchPolicyExact,
 					SideEffects:             &sideEffect,
 					TimeoutSeconds:          pointer.Int32(10),
@@ -1309,7 +1348,7 @@ subjects:
 						},
 						Operations: []admissionregistrationv1.OperationType{"DELETE"},
 					}},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ObjectSelector:    &metav1.LabelSelector{MatchLabels: map[string]string{"gardener.cloud/deletion-protected": "true"}},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
@@ -1358,7 +1397,7 @@ subjects:
 							Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Delete},
 						},
 					},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
 						Service: &admissionregistrationv1.ServiceReference{
@@ -1384,7 +1423,7 @@ subjects:
 							Operations: []admissionregistrationv1.OperationType{"CREATE", "UPDATE"},
 						},
 					},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
 						Service: &admissionregistrationv1.ServiceReference{
@@ -1410,7 +1449,7 @@ subjects:
 							Operations: []admissionregistrationv1.OperationType{"CREATE", "UPDATE"},
 						},
 					},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
 						Service: &admissionregistrationv1.ServiceReference{
@@ -1436,7 +1475,7 @@ subjects:
 							Operations: []admissionregistrationv1.OperationType{"CREATE", "UPDATE"},
 						},
 					},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
 						Service: &admissionregistrationv1.ServiceReference{
@@ -1462,7 +1501,7 @@ subjects:
 							Operations: []admissionregistrationv1.OperationType{"CREATE", "UPDATE"},
 						},
 					},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
 						Service: &admissionregistrationv1.ServiceReference{
@@ -1488,7 +1527,7 @@ subjects:
 							Operations: []admissionregistrationv1.OperationType{"CREATE", "UPDATE"},
 						},
 					},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
 						Service: &admissionregistrationv1.ServiceReference{
@@ -1514,7 +1553,7 @@ subjects:
 							Operations: []admissionregistrationv1.OperationType{"CREATE", "UPDATE"},
 						},
 					},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
 						Service: &admissionregistrationv1.ServiceReference{
@@ -1540,7 +1579,7 @@ subjects:
 							Operations: []admissionregistrationv1.OperationType{"CREATE", "UPDATE"},
 						},
 					},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
 						Service: &admissionregistrationv1.ServiceReference{
@@ -1566,7 +1605,7 @@ subjects:
 							Operations: []admissionregistrationv1.OperationType{"CREATE", "UPDATE"},
 						},
 					},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
 						Service: &admissionregistrationv1.ServiceReference{
@@ -1592,7 +1631,7 @@ subjects:
 							Operations: []admissionregistrationv1.OperationType{"CREATE", "UPDATE"},
 						},
 					},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
 						Service: &admissionregistrationv1.ServiceReference{
@@ -1618,7 +1657,7 @@ subjects:
 							Operations: []admissionregistrationv1.OperationType{"CREATE", "UPDATE"},
 						},
 					},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
 						Service: &admissionregistrationv1.ServiceReference{
@@ -1644,7 +1683,7 @@ subjects:
 							Operations: []admissionregistrationv1.OperationType{"CREATE", "UPDATE"},
 						},
 					},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
 						Service: &admissionregistrationv1.ServiceReference{
@@ -1670,7 +1709,7 @@ subjects:
 							Operations: []admissionregistrationv1.OperationType{"CREATE", "UPDATE"},
 						},
 					},
-					FailurePolicy:     &failurePolicy,
+					FailurePolicy:     &failurePolicyFail,
 					NamespaceSelector: &metav1.LabelSelector{},
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{
 						Service: &admissionregistrationv1.ServiceReference{
@@ -1728,7 +1767,7 @@ subjects:
 				resourceManager.SetSecrets(secrets)
 			})
 
-			Context("should successfully deploy all resources (w/ shoot access secret", func() {
+			Context("should successfully deploy all resources (w/ shoot access secret)", func() {
 				JustBeforeEach(func() {
 					gomock.InOrder(
 						c.EXPECT().Get(ctx, kubernetesutils.Key(deployNamespace, secret.Name), gomock.AssignableToTypeOf(&corev1.Secret{})),
@@ -2044,6 +2083,7 @@ subjects:
 				calculatePodTemplateChecksum(deployment)
 
 				cfg.DefaultSeccompProfileEnabled = true
+				cfg.EndpointSliceHintsEnabled = true
 				cfg.SchedulingProfile = nil
 				cfg.TargetDiffersFromSourceCluster = false
 				resourceManager = New(c, deployNamespace, sm, cfg)
@@ -2112,8 +2152,6 @@ subjects:
 	Describe("#Destroy", func() {
 		Context("target differs from source cluster", func() {
 			JustBeforeEach(func() {
-				configMap = configMapFor(&watchedNamespace, pointer.String(gardenerutils.PathGenericKubeconfig))
-				deployment = deploymentFor(configMap.Name, cfg.KubernetesVersion, &watchedNamespace, pointer.String(gardenerutils.PathGenericKubeconfig), true, nil)
 				resourceManager = New(c, deployNamespace, sm, cfg)
 			})
 
@@ -2294,8 +2332,6 @@ subjects:
 			BeforeEach(func() {
 				cfg.TargetDiffersFromSourceCluster = false
 				cfg.WatchedNamespace = nil
-				configMap = configMapFor(nil, pointer.String(gardenerutils.PathGenericKubeconfig))
-				deployment = deploymentFor(configMap.Name, cfg.KubernetesVersion, nil, pointer.String(gardenerutils.PathGenericKubeconfig), false, nil)
 				resourceManager = New(c, deployNamespace, sm, cfg)
 			})
 

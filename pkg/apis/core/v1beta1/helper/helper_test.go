@@ -888,6 +888,17 @@ var _ = Describe("helper", func() {
 		Entry("dwd endpoint disabled", &gardencorev1beta1.SeedSettings{DependencyWatchdog: &gardencorev1beta1.SeedSettingDependencyWatchdog{Probe: &gardencorev1beta1.SeedSettingDependencyWatchdogProbe{Enabled: false}}}, false),
 	)
 
+	DescribeTable("#SeedSettingTopologyAwareRoutingEnabled",
+		func(settings *gardencorev1beta1.SeedSettings, expected bool) {
+			Expect(SeedSettingTopologyAwareRoutingEnabled(settings)).To(Equal(expected))
+		},
+
+		Entry("no settings", nil, false),
+		Entry("no topology-aware routing setting", &gardencorev1beta1.SeedSettings{}, false),
+		Entry("topology-aware routing enabled", &gardencorev1beta1.SeedSettings{TopologyAwareRouting: &gardencorev1beta1.SeedSettingTopologyAwareRouting{Enabled: true}}, true),
+		Entry("topology-aware routing disabled", &gardencorev1beta1.SeedSettings{TopologyAwareRouting: &gardencorev1beta1.SeedSettingTopologyAwareRouting{Enabled: false}}, false),
+	)
+
 	DescribeTable("#SeedUsesNginxIngressController",
 		func(dns gardencorev1beta1.SeedDNS, ingress *gardencorev1beta1.Ingress, expected bool) {
 			seed := &gardencorev1beta1.Seed{
@@ -2397,8 +2408,8 @@ var _ = Describe("helper", func() {
 		Entry("credentials nil", nil, gardencorev1beta1.CredentialsRotationPhase("")),
 		Entry("rotation nil", &gardencorev1beta1.ShootCredentials{}, gardencorev1beta1.CredentialsRotationPhase("")),
 		Entry("serviceAccountKey nil", &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{}}, gardencorev1beta1.CredentialsRotationPhase("")),
-		Entry("phase empty", &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{ServiceAccountKey: &gardencorev1beta1.ShootServiceAccountKeyRotation{}}}, gardencorev1beta1.CredentialsRotationPhase("")),
-		Entry("phase set", &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{ServiceAccountKey: &gardencorev1beta1.ShootServiceAccountKeyRotation{Phase: gardencorev1beta1.RotationCompleting}}}, gardencorev1beta1.RotationCompleting),
+		Entry("phase empty", &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{ServiceAccountKey: &gardencorev1beta1.ServiceAccountKeyRotation{}}}, gardencorev1beta1.CredentialsRotationPhase("")),
+		Entry("phase set", &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{ServiceAccountKey: &gardencorev1beta1.ServiceAccountKeyRotation{Phase: gardencorev1beta1.RotationCompleting}}}, gardencorev1beta1.RotationCompleting),
 	)
 
 	Describe("#MutateShootServiceAccountKeyRotation", func() {
@@ -2410,7 +2421,7 @@ var _ = Describe("helper", func() {
 
 		DescribeTable("mutate function not nil",
 			func(shoot *gardencorev1beta1.Shoot, phase gardencorev1beta1.CredentialsRotationPhase) {
-				MutateShootServiceAccountKeyRotation(shoot, func(rotation *gardencorev1beta1.ShootServiceAccountKeyRotation) {
+				MutateShootServiceAccountKeyRotation(shoot, func(rotation *gardencorev1beta1.ServiceAccountKeyRotation) {
 					rotation.Phase = phase
 				})
 				Expect(shoot.Status.Credentials.Rotation.ServiceAccountKey.Phase).To(Equal(phase))
@@ -2419,7 +2430,7 @@ var _ = Describe("helper", func() {
 			Entry("credentials nil", &gardencorev1beta1.Shoot{}, gardencorev1beta1.RotationCompleting),
 			Entry("rotation nil", &gardencorev1beta1.Shoot{Status: gardencorev1beta1.ShootStatus{Credentials: &gardencorev1beta1.ShootCredentials{}}}, gardencorev1beta1.RotationCompleting),
 			Entry("serviceAccountKey nil", &gardencorev1beta1.Shoot{Status: gardencorev1beta1.ShootStatus{Credentials: &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{}}}}, gardencorev1beta1.RotationCompleting),
-			Entry("serviceAccountKey non-nil", &gardencorev1beta1.Shoot{Status: gardencorev1beta1.ShootStatus{Credentials: &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{ServiceAccountKey: &gardencorev1beta1.ShootServiceAccountKeyRotation{}}}}}, gardencorev1beta1.RotationCompleting),
+			Entry("serviceAccountKey non-nil", &gardencorev1beta1.Shoot{Status: gardencorev1beta1.ShootStatus{Credentials: &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{ServiceAccountKey: &gardencorev1beta1.ServiceAccountKeyRotation{}}}}}, gardencorev1beta1.RotationCompleting),
 		)
 	})
 
@@ -2431,8 +2442,8 @@ var _ = Describe("helper", func() {
 		Entry("credentials nil", nil, gardencorev1beta1.CredentialsRotationPhase("")),
 		Entry("rotation nil", &gardencorev1beta1.ShootCredentials{}, gardencorev1beta1.CredentialsRotationPhase("")),
 		Entry("etcdEncryptionKey nil", &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{}}, gardencorev1beta1.CredentialsRotationPhase("")),
-		Entry("phase empty", &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{ETCDEncryptionKey: &gardencorev1beta1.ShootETCDEncryptionKeyRotation{}}}, gardencorev1beta1.CredentialsRotationPhase("")),
-		Entry("phase set", &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{ETCDEncryptionKey: &gardencorev1beta1.ShootETCDEncryptionKeyRotation{Phase: gardencorev1beta1.RotationCompleting}}}, gardencorev1beta1.RotationCompleting),
+		Entry("phase empty", &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{ETCDEncryptionKey: &gardencorev1beta1.ETCDEncryptionKeyRotation{}}}, gardencorev1beta1.CredentialsRotationPhase("")),
+		Entry("phase set", &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{ETCDEncryptionKey: &gardencorev1beta1.ETCDEncryptionKeyRotation{Phase: gardencorev1beta1.RotationCompleting}}}, gardencorev1beta1.RotationCompleting),
 	)
 
 	Describe("#MutateShootETCDEncryptionKeyRotation", func() {
@@ -2444,7 +2455,7 @@ var _ = Describe("helper", func() {
 
 		DescribeTable("mutate function not nil",
 			func(shoot *gardencorev1beta1.Shoot, phase gardencorev1beta1.CredentialsRotationPhase) {
-				MutateShootETCDEncryptionKeyRotation(shoot, func(rotation *gardencorev1beta1.ShootETCDEncryptionKeyRotation) {
+				MutateShootETCDEncryptionKeyRotation(shoot, func(rotation *gardencorev1beta1.ETCDEncryptionKeyRotation) {
 					rotation.Phase = phase
 				})
 				Expect(shoot.Status.Credentials.Rotation.ETCDEncryptionKey.Phase).To(Equal(phase))
@@ -2453,7 +2464,7 @@ var _ = Describe("helper", func() {
 			Entry("credentials nil", &gardencorev1beta1.Shoot{}, gardencorev1beta1.RotationCompleting),
 			Entry("rotation nil", &gardencorev1beta1.Shoot{Status: gardencorev1beta1.ShootStatus{Credentials: &gardencorev1beta1.ShootCredentials{}}}, gardencorev1beta1.RotationCompleting),
 			Entry("etcdEncryptionKey nil", &gardencorev1beta1.Shoot{Status: gardencorev1beta1.ShootStatus{Credentials: &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{}}}}, gardencorev1beta1.RotationCompleting),
-			Entry("etcdEncryptionKey non-nil", &gardencorev1beta1.Shoot{Status: gardencorev1beta1.ShootStatus{Credentials: &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{ETCDEncryptionKey: &gardencorev1beta1.ShootETCDEncryptionKeyRotation{}}}}}, gardencorev1beta1.RotationCompleting),
+			Entry("etcdEncryptionKey non-nil", &gardencorev1beta1.Shoot{Status: gardencorev1beta1.ShootStatus{Credentials: &gardencorev1beta1.ShootCredentials{Rotation: &gardencorev1beta1.ShootCredentialsRotation{ETCDEncryptionKey: &gardencorev1beta1.ETCDEncryptionKeyRotation{}}}}}, gardencorev1beta1.RotationCompleting),
 		)
 	})
 
@@ -2633,6 +2644,43 @@ var _ = Describe("helper", func() {
 		Entry("ingress nil", &gardencorev1beta1.Seed{Spec: gardencorev1beta1.SeedSpec{DNS: gardencorev1beta1.SeedDNS{Provider: &gardencorev1beta1.SeedDNSProvider{}}}}, BeFalse()),
 		Entry("ingress controller kind not nginx", &gardencorev1beta1.Seed{Spec: gardencorev1beta1.SeedSpec{DNS: gardencorev1beta1.SeedDNS{Provider: &gardencorev1beta1.SeedDNSProvider{}}, Ingress: &gardencorev1beta1.Ingress{Controller: gardencorev1beta1.IngressController{Kind: "foo"}}}}, BeFalse()),
 		Entry("ingress controller kind nginx", &gardencorev1beta1.Seed{Spec: gardencorev1beta1.SeedSpec{DNS: gardencorev1beta1.SeedDNS{Provider: &gardencorev1beta1.SeedDNSProvider{}}, Ingress: &gardencorev1beta1.Ingress{Controller: gardencorev1beta1.IngressController{Kind: "nginx"}}}}, BeTrue()),
+	)
+
+	DescribeTable("#IsTopologyAwareRoutingForShootControlPlaneEnabled",
+		func(seed *gardencorev1beta1.Seed, shoot *gardencorev1beta1.Shoot, matcher gomegatypes.GomegaMatcher) {
+			Expect(IsTopologyAwareRoutingForShootControlPlaneEnabled(seed, shoot)).To(matcher)
+		},
+
+		Entry("seed setting is nil, shoot control plane is not HA",
+			&gardencorev1beta1.Seed{Spec: gardencorev1beta1.SeedSpec{Settings: nil}},
+			&gardencorev1beta1.Shoot{Spec: gardencorev1beta1.ShootSpec{ControlPlane: &gardencorev1beta1.ControlPlane{HighAvailability: nil}}},
+			BeFalse(),
+		),
+		Entry("seed setting is disabled, shoot control plane is not HA",
+			&gardencorev1beta1.Seed{Spec: gardencorev1beta1.SeedSpec{Settings: &gardencorev1beta1.SeedSettings{TopologyAwareRouting: &gardencorev1beta1.SeedSettingTopologyAwareRouting{Enabled: false}}}},
+			&gardencorev1beta1.Shoot{Spec: gardencorev1beta1.ShootSpec{ControlPlane: &gardencorev1beta1.ControlPlane{HighAvailability: nil}}},
+			BeFalse(),
+		),
+		Entry("seed setting is enabled, shoot control plane is not HA",
+			&gardencorev1beta1.Seed{Spec: gardencorev1beta1.SeedSpec{Settings: &gardencorev1beta1.SeedSettings{TopologyAwareRouting: &gardencorev1beta1.SeedSettingTopologyAwareRouting{Enabled: true}}}},
+			&gardencorev1beta1.Shoot{Spec: gardencorev1beta1.ShootSpec{ControlPlane: &gardencorev1beta1.ControlPlane{HighAvailability: nil}}},
+			BeFalse(),
+		),
+		Entry("seed setting is nil, shoot control plane is HA with failure tolerance type 'zone'",
+			&gardencorev1beta1.Seed{Spec: gardencorev1beta1.SeedSpec{Settings: nil}},
+			&gardencorev1beta1.Shoot{Spec: gardencorev1beta1.ShootSpec{ControlPlane: &gardencorev1beta1.ControlPlane{HighAvailability: &gardencorev1beta1.HighAvailability{FailureTolerance: gardencorev1beta1.FailureTolerance{Type: gardencorev1beta1.FailureToleranceTypeZone}}}}},
+			BeFalse(),
+		),
+		Entry("seed setting is disabled, shoot control plane is HA with failure tolerance type 'zone'",
+			&gardencorev1beta1.Seed{Spec: gardencorev1beta1.SeedSpec{Settings: &gardencorev1beta1.SeedSettings{TopologyAwareRouting: &gardencorev1beta1.SeedSettingTopologyAwareRouting{Enabled: false}}}},
+			&gardencorev1beta1.Shoot{Spec: gardencorev1beta1.ShootSpec{ControlPlane: &gardencorev1beta1.ControlPlane{HighAvailability: &gardencorev1beta1.HighAvailability{FailureTolerance: gardencorev1beta1.FailureTolerance{Type: gardencorev1beta1.FailureToleranceTypeZone}}}}},
+			BeFalse(),
+		),
+		Entry("seed setting is enabled, shoot control plane is HA with failure tolerance type 'zone'",
+			&gardencorev1beta1.Seed{Spec: gardencorev1beta1.SeedSpec{Settings: &gardencorev1beta1.SeedSettings{TopologyAwareRouting: &gardencorev1beta1.SeedSettingTopologyAwareRouting{Enabled: true}}}},
+			&gardencorev1beta1.Shoot{Spec: gardencorev1beta1.ShootSpec{ControlPlane: &gardencorev1beta1.ControlPlane{HighAvailability: &gardencorev1beta1.HighAvailability{FailureTolerance: gardencorev1beta1.FailureTolerance{Type: gardencorev1beta1.FailureToleranceTypeZone}}}}},
+			BeTrue(),
+		),
 	)
 })
 
