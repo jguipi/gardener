@@ -2,8 +2,8 @@ groups:
 - name: node-exporter.rules
   rules:
   - alert: NodeKubeletDown
-    expr: count_over_time((sum by (node)(kube_node_status_condition{condition="Ready",status!="true"}) == 1)[10m:]) == 10
-    for: 10m
+    expr: kube_node_status_condition{condition="Ready",status=="true"}
+    for: 30s
     labels:
       service: node-exporter
       severity: warning
