@@ -40,7 +40,7 @@ groups:
 
     - alert: NodeKubeletDown
       expr: sum by (alertname) (ALERTS{alertname="NodeKubeletDown", alertstate="firing"}) >= 2 
-      for: 30s
+      for: 20s
       labels:
         service: node-exporter
         severity: warning
