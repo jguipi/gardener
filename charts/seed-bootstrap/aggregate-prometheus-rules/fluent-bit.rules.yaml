@@ -48,7 +48,8 @@ groups:
         visibility: owner
       annotations:
         summary: Nodes not ready for more than 10 minutes 
-        description: Shows the number of nodes that are in the NotReady state for more than 10 minutes due to the kubelet not responding
+        description: >
+         {{ printf "%#v" .}}
         
     - alert: FluentBitReceivesLogsWithoutMetadata
       expr: |
