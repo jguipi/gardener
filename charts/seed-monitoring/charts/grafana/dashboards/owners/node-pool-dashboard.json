@@ -905,7 +905,7 @@
       "dashLength": 10,
       "datasource": null,
       "decimals": 1,
-      "description": "Shows the number of node that are in the NotReady state for more than 10 minutes du to the kubelet not responding",
+      "description": "Shows the number of nodes that are in the NotReady state for more than 10 minutes due to the kubelet not responding",
       "fieldConfig": {
           "defaults": {
           },
@@ -953,7 +953,7 @@
       "targets": [
           {
               "exemplar": true,
-              "expr": "count_over_time(\n  sum by (node, type)(last_over_time(kube_node_status_condition{condition=\"Ready\",status!=\"true\"}[1m]) == 1)[10m:1m]\n) >= 10",
+              "expr": "count_over_time((sum by (node)(kube_node_status_condition{condition=\"Ready\",status!=\"true\"}) == 1)[10m:]) == 10",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
