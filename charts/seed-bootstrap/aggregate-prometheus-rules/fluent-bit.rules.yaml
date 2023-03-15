@@ -41,7 +41,6 @@ groups:
     - alert: NodeKubeletDown
       expr: ALERTS{alertname="NodeKubeletDown", alertstate="firing"} > 0
       for: 30s
-      group_by: ['alertname']
       labels:
         service: node-exporter
         severity: warning
