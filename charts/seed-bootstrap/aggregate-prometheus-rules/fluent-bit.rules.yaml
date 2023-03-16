@@ -52,7 +52,22 @@ groups:
          {{ with query "ALERTS{alertname='NodeKubeletDown',alertstate='firing'}" }}
            {{$externalLabels.cluster}}
          {{ end }}
-        
+
+    - alert: NodeKubeletDown2
+      expr: sum by (alertname) (ALERTS{alertname="NodeKubeletDown", alertstate="firing"})
+      for: 20s
+      labels:
+        service: node-exporter
+        severity: warning
+        type: seed
+        visibility: owner
+      annotations:
+        summary: Nodes not ready for more than 10 minutes 
+        description: >
+         {{ range query "ALERTS{alertname='NodeKubeletDown',alertstate='firing'}" }}
+           {{$externalLabels.cluster}}
+         {{ end }}
+
     - alert: FluentBitReceivesLogsWithoutMetadata
       expr: |
         sum by (pod) (
