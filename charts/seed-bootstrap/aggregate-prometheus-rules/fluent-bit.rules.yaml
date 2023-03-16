@@ -49,9 +49,9 @@ groups:
       annotations:
         summary: Nodes not ready for more than 10 minutes 
         description: >
-         Nodes were not ready for more than 10 minutes in :\n
+         Nodes were not ready for more than 10 minutes in :"\n"
          {{ range query "ALERTS{alertname='NodeKubeletDown',alertstate='firing'}" }}
-            - Shoot name: {{ .Labels.cluster}} in  {{ .Labels.seed_provider }} seed\n
+            - Shoot name: {{ .Labels.cluster}} in  {{ .Labels.seed_provider }} seed"\n"
          {{ end }}
 
     - alert: FluentBitReceivesLogsWithoutMetadata
