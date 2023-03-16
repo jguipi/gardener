@@ -65,7 +65,37 @@ groups:
         summary: Nodes not ready for more than 10 minutes 
         description: >
          {{ range query "ALERTS{alertname='NodeKubeletDown',alertstate='firing'}" }}
-           {{ printf "%#v" .}}
+           {{ printf "%#v" .Labels.cluster}}
+         {{ end }}
+
+    - alert: NodeKubeletDown3
+      expr: sum by (alertname) (ALERTS{alertname="NodeKubeletDown", alertstate="firing"})
+      for: 20s
+      labels:
+        service: node-exporter
+        severity: warning
+        type: seed
+        visibility: owner
+      annotations:
+        summary: Nodes not ready for more than 10 minutes 
+        description: >
+         {{ range query "ALERTS{alertname='NodeKubeletDown',alertstate='firing'}" }}
+           {{ .Labels.cluster}}
+         {{ end }}
+
+    - alert: NodeKubeletDown4
+      expr: sum by (alertname) (ALERTS{alertname="NodeKubeletDown", alertstate="firing"})
+      for: 20s
+      labels:
+        service: node-exporter
+        severity: warning
+        type: seed
+        visibility: owner
+      annotations:
+        summary: Nodes not ready for more than 10 minutes 
+        description: >
+         {{ range query "ALERTS{alertname='NodeKubeletDown',alertstate='firing'}" }}
+           {{$labels}}
          {{ end }}
 
     - alert: FluentBitReceivesLogsWithoutMetadata
