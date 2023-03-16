@@ -50,7 +50,7 @@ groups:
         summary: Nodes not ready for more than 10 minutes 
         description: >
          {{ with query "ALERTS{alertname='NodeKubeletDown',alertstate='firing'}" }}
-           {{ printf "%#v" .}}
+           {{$externalLabels.seed}}
          {{ end }}
         
     - alert: FluentBitReceivesLogsWithoutMetadata
