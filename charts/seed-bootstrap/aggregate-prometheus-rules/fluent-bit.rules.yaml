@@ -39,7 +39,7 @@ groups:
           The input plugins of Fluent-bit pod {{$labels.pod}} running on seed {{$externalLabels.seed}} haven't collected any logs for the last 6 hours.
 
     - alert: NodeKubeletDown
-      expr: sum by (alertname) (ALERTS{alertname="NodeKubeletDown", alertstate="firing"}) >= 2 
+      expr: sum by (alertname) (ALERTS{alertname="NodeKubeletDown", alertstate="firing"})
       for: 20s
       labels:
         service: node-exporter
@@ -49,7 +49,7 @@ groups:
       annotations:
         summary: Nodes not ready for more than 10 minutes 
         description: >
-         {{ with query "ALERTS{alertname="NodeKubeletDown",alertstate="firing"}" }}
+         {{ with query "ALERTS{alertname='NodeKubeletDown',alertstate='firing'}" }}
            {{ . }}
          {{ end }}
         
