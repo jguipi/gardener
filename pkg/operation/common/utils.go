@@ -104,6 +104,7 @@ func DeleteLoki(ctx context.Context, k8sClient client.Client, namespace string) 
 		&hvpav1alpha1.Hvpa{ObjectMeta: metav1.ObjectMeta{Name: "loki", Namespace: namespace}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "loki-config", Namespace: namespace}},
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "loki", Namespace: namespace}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "logging", Namespace: namespace}},
 		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "loki", Namespace: namespace}},
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "loki-loki-0", Namespace: namespace}},
 	}
@@ -214,50 +215,6 @@ func DeleteGrafana(ctx context.Context, k8sClient kubernetes.Interface, namespac
 		&corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "grafana",
-				Namespace: namespace,
-			}},
-	); client.IgnoreNotFound(err) != nil {
-		return err
-	}
-
-	return nil
-}
-
-// DeleteGrafanaByRole deletes the monitoring stack for the shoot owner.
-func DeleteGrafanaByRole(ctx context.Context, k8sClient kubernetes.Interface, namespace, role string) error {
-	if k8sClient == nil {
-		return fmt.Errorf("require kubernetes client")
-	}
-
-	deleteOptions := []client.DeleteAllOfOption{
-		client.InNamespace(namespace),
-		client.MatchingLabels{
-			"component": "grafana",
-			"role":      role,
-		},
-	}
-
-	if err := k8sClient.Client().DeleteAllOf(ctx, &appsv1.Deployment{}, append(deleteOptions, client.PropagationPolicy(metav1.DeletePropagationForeground))...); err != nil {
-		return err
-	}
-
-	if err := k8sClient.Client().DeleteAllOf(ctx, &corev1.ConfigMap{}, deleteOptions...); err != nil {
-		return err
-	}
-
-	if err := k8sClient.Client().DeleteAllOf(ctx, &networkingv1.Ingress{}, deleteOptions...); err != nil {
-		return err
-	}
-
-	if err := k8sClient.Client().DeleteAllOf(ctx, &corev1.Secret{}, deleteOptions...); err != nil {
-		return err
-	}
-
-	if err := k8sClient.Client().Delete(
-		ctx,
-		&corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "grafana-" + role,
 				Namespace: namespace,
 			}},
 	); client.IgnoreNotFound(err) != nil {

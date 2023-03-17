@@ -118,12 +118,6 @@ const (
 	// DeploymentNameGardenerResourceManager is a constant for the name of a Kubernetes deployment object that contains
 	// the gardener-resource-manager pod.
 	DeploymentNameGardenerResourceManager = "gardener-resource-manager"
-	// DeploymentNameGrafanaOperators is a constant for the name of a Kubernetes deployment object that contains
-	// the grafana-operators pod.
-	DeploymentNameGrafanaOperators = "grafana-operators"
-	// DeploymentNameGrafanaUsers is a constant for the name of a Kubernetes deployment object that contains
-	// the grafana-users pod.
-	DeploymentNameGrafanaUsers = "grafana-users"
 	// DeploymentNameGrafana is a constant for the name of a Kubernetes deployment object that contains the grafana pod.
 	DeploymentNameGrafana = "grafana"
 	// DeploymentNameEventLogger is a constant for the name of a Kubernetes deployment object that contains
@@ -807,4 +801,7 @@ const (
 	TaintNodeCriticalComponentsNotReady = "node.gardener.cloud/critical-components-not-ready"
 	// LabelNodeCriticalComponent is the label key for marking node-critical component pods.
 	LabelNodeCriticalComponent = "node.gardener.cloud/critical-component"
+	// AnnotationWaitForCSINode is the annotation key for csi-driver-node pods,
+	// indicating they use the driver specified in the value.
+	AnnotationPrefixWaitForCSINode = "node.gardener.cloud/wait-for-csi-node-"
 )
