@@ -2,7 +2,7 @@ groups:
 - name: node-exporter.rules
   rules:
   - alert: NodeKubeletDown
-    expr: count_over_time((sum by (node)(kube_node_status_condition{condition="Ready",status!="true"}) == 1)[10m:]) == 10
+    expr: count_over_time((sum by (node)(kube_node_status_condition{condition="Ready",status!="true"}) == 1)[10m:]) == 9
     for: 10m
     labels:
       service: node-exporter
