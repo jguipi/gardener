@@ -40,7 +40,6 @@ groups:
 
     - alert: NodeKubeletDown
       expr: sum by (alertname) (ALERTS{alertname="NodeKubeletDown", alertstate="firing"})
-      for: 20s
       labels:
         service: node-exporter
         severity: warning
@@ -49,9 +48,9 @@ groups:
       annotations:
         summary: Nodes not ready for more than 10 minutes 
         description: >
-         Nodes were not ready for more than 10 minutes in : 
+         Nodes were not ready for more than 10 minutes in:
          {{ range query "ALERTS{alertname='NodeKubeletDown',alertstate='firing'}" }}
-            - Shoot name: {{ .Labels.cluster}} in  {{ .Labels.seed_provider }} seed
+          - Shoot name: {{ .Labels.cluster}} in  {{ .Labels.seed_provider }} seed
          {{ end }}
 
     - alert: FluentBitReceivesLogsWithoutMetadata
