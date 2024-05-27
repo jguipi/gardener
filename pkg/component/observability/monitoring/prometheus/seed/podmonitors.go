@@ -10,7 +10,7 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-// CentralPodMonitors returns the central PodMonitor resources for the seed prometheus.
+// CentralPodMonitors returns the central PodMonitor resources for the seed prometheus. test
 func CentralPodMonitors() []*monitoringv1.PodMonitor {
 	return []*monitoringv1.PodMonitor{
 		{
